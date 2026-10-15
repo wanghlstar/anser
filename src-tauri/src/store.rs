@@ -1634,6 +1634,27 @@ impl Store {
             },
         })
     }
+    /// 菜单栏图标的未读总数：口径与「全部收件箱」未读徽标一致——
+    /// 按每账号生效的 inboxFolders 过滤（未配置的账号只算 INBOX），
+    /// 排除废纸篓，并包含服务器已删但本地存档仍在的邮件。
+    pub fn tray_unread_count(&self) -> Result<u64> {
+        let db = self.db()?;
+        db.query_row(
+            "SELECT COUNT(DISTINCT s.mail_id)
+             FROM trusted_sources s
+             JOIN messages m ON m.id = s.mail_id
+             JOIN accounts a ON a.id = s.account_id
+             WHERE (s.active=1 OR (COALESCE(json_extract(m.data,'$.savedLocally'),1)=1 AND NOT EXISTS(SELECT 1 FROM trusted_sources x WHERE x.mail_id=s.mail_id AND x.active=1)))
+                   AND json_extract(m.data,'$.isRead')=0
+                   AND COALESCE(json_extract(m.data,'$.trashed'),0)=0
+                   AND CASE WHEN json_extract(a.data,'$.inboxFolders') IS NULL
+                            THEN s.folder='INBOX' COLLATE NOCASE
+                            ELSE EXISTS(SELECT 1 FROM json_each(a.data,'$.inboxFolders') WHERE value=s.folder) END",
+            [],
+            |r| r.get::<_, u64>(0),
+        )
+        .map_err(err)
+    }
     pub fn detail(&self, id: &str) -> Result<Detail> {
         let mut mail = self.mail(id)?;
         let index = self.conversation_index(&mail.account_id)?;

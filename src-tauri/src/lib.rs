@@ -41,6 +41,10 @@ struct AppState {
     realtime: Arc<realtime::RealtimeControl>,
     dock_enabled: Arc<std::sync::atomic::AtomicBool>,
 }
+/// 托盘右键菜单里需要反向更新勾选状态的菜单项。
+struct TrayState {
+    do_not_disturb: Option<tauri::menu::CheckMenuItem<tauri::Wry>>,
+}
 #[tauri::command]
 async fn restart_for_update(
     app: tauri::AppHandle,
@@ -532,6 +536,31 @@ fn save_preferences(
     set_dock_visible(visible);
     Ok(())
 }
+/// 托盘「免打扰」：只切换新邮件通知，不影响菜单栏未读计数与收取。
+#[tauri::command]
+fn toggle_do_not_disturb(
+    state: tauri::State<AppState>,
+    tray: tauri::State<'_, TrayState>,
+) -> Result<bool> {
+    let mut preferences = state.store.preferences()?;
+    preferences.new_mail_notifications = !preferences.new_mail_notifications;
+    state.store.save_preferences(&preferences)?;
+    let quiet = !preferences.new_mail_notifications;
+    if let Some(item) = tray.do_not_disturb.as_ref() {
+        let _ = item.set_checked(quiet);
+    }
+    Ok(quiet)
+}
+/// 托盘操作的结果反馈：窗口隐藏时系统通知可能不显示，退回写到活动日志。
+fn toast_quiet(app: &tauri::AppHandle, message: &str) {
+    if notifications::show(app, "雁信", message).is_err() {
+        let store = app.state::<AppState>();
+        let _ = store.store.log(message);
+    }
+}
+fn store_log(app: &tauri::AppHandle, message: &str) -> Result<()> {
+    app.state::<AppState>().store.log(message)
+}
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct DesktopSettings {
@@ -685,46 +714,50 @@ fn sync_all(store: &Store, app: &tauri::AppHandle) -> Result<u32> {
 #[tauri::command]
 async fn sync_mail(state: tauri::State<'_, AppState>, app: tauri::AppHandle) -> Result<u32> {
     let store = state.store.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        // Explicit refresh checks inboxes first. Historical folders continue
-        // through the background sweep and their individual refresh action.
-        let accounts = store
-            .accounts()?
+    tauri::async_runtime::spawn_blocking(move || collect_mail(&store, &app))
+        .await
+        .map_err(err)?
+}
+/// 手动收取：只收各账号收件箱，历史文件夹继续交给后台扫描。
+fn collect_mail(store: &Store, app: &tauri::AppHandle) -> Result<u32> {
+    // Explicit refresh checks inboxes first. Historical folders continue
+    // through the background sweep and their individual refresh action.
+    let accounts = store
+        .accounts()?
+        .into_iter()
+        .filter(|a| a.enabled)
+        .collect::<Vec<_>>();
+    let (count, errors) = std::thread::scope(|scope| {
+        let jobs = accounts
             .into_iter()
-            .filter(|a| a.enabled)
-            .collect::<Vec<_>>();
-        std::thread::scope(|scope| {
-            let jobs = accounts
-                .into_iter()
-                .map(|account| {
-                    let store = &store;
-                    let app = &app;
-                    scope.spawn(move || {
-                        let email = account.email.clone();
-                        sync_inbox(store, app, account).map_err(|e| format!("{email}：{e}"))
-                    })
+            .map(|account| {
+                let store = &store;
+                let app = &app;
+                scope.spawn(move || {
+                    let email = account.email.clone();
+                    sync_inbox(store, app, account).map_err(|e| format!("{email}：{e}"))
                 })
-                .collect::<Vec<_>>();
-            let mut count = 0;
-            let mut errors = Vec::new();
-            for job in jobs {
-                match job
-                    .join()
-                    .unwrap_or_else(|_| Err("收取任务异常结束".into()))
-                {
-                    Ok(n) => count += n,
-                    Err(e) => errors.push(e),
-                }
+            })
+            .collect::<Vec<_>>();
+        let mut count = 0;
+        let mut errors = Vec::new();
+        for job in jobs {
+            match job
+                .join()
+                .unwrap_or_else(|_| Err("收取任务异常结束".into()))
+            {
+                Ok(n) => count += n,
+                Err(e) => errors.push(e),
             }
-            if errors.is_empty() {
-                Ok(count)
-            } else {
-                Err(format!("已保存 {count} 封；{}", errors.join("；")))
-            }
-        })
-    })
-    .await
-    .map_err(err)?
+        }
+        (count, errors)
+    });
+    let _ = app.emit("mail-updated", ());
+    if errors.is_empty() {
+        Ok(count)
+    } else {
+        Err(format!("已保存 {count} 封；{}", errors.join("；")))
+    }
 }
 #[tauri::command]
 fn save_draft(state: tauri::State<AppState>, draft: Compose) -> Result<()> {
@@ -1489,11 +1522,42 @@ fn show_main_window(app: &tauri::AppHandle) {
     #[cfg(target_os = "macos")]
     let _ = app.show();
     if let Some(window) = app.get_webview_window("main") {
+        let was_visible = window.is_visible().unwrap_or(false)
+            && !window.is_minimized().unwrap_or(false);
         let _ = window.unminimize();
         let _ = window.show();
         let _ = window.set_focus();
+        // 从托盘/Dock 重新打开时淡入，避免窗口"一闪"出现。
+        if !was_visible {
+            fade_in_window(&window);
+        }
     }
 }
+/// macOS 原生淡入：只改 NSWindow 的 alphaValue，不涉及字典/数组/NSString，
+/// 避免 ObjC 异常跨 FFI 边界导致进程 abort。约 0.18s。
+#[cfg(target_os = "macos")]
+fn fade_in_window(window: &tauri::WebviewWindow) {
+    use objc::{msg_send, sel, sel_impl};
+    unsafe {
+        let ns_window = match window.ns_window() {
+            Ok(w) => w as *mut objc::runtime::Object,
+            Err(_) => return,
+        };
+        if ns_window.is_null() {
+            return;
+        }
+        let _: () = msg_send![ns_window, setAlphaValue: 0.0f64];
+        // animator 代理走 Core Animation，无需自己建动画对象。
+        let animator: *mut objc::runtime::Object = msg_send![ns_window, animator];
+        if !animator.is_null() {
+            let _: () = msg_send![animator, setAlphaValue: 1.0f64];
+        } else {
+            let _: () = msg_send![ns_window, setAlphaValue: 1.0f64];
+        }
+    }
+}
+#[cfg(not(target_os = "macos"))]
+fn fade_in_window(_window: &tauri::WebviewWindow) {}
 fn window_state_flags() -> tauri_plugin_window_state::StateFlags {
     use tauri_plugin_window_state::StateFlags;
     // Hidden/minimized state must not prevent Dock reopen or normal launch.
@@ -1647,6 +1711,34 @@ fn watch_dock_icon(app: tauri::AppHandle, enabled: Arc<std::sync::atomic::Atomic
 #[cfg(not(target_os = "macos"))]
 fn watch_dock_icon(_app: tauri::AppHandle, _enabled: Arc<std::sync::atomic::AtomicBool>) {}
 
+/// 菜单栏图标右侧显示未读数：口径同「全部收件箱」未读徽标，无未读时不显示。
+/// 只读数据库，不依赖通知开关；数字变化时才更新，避免频繁触碰主线程。
+fn watch_tray_unread(store: Store, tray: tauri::tray::TrayIcon) {
+    std::thread::spawn(move || {
+        // 用 Option 区分「尚未写入」与「已写入 0」；0 表示清空标题。
+        let mut shown: Option<u64> = None;
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(5));
+            let unread = store.tray_unread_count().unwrap_or(0);
+            if shown == Some(unread) {
+                continue;
+            }
+            shown = Some(unread);
+            let title = if unread > 0 {
+                Some(unread.to_string())
+            } else {
+                None
+            };
+            let _ = tray.set_title(title);
+            let _ = tray.set_tooltip(Some(if unread > 0 {
+                format!("雁信 · {unread} 封未读")
+            } else {
+                "雁信 · 点击打开".to_string()
+            }));
+        }
+    });
+}
+
 pub fn run() {
     tauri::Builder::default()
         .manage(eml_files::EmlFiles::default())
@@ -1733,10 +1825,66 @@ pub fn run() {
             archive_jobs::start(store.clone(), app.handle().clone());
             let menu = tauri::menu::Menu::default(app.handle())?;
             app.set_menu(menu)?;
-            tauri::tray::TrayIconBuilder::new()
+            // 托盘右键菜单：免打扰、立即收取、退出。设置菜单同时修复
+            // tray-icon 在无菜单时右键按下留下按钮高亮不消失的问题。
+            let quiet = !store
+                .preferences()
+                .map(|p| p.new_mail_notifications)
+                .unwrap_or(true);
+            let do_not_disturb = tauri::menu::CheckMenuItem::with_id(
+                app.handle(),
+                "tray-do-not-disturb",
+                "免打扰",
+                true,
+                quiet,
+                None::<&str>,
+            )?;
+            let collect = tauri::menu::MenuItem::with_id(
+                app.handle(),
+                "tray-collect",
+                "立即收取",
+                true,
+                None::<&str>,
+            )?;
+            let quit =
+                tauri::menu::PredefinedMenuItem::quit(app.handle(), Some("退出雁信"))?;
+            let tray_menu = tauri::menu::Menu::with_items(
+                app.handle(),
+                &[&do_not_disturb, &collect, &quit],
+            )?;
+            app.manage(TrayState {
+                do_not_disturb: Some(do_not_disturb),
+            });
+            let tray = tauri::tray::TrayIconBuilder::new()
                 .tooltip("雁信 · 点击打开")
                 .icon(app.default_window_icon().unwrap().clone())
                 .show_menu_on_left_click(false)
+                .menu(&tray_menu)
+                .on_menu_event(|app, event| match event.id().as_ref() {
+                    "tray-do-not-disturb" => {
+                        let state = app.state::<AppState>();
+                        let tray = app.state::<TrayState>();
+                        match toggle_do_not_disturb(state, tray) {
+                            Ok(true) => toast_quiet(app, "已开启免打扰，新邮件不再弹通知"),
+                            Ok(false) => toast_quiet(app, "已关闭免打扰"),
+                            Err(e) => {
+                                let _ = store_log(app, &format!("切换免打扰失败：{e}"));
+                            }
+                        }
+                    }
+                    "tray-collect" => {
+                        let state = app.state::<AppState>();
+                        let store = state.store.clone();
+                        let handle = app.clone();
+                        tauri::async_runtime::spawn(async move {
+                            let _ = tauri::async_runtime::spawn_blocking(move || {
+                                collect_mail(&store, &handle)
+                            })
+                            .await;
+                        });
+                    }
+                    _ => {}
+                })
                 .on_tray_icon_event(|tray, event| {
                     if matches!(
                         event,
@@ -1750,6 +1898,7 @@ pub fn run() {
                     }
                 })
                 .build(app)?;
+            watch_tray_unread(store.clone(), tray);
             let handle = app.handle().clone();
             let scheduled_store = store.clone();
             let scheduled_gate = send_gate.clone();
@@ -1867,6 +2016,7 @@ pub fn run() {
             archive_outbox,
             get_preferences,
             save_preferences,
+            toggle_do_not_disturb,
             desktop_settings,
             set_auto_start,
             test_notification,

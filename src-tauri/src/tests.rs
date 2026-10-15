@@ -3245,6 +3245,49 @@ fn account_folder_view_includes_server_deleted_archive_and_stats_match() {
 }
 
 #[test]
+fn tray_unread_count_uses_the_inbox_scope_of_every_account() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = Store::new(dir.path().into()).unwrap();
+    let mut a = account();
+    a.inbox_folders = None;
+    s.save_account(&a).unwrap();
+    assert_eq!(s.tray_unread_count().unwrap(), 0);
+    // 未配置 inboxFolders：只算 INBOX
+    s.ingest(&a, "INBOX", "1", &raw(), false).unwrap();
+    assert_eq!(s.tray_unread_count().unwrap(), 1);
+    s.ingest(&a, "INBOX", "2", &raw2(), true).unwrap();
+    assert_eq!(s.tray_unread_count().unwrap(), 1);
+    s.ingest(&a, "Work", "3", &raw2(), false).unwrap();
+    assert_eq!(s.tray_unread_count().unwrap(), 1);
+    // 配置后把 Work 纳入范围，两个账号范围都计入
+    let mut scoped = account();
+    scoped.id = "second".into();
+    scoped.email = "second@example.com".into();
+    scoped.inbox_folders = Some(vec!["Work".into()]);
+    s.save_account(&scoped).unwrap();
+    s.ingest(&scoped, "Work", "4", &raw2(), false).unwrap();
+    s.ingest(&scoped, "Archive", "5", &raw2(), false).unwrap();
+    assert_eq!(s.tray_unread_count().unwrap(), 2);
+}
+
+#[test]
+fn tray_unread_count_ignores_trashed_and_deleted_server_copies() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = Store::new(dir.path().into()).unwrap();
+    let a = account();
+    s.save_account(&a).unwrap();
+    s.ingest(&a, "INBOX", "1", &raw(), false).unwrap();
+    let id = s.snapshot(&query()).unwrap().messages[0].id.clone();
+    s.change_mail(&id, "read", "true").unwrap();
+    assert_eq!(s.tray_unread_count().unwrap(), 0);
+    s.change_mail(&id, "read", "false").unwrap();
+    assert_eq!(s.tray_unread_count().unwrap(), 1);
+    // 彻底删除后不再计入未读
+    s.change_mail(&id, "trash", "true").unwrap();
+    assert_eq!(s.tray_unread_count().unwrap(), 0);
+}
+
+#[test]
 fn unsaved_mail_without_active_source_stays_out_of_account_folder_view() {
     let dir = tempfile::tempdir().unwrap();
     let s = Store::new(dir.path().into()).unwrap();
