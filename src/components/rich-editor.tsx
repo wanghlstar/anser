@@ -31,6 +31,7 @@ import { Button } from "./ui/button";
 import { SelectField, SelectOption } from "./ui/select-field";
 import { textToHtml } from "@/lib/compose-format";
 import { GreetingParagraph } from "@/lib/greeting-paragraph";
+import { BodyIndent } from "@/lib/indented-paragraph";
 import {
   FONT_OPTIONS,
   SIZE_OPTIONS,
@@ -102,6 +103,7 @@ export function RichEditor({
         paragraph: false,
       }),
       GreetingParagraph,
+      BodyIndent,
       Image.configure({ inline: false }),
       TextStyle,
       FontFamily,
@@ -187,8 +189,13 @@ export function RichEditor({
           attrs: { greeting: "true" },
           content: [{ type: "text", text: greeting.text, marks }],
         },
-        // 问候语下方空一行正文，光标落在这里（不抢焦点）
-        { type: "paragraph" },
+        // 问候语下方第一段正文：带 indented 标记 + 真实全角空格，
+        // 所见即所得（CSS text-indent 不会随邮件发出）
+        {
+          type: "paragraph",
+          attrs: { indented: "true" },
+          content: [{ type: "text", text: "　　" }],
+        },
       ])
       .run();
     editor.commands.setTextSelection(editor.state.doc.content.size - 1);

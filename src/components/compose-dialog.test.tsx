@@ -369,9 +369,7 @@ describe("signature composition", () => {
     };
     await renderHarness();
     expect(
-      document
-        .querySelector('iframe[title="本封邮件签名"]')
-        ?.getAttribute("srcdoc"),
+      document.querySelector('[aria-label="本封邮件签名"]')?.textContent,
     ).toContain("Snapshot signature");
     await act(async () =>
       (
@@ -408,16 +406,10 @@ describe("signature composition", () => {
         ) as HTMLButtonElement
       ).click(),
     );
-    expect(
-      document
-        .querySelector('iframe[title="本封邮件签名"]')
-        ?.getAttribute("srcdoc"),
-    ).toContain("Snapshot signature");
-    expect(
-      document
-        .querySelector('iframe[title="本封邮件签名"]')
-        ?.getAttribute("srcdoc"),
-    ).not.toContain("Changed settings");
+    const signaturePreview = () =>
+      document.querySelector('[aria-label="本封邮件签名"]');
+    expect(signaturePreview()?.textContent).toContain("Snapshot signature");
+    expect(signaturePreview()?.textContent).not.toContain("Changed settings");
   });
 });
 
@@ -446,11 +438,11 @@ describe("greeting in the body", () => {
       "with-signature",
     );
     follows(document.querySelector(".format-toolbar")!, body);
+    // 签名预览与问候语同源：不用 iframe，直接作为编辑器下方连续的一部分。
     expect(
-      document
-        .querySelector('iframe[title="本封邮件签名"]')
-        ?.getAttribute("srcdoc"),
+      document.querySelector('[aria-label="本封邮件签名"]')?.textContent,
     ).toContain("祝您工作顺利");
+    expect(document.querySelector('iframe[title="本封邮件签名"]')).toBeNull();
   });
   it("keeps the greeting out of the way when the draft already has a body", async () => {
     seed = greetingSeed("greeting-existing-body");

@@ -162,7 +162,9 @@ describe("rich editor images", () => {
       `font-family: ${fontFamilies[1].label}`,
     );
     expect(paragraphs[0].innerHTML).toContain("font-size: 16pt");
-    expect(paragraphs[1].textContent).toBe("");
+    // 第二段带真实全角空格：所见即所得，缩进会随邮件发出
+    expect(paragraphs[1].textContent).toBe("　　");
+    expect(paragraphs[1].getAttribute("data-yanxin-indented")).toBe("true");
     // 光标落在第二段里：工具条显示正文默认字体字号，而不是称呼上的楷体/16pt
     expect(
       document.querySelector('button[aria-label="字体"]')!.textContent,
