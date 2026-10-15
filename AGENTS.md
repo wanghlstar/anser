@@ -5,8 +5,10 @@
 ## 项目与代码仓库
 
 - 中文名：雁信；英文名：Anser。技术栈为 React / TypeScript / shadcn/ui / Tauri 2 / Rust / SQLite。
-- **本仓库已停止维护。** **0.1.5 为完结版本**；后续开发跟随上游在新仓库进行，本仓库不再接收新功能、Issue 与 Pull Request。不要再向本仓库追加功能提交；仅在其他仓库迁移前的必要修正例外。
-- `origin` = `git@github.com:wanghlstar/anser.git`（本仓库，唯一发布目标）；`upstream` = `https://github.com/ansermail/anser.git`（**原始上游，保留记录用，不再 fetch/merge**）。本仓库最后同步到的上游节点为 `da3b667`（上游 0.1.12）；0.1.9/0.1.10 的实时加固、FTS5 候选索引、cursor 分页、日期筛选与 0.1.11 的表格头修复已移植进 0.1.5，其余上游内容（0.1.11 附件转发与快捷键、0.1.12 完整富文本写作等）未移植。
+- **本仓库（`wanghlstar/anser`）是继续维护的活跃仓库。** 已废弃的旧仓库 `wanghlstar/yanxin` 固定在 0.1.5 不再变动，与它相关的链接、端点一律不要再用。
+- `origin` = `git@github.com:wanghlstar/anser.git`（唯一发布目标）；`upstream` = `https://github.com/ansermail/anser.git`（**上游，后续要同步它的加固与新功能**）。
+- **上游基线**：本地 0.1.5 基线最后同步到的上游节点是 `da3b667`（上游 0.1.12）。已移植：0.1.9/0.1.10 的实时加固（IDLE NOOP 补查、QQ 回执只读核对、跨时区排序）、FTS5 trigram 候选索引、SQL cursor 分页与阅读邻居直查、日期范围筛选；0.1.11 的表格头保留（thead/th）。**未移植**：0.1.11 的原附件转发（`2336663`/`75622b4`）与五项邮件快捷键（`7371ad4`）、0.1.12 的完整富文本写信（Tiptap）与更新说明 Markdown 渲染。
+- 同步上游时按需 cherry-pick 单个提交并逐个消化冲突，不要直接 merge `upstream/main`：本地有 Dock 开关、存档分层、全部收件箱范围、问候语三段式、首行缩进真实空格等自有功能，与上游同需求的实现是两套代码，直接合并会大面积冲突。
 - 开工先检查 `git status`、当前分支及 origin；保留已有未提交工作。阶段提交应对应实际完成范围，未验收的工作分支不能作为完成代码混入正式发布。
 - 项目结构：`src/components/` 为业务界面，`src/components/ui/` 为 shadcn 组件，`src/lib/` 为前端数据/格式逻辑，`src-tauri/src/` 为协议、存档及后台任务，`scripts/` 为构建/发布检查，`.github/workflows/` 为流水线。
 
