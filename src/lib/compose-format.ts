@@ -179,9 +179,47 @@ function signaturePart(
     doc.head.append(doc.importNode(style, true));
   part.setAttribute(marker, "true");
   part.style[margin] = "24px";
-  part.replaceChildren(
-    ...[...content.body.childNodes].map((n) => doc.importNode(n, true)),
+  const children = [...content.body.childNodes].map((n) =>
+    doc.importNode(n, true),
   );
+  // 签名 HTML 首尾的换行在浏览器里会渲染成空格，看起来像首行缩进。
+  // 首尾的纯空白文本节点直接丢；块级元素内部的前导/尾部空白文本也要清，
+  // 否则 <div ...>\n内容 的换行会留在第一个子节点里。
+  while (children.length) {
+    const edge = children[0];
+    if (edge.nodeType === Node.TEXT_NODE && !edge.textContent?.trim())
+      children.shift();
+    else break;
+  }
+  const first = children[0];
+  if (first && first.nodeType === Node.ELEMENT_NODE) {
+    const element = first as Element;
+    // 换行常和正文在同一个文本节点里（"\n祝您工作顺利"），
+    // 不能整节点删，只切掉前导的空白字符。
+    const text = element.firstChild;
+    if (text && text.nodeType === Node.TEXT_NODE) {
+      const leading = /^\s+/.exec(text.textContent ?? "");
+      if (leading) {
+        const rest = (text.textContent ?? "").slice(leading[0].length);
+        if (rest) text.textContent = rest;
+        else element.removeChild(text);
+      }
+    }
+  }
+  // 结尾的换行会被解析成空段落，搬过去会让写信预览和收件方多出一块空白
+  while (children.length) {
+    const last = children[children.length - 1];
+    if (last.nodeType === Node.TEXT_NODE) {
+      if (last.textContent?.trim()) break;
+    } else if (last.nodeType === Node.ELEMENT_NODE) {
+      const element = last as Element;
+      if (element.querySelector("img")) break;
+      if (element.getAttribute("src")) break;
+      if (element.textContent?.trim()) break;
+    } else break;
+    children.pop();
+  }
+  part.replaceChildren(...children);
   return part;
 }
 

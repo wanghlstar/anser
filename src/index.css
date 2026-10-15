@@ -1954,6 +1954,30 @@ button.nav-collapse .collapse-chevron {
   min-height: 32px;
   padding: 6px 28px;
 }
+/* 签名预览与问候语同源：不用 iframe，继承写信窗口背景与文字色，
+   作为编辑器下方连续的一部分。顶部分隔线区分正文与签名。 */
+/* 签名预览与问候语同源：不用 iframe，继承写信窗口背景与文字色，
+   作为编辑器下方连续的一部分；排版与正文一致，不加分隔线。 */
+.compose-signature-preview {
+  min-height: 32px;
+  padding: 6px 28px;
+  color: var(--muted);
+  font-family: 仿宋, FangSong, STFangsong, serif;
+  font-size: 14pt;
+  line-height: 1.8;
+  overflow-wrap: anywhere;
+}
+/* 与正文一致的段间距，但不缩进：签名是落款，顶格排版 */
+.compose-signature-preview p {
+  margin: 0 0 8px;
+}
+.compose-signature-preview img {
+  max-width: 100%;
+  height: auto;
+}
+.compose-signature-preview a {
+  color: var(--primary);
+}
 /* Markdown/HTML 源码模式同样紧凑，与富文本一致 */
 .compose-editor.with-signature .compose-body {
   min-height: 36px;
@@ -2094,12 +2118,12 @@ button.nav-collapse .collapse-chevron {
   font-size: 14pt;
   line-height: 1.8;
 }
+/* 首行缩进用真实全角空格（见 indented-paragraph.ts），不用 text-indent：
+   CSS 缩进只影响本地渲染，不会随邮件发出，收件人看到的是顶格。 */
 .rich-body p {
   margin: 0 0 8px;
-  /* 中文书信惯例：正文首行缩进 2 字 */
-  text-indent: 2em;
 }
-/* 问候语（称呼）顶格，正文段落保持首行缩进 2 字 */
+/* 问候语（称呼）顶格，不参与缩进 */
 .rich-body p[data-yanxin-greeting] {
   text-indent: 0;
 }
@@ -2358,6 +2382,11 @@ button.nav-collapse .collapse-chevron {
   border: 0;
   margin: 0;
   background: white;
+}
+/* 预览场景（写信签名、设置问候语/签名）跟随外层明暗主题：
+   iframe 元素本身不能是白底，否则盖住 srcDoc 里的主题背景。 */
+.mail-html-themed {
+  background: var(--background);
 }
 .mail-html-container {
   position: relative;

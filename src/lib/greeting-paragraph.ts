@@ -13,6 +13,14 @@ export const GreetingParagraph = Paragraph.extend({
             ? { "data-yanxin-greeting": attributes.greeting }
             : {},
       },
+      /** 已插入真实全角空格的段落：不再叠加 CSS text-indent */
+      indented: {
+        default: null,
+        parseHTML: (element) =>
+          element.hasAttribute("data-yanxin-indented") ? "true" : null,
+        renderHTML: (attributes) =>
+          attributes.indented ? { "data-yanxin-indented": "true" } : {},
+      },
     };
   },
 });

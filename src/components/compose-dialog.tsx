@@ -36,6 +36,7 @@ import { call, native, isDemo } from "@/lib/api";
 import type { Account, Address, Compose } from "@/lib/types";
 import {
   textToHtml,
+  sanitizeComposeHtml,
   composeFormat,
   compileSource,
   hasDraftContent,
@@ -675,14 +676,18 @@ export function ComposeDialog({
                 </Alert>
               )}
               {signaturePreview && (
-                <section className="px-6 pt-0 pb-2 flex flex-col gap-3 compose-preview-flush">
-                  <MailContent
-                    html={
-                      value.signature!.html || textToHtml(value.signature!.body)
-                    }
-                    title="本封邮件签名"
-                    onOpenLink={() => {}}
-                    flush
+                <section className="px-6 pt-0 pb-2 compose-preview-flush">
+                  {/* 与问候语同源：不用 iframe，直接作为编辑器下方的一部分渲染，
+                      继承写信窗口的背景与文字色，观感与正文连续。 */}
+                  <div
+                    className="compose-signature-preview"
+                    aria-label="本封邮件签名"
+                    dangerouslySetInnerHTML={{
+                      __html: sanitizeComposeHtml(
+                        value.signature!.html ||
+                          textToHtml(value.signature!.body),
+                      ),
+                    }}
                   />
                 </section>
               )}

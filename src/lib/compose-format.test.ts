@@ -388,3 +388,68 @@ describe("draft content detection", () => {
       expect(hasDraftContent({ ...draft, ...fields })).toBe(true);
   });
 });
+
+describe("signature block hygiene", () => {
+  const draftWith = (signatureHtml: string) => ({
+    ...newDraft("work"),
+    body: "正文",
+    html: "<p>正文</p>",
+    signature: {
+      accountId: "work",
+      included: true,
+      greeting: "",
+      greetingHtml: "",
+      body: "",
+      html: signatureHtml,
+    },
+  });
+  it("drops the leading and trailing newlines that look like an indent", () => {
+    const result = prepareCompose(
+      draftWith("<div>祝您工作顺利<br>公司名称</div>\n\n"),
+    );
+    // 签名块紧跟内容，开头没有换行撑出的空格
+    expect(result.deliveryHtml).toContain(
+      '<div data-yanxin-signature="true" style="margin-top: 24px;"><div>祝您工作顺利',
+    );
+    // 结尾不追加空段落
+    expect(result.deliveryHtml).not.toContain("<p><br></p>");
+  });
+  it("keeps a trailing image instead of trimming it away", () => {
+    const result = prepareCompose(
+      draftWith('<p>落款</p><img src="data:image/png;base64,aGVsbG8=">'),
+    );
+    expect(result.deliveryHtml).toContain("data:image/png;base64,aGVsbG8=");
+  });
+});
+
+describe("signature block hygiene", () => {
+  const draftWith = (signatureHtml: string) => ({
+    ...newDraft("work"),
+    body: "正文",
+    html: "<p>正文</p>",
+    signature: {
+      accountId: "work",
+      included: true,
+      greeting: "",
+      greetingHtml: "",
+      body: "",
+      html: signatureHtml,
+    },
+  });
+  it("drops the newline inside the first element that reads as an indent", () => {
+    const result = prepareCompose(
+      draftWith('<div style="font-size:12pt;">\n祝您工作顺利<br>公司</div>'),
+    );
+    // 第一个元素内部的前导换行必须清掉，否则浏览器渲染出一个空格
+    expect(result.deliveryHtml).toContain(
+      '<div data-yanxin-signature="true" style="margin-top: 24px;"><div style="font-size:12pt;">祝您工作顺利',
+    );
+    expect(result.deliveryHtml).not.toContain("<p><br></p>");
+  });
+  it("keeps a trailing image instead of trimming it away", () => {
+    const result = prepareCompose(
+      draftWith('<p>落款</p><img src="data:image/png;base64,aGVsbG8=">'),
+    );
+    expect(result.deliveryHtml).toContain("data:image/png;base64,aGVsbG8=");
+  });
+});
