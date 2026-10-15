@@ -743,7 +743,7 @@ impl Store {
         }
         mail.rel_path = Some(new_rel);
         if let Err(e) = self.update_mail(&mail) {
-            let _ = self.log("存档路径更新失败，文件已在新位置，请重启核对");
+            let _ = self.log(&format!("存档路径更新失败：{e}"));
         }
     }
     /// 本地存档树：按账号与来源文件夹聚合已完整存档的邮件数。
