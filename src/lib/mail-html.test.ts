@@ -229,3 +229,29 @@ describe("mail link navigation", () => {
     expect(open).toHaveBeenCalledTimes(3);
   });
 });
+describe("preview theming", () => {
+  const bodyStyle = (
+    html: string,
+    theme?: { foreground: string; background: string },
+  ) => {
+    const doc = new DOMParser().parseFromString(
+      safeMailHtml(html, "preview", false, theme),
+      "text/html",
+    );
+    return doc.head.querySelector("style")?.textContent ?? "";
+  };
+  it("keeps authored mail light in dark mode but lets previews follow the theme", () => {
+    const mail = bodyStyle("<p>正文</p>");
+    expect(mail).toContain("color:#242424");
+    expect(mail).toContain("background:#fff");
+    // iframe 是独立文档，CSS 变量不可用，必须注入字面量色值。
+    const preview = bodyStyle("<p>预览</p>", {
+      foreground: "oklch(0.985 0 0)",
+      background: "oklch(0.145 0 0)",
+    });
+    expect(preview).toContain("color:oklch(0.985 0 0)");
+    expect(preview).toContain("background:oklch(0.145 0 0)");
+    expect(preview).not.toContain("color:#242424");
+    expect(preview).not.toContain("var(--");
+  });
+});

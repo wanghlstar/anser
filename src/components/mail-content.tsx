@@ -1,24 +1,38 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { isTauri } from "@tauri-apps/api/core";
+import { cn } from "@/lib/utils";
 import { MailBodySkeleton } from "./mail-skeleton";
 import { disableNativeContextMenu } from "../lib/context-menu";
 import {
   interceptMailLinks,
   isMailDocument,
   safeMailHtml,
+  type PreviewTheme,
 } from "../lib/mail-html";
 import { mailDocumentHeight } from "../lib/mail-layout";
+
+/// iframe 是独立文档，拿不到外层 CSS 变量，只能读计算后的字面量色值。
+function previewTheme(): PreviewTheme | undefined {
+  if (typeof window === "undefined") return undefined;
+  const style = getComputedStyle(document.documentElement);
+  const foreground = style.getPropertyValue("--foreground").trim();
+  const background = style.getPropertyValue("--background").trim();
+  if (!foreground || !background) return undefined;
+  return { foreground, background };
+}
 
 export function MailContent({
   html,
   onOpenLink,
   title = "邮件正文",
   flush,
+  themed = false,
 }: {
   html: string;
-  title?: string;
   onOpenLink: (href: string) => void;
+  title?: string;
   flush?: boolean;
+  themed?: boolean;
 }) {
   const frame = useRef<HTMLIFrameElement>(null);
   const cleanup = useRef<() => void>(() => {});
@@ -27,10 +41,28 @@ export function MailContent({
   flushPreview.current = flush;
   const [ready, setReady] = useState(false);
   const [pendingImages, setPendingImages] = useState(0);
+  // 主题切换要重建 srcDoc：iframe 是独立文档，色值只能在生成时注入。
+  const [theme, setTheme] = useState(themed ? previewTheme() : undefined);
+  useEffect(() => {
+    if (!themed) {
+      setTheme(undefined);
+      return;
+    }
+    setTheme(previewTheme());
+    const observer = new MutationObserver(() => setTheme(previewTheme()));
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["class"],
+    });
+    return () => observer.disconnect();
+  }, [themed]);
   const content = useMemo(() => {
     const id = crypto.randomUUID();
-    return { id, srcDoc: safeMailHtml(html, id, isTauri()) };
-  }, [html]);
+    return {
+      id,
+      srcDoc: safeMailHtml(html, id, isTauri(), theme),
+    };
+  }, [html, theme]);
   const srcDoc = content.srcDoc;
   const open = useRef(onOpenLink);
   open.current = onOpenLink;
@@ -131,7 +163,7 @@ export function MailContent({
       {(!ready || pendingImages > 0) && <MailBodySkeleton images={ready} />}
       <iframe
         ref={frame}
-        className="mail-html"
+        className={cn("mail-html", themed && "mail-html-themed")}
         title={title}
         sandbox="allow-same-origin"
         referrerPolicy="no-referrer"
