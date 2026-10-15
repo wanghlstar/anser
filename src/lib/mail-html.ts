@@ -1,8 +1,12 @@
 import DOMPurify from "dompurify";
+/** 预览主题色：iframe 是独立文档，解析不到外层的 CSS 变量，必须传字面量。 */
+export type PreviewTheme = { foreground: string; background: string };
 export function safeMailHtml(
   html: string,
   documentId = "yanxin-mail",
   nativeNavigation = false,
+  /** 预览场景跟随外层明暗主题；真实邮件正文保持原样（邮件自身样式优先）。 */
+  theme?: PreviewTheme,
 ) {
   const content = DOMPurify.sanitize(html, {
     WHOLE_DOCUMENT: true,
@@ -73,9 +77,13 @@ export function safeMailHtml(
   // width to one character (anywhere squeezes narrow status/header columns).
   // Keep original head styles and body classes; insert our policy before them.
   // A body-only sanitizer otherwise drops leading styles in HTML email fragments.
+  // 预览场景用主题变量跟随明暗；真实邮件正文保持白底深字，邮件样式优先。
+  const colors = theme
+    ? `color:${theme.foreground};background:${theme.background}`
+    : "color:#242424;background:#fff";
   doc.head.insertAdjacentHTML(
     "afterbegin",
-    `<meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: https:; style-src 'unsafe-inline'; font-src data: https:; upgrade-insecure-requests; base-uri 'none'; form-action 'none'"><style>body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;font-size:14px;line-height:1.6;color:#242424;margin:0;padding:0;overflow-wrap:break-word}img{max-width:100%;height:auto}table{max-width:100%}pre{white-space:pre-wrap}</style>`,
+    `<meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: https:; style-src 'unsafe-inline'; font-src data: https:; upgrade-insecure-requests; base-uri 'none'; form-action 'none'"><style>body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;font-size:14px;line-height:1.6;${colors};margin:0;padding:0;overflow-wrap:break-word}img{max-width:100%;height:auto}table{max-width:100%}pre{white-space:pre-wrap}</style>`,
   );
   return `<!doctype html>${doc.documentElement.outerHTML}`;
 }

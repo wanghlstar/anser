@@ -318,6 +318,7 @@ export function MailSignatures({ accounts }: { accounts: Account[] }) {
                             }
                             title="问候语预览"
                             onOpenLink={() => {}}
+                            themed
                           />
                         </CardContent>
                       </Card>
@@ -382,6 +383,7 @@ export function MailSignatures({ accounts }: { accounts: Account[] }) {
                             html={content.html || textToHtml(content.body)}
                             title="签名预览"
                             onOpenLink={() => {}}
+                            themed
                           />
                         </CardContent>
                       </Card>
