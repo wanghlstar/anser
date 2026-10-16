@@ -390,15 +390,31 @@ export default function App() {
         setSearch("");
         setChecked([]);
         setPage("mail");
+        // 收件箱来源的邮件回到「全部收件箱」（按账号）显示，避免本地存档
+        // 同时聚合收件/已发送两份副本导致重复显示。
+        const account = dataRef.current.accounts.find(
+          (a) => a.id === mail.accountId,
+        );
+        const inboxFolders = (
+          account?.inboxFolders?.length ? account.inboxFolders : ["INBOX"]
+        ).map((f) => f.toUpperCase());
+        const isInbox = inboxFolders.includes(
+          (mail.sourceFolder || "INBOX").toUpperCase(),
+        );
         setQuery({
           view: mail.trashed
             ? "trash"
-            : mail.savedLocally !== false
-              ? "local"
-              : "remote",
+            : isInbox
+              ? "all"
+              : mail.savedLocally !== false
+                ? "local"
+                : "remote",
           accountId: mail.accountId,
           folder: "",
-          remoteFolder: mail.savedLocally === false ? mail.sourceFolder : "",
+          remoteFolder:
+            !mail.trashed && !isInbox && mail.savedLocally === false
+              ? mail.sourceFolder
+              : "",
           search: "",
           unreadOnly: false,
           limit: 200,
@@ -1551,14 +1567,6 @@ export default function App() {
     return { accountId, accountName: account.name, server, targets };
   }
   // 自己账号发出的邮件（含服务器已发送副本与本机 SMTP 存档）
-  const own = (m: Mail) =>
-    parseAddresses(m.sender).some(
-      (a) =>
-        a.email.toLowerCase() === m.accountEmail.toLowerCase() ||
-        data.accounts.some(
-          (account) => account.email.toLowerCase() === a.email.toLowerCase(),
-        ),
-    );
   // 重新编辑已发送邮件：生成新草稿进写信窗口，原邮件不动
   async function reeditSent(m: Mail) {
     if (demo) {
@@ -3722,7 +3730,7 @@ export default function App() {
                                 <span className="action-label">转发</span>
                               </Button>
                             </MailActionTooltip>
-                            {own(detail.mail) && (
+                            {batchMenuKind === "sent" && (
                               <Button
                                 variant="ghost"
                                 size="sm"

@@ -12,7 +12,9 @@ static AnserNotificationCallback failed;
 - (void)userNotificationCenter:(UNUserNotificationCenter *)center
       willPresentNotification:(UNNotification *)notification
         withCompletionHandler:(void (^)(UNNotificationPresentationOptions))completion {
-    completion(UNNotificationPresentationOptionBanner | UNNotificationPresentationOptionSound);
+    completion(UNNotificationPresentationOptionBanner |
+               UNNotificationPresentationOptionList |
+               UNNotificationPresentationOptionSound);
 }
 - (void)userNotificationCenter:(UNUserNotificationCenter *)center
  didReceiveNotificationResponse:(UNNotificationResponse *)response
@@ -38,6 +40,9 @@ void anser_notification_show(const char *title, const char *body, const char *to
         content.title = [NSString stringWithUTF8String:title];
         content.body = [NSString stringWithUTF8String:body];
         content.sound = UNNotificationSound.defaultSound;
+        if (@available(macOS 12.0, *)) {
+            content.interruptionLevel = UNNotificationInterruptionLevelActive;
+        }
         NSString *mailToken = [NSString stringWithUTF8String:token];
         if (mailToken.length) content.userInfo = @{@"anserMailToken": mailToken};
         UNUserNotificationCenter *center = UNUserNotificationCenter.currentNotificationCenter;
