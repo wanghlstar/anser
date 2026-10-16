@@ -34,7 +34,6 @@ import { coalesceRefresh } from "./lib/refresh-queue";
 import { ConversationReader } from "./components/conversation-reader";
 import { ScrollPane } from "./components/scroll-pane";
 import { replyHeaders } from "./lib/conversations";
-import { FolderInput } from "./components/folder-input";
 import { Tabs, TabsList, TabsTrigger } from "./components/ui/tabs";
 import { disableNativeContextMenu } from "./lib/context-menu";
 import { NavigationLayout, MailLayout } from "./components/resizable-layout";
@@ -823,6 +822,30 @@ export default function App() {
     } catch (e) {
       toast.error(String(e));
       void refresh();
+    }
+  }
+  /// 删除本地文件夹：把邮件移回「全部存档」，文件夹随之从侧栏消失。
+  async function removeLocalFolder(name: string) {
+    const ok = await askConfirmation({
+      title: `删除本地文件夹「${name}」？`,
+      description:
+        "文件夹里的邮件会移回「全部存档」，不会删除邮件，也不改动服务器上的原件。",
+      action: "删除文件夹",
+      destructive: true,
+    });
+    if (!ok) return;
+    try {
+      const moved = await call<number>("clear_local_folder", { name });
+      if (query.folder === name) {
+        setSelected("");
+        setDetail(null);
+      }
+      await refresh();
+      toast.success(
+        moved ? `已移出 ${moved} 封邮件，文件夹已删除` : "文件夹已删除",
+      );
+    } catch (e) {
+      toast.error(String(e));
     }
   }
   async function updateMail(id: string, action: string, value: string) {
@@ -1847,64 +1870,106 @@ export default function App() {
                         <ChevronDown size={14} />
                       </CollapsibleTrigger>
                       <CollapsibleContent>
-                        {[...group.folders]
-                          .filter((f) => f.count > 0)
-                          .sort((a, b) =>
-                            // 与"我的账号"的文件夹树同一套排序（角色+中文拼音）
-                            compareFolders(
-                              {
-                                name: a.name,
-                                displayName: a.displayName || a.name,
-                                roles: serverFolders.find(
-                                  (x) =>
-                                    x.accountId === group.accountId &&
-                                    x.name === a.name,
-                                )?.roles,
-                              },
-                              {
-                                name: b.name,
-                                displayName: b.displayName || b.name,
-                                roles: serverFolders.find(
-                                  (x) =>
-                                    x.accountId === group.accountId &&
-                                    x.name === b.name,
-                                )?.roles,
-                              },
-                            ),
+                        {(() => {
+                          // 本地存档账号组：有本地存档的服务器文件夹 + 草稿箱
+                          // （草稿只存本机），统一按账号树顺序（角色 + 中文拼音）排列。
+                          const roles = (name: string) =>
+                            serverFolders.find(
+                              (x) =>
+                                x.accountId === group.accountId &&
+                                x.name === name,
+                            )?.roles;
+                          const rows = group.folders
+                            .filter((f) => f.count > 0)
+                            .map((f) => ({
+                              name: f.name,
+                              displayName: f.displayName || f.name,
+                              count: f.count,
+                              roles: roles(f.name),
+                              drafts: false,
+                            }));
+                          const draftsFolder = serverFolders.find(
+                            (x) =>
+                              x.accountId === group.accountId &&
+                              x.roles?.includes("drafts"),
+                          );
+                          if (
+                            draftsFolder &&
+                            !rows.some((r) => r.name === draftsFolder.name)
                           )
-                          .map((f) => (
-                            <Button
-                              variant="ghost"
-                              key={f.name}
-                              className={`nav-item folder-item nested ${
-                                query.view === "local" &&
+                            rows.push({
+                              name: draftsFolder.name,
+                              displayName:
+                                draftsFolder.displayName || draftsFolder.name,
+                              count: drafts.filter(
+                                (d) => d.accountId === group.accountId,
+                              ).length,
+                              roles: draftsFolder.roles,
+                              drafts: true,
+                            });
+                          rows.sort((a, b) => compareFolders(a, b));
+                          return rows.map((f) => {
+                            const active = f.drafts
+                              ? query.view === "remote" &&
                                 query.accountId === group.accountId &&
                                 query.remoteFolder === f.name
-                                  ? "active"
-                                  : ""
-                              }`}
-                              onClick={() =>
-                                navigate("local", group.accountId, "", f.name)
-                              }
-                            >
-                              <Folder size={15} />
-                              <span>{f.displayName || f.name}</span>
-                              {!!f.count && <em>{f.count}</em>}
-                            </Button>
-                          ))}
+                              : query.view === "local" &&
+                                query.accountId === group.accountId &&
+                                query.remoteFolder === f.name;
+                            return (
+                              <Button
+                                variant="ghost"
+                                key={f.name}
+                                className={`nav-item folder-item nested ${active ? "active" : ""}`}
+                                onClick={() =>
+                                  f.drafts
+                                    ? void openRemoteFolder(
+                                        group.accountId,
+                                        f.name,
+                                      )
+                                    : navigate(
+                                        "local",
+                                        group.accountId,
+                                        "",
+                                        f.name,
+                                      )
+                                }
+                              >
+                                {f.drafts ? (
+                                  <FileText size={15} />
+                                ) : (
+                                  <Folder size={15} />
+                                )}
+                                <span>{f.displayName}</span>
+                                {!!f.count && <em>{f.count}</em>}
+                              </Button>
+                            );
+                          });
+                        })()}
                       </CollapsibleContent>
                     </Collapsible>
                   ))}
                 {data.folders.map((f) => (
-                  <Button
-                    variant="ghost"
-                    key={f}
-                    className={`nav-item folder-item ${query.folder === f && page === "mail" ? "active" : ""}`}
-                    onClick={() => navigate("local", "", f)}
-                  >
-                    <Folder size={16} />
-                    <span>{f}</span>
-                  </Button>
+                  <div className="local-folder-row" key={f}>
+                    <Button
+                      variant="ghost"
+                      className={`nav-item folder-item ${query.folder === f && page === "mail" ? "active" : ""}`}
+                      onClick={() => navigate("local", "", f)}
+                    >
+                      <Folder size={16} />
+                      <span>{f}</span>
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      className="folder-delete-btn text-destructive"
+                      aria-label={`删除本地文件夹 ${f}`}
+                      title="删除本地文件夹（邮件移回「全部存档」）"
+                      onClick={() => void removeLocalFolder(f)}
+                    >
+                      <Trash2 size={13} />
+                    </Button>
+                  </div>
                 ))}
                 {nav("trash", Trash2)}
               </ScrollPane>
@@ -2774,6 +2839,43 @@ export default function App() {
                                   );
                                 }}
                               />
+                              <Button
+                                variant="ghost"
+                                size="icon-xs"
+                                className="row-quick"
+                                aria-label={m.starred ? "取消星标" : "星标"}
+                                title={m.starred ? "取消星标" : "星标"}
+                                onClick={() =>
+                                  void mutate(
+                                    [m.id],
+                                    "star",
+                                    String(!m.starred),
+                                    grouped,
+                                  )
+                                }
+                              >
+                                <Star
+                                  size={13}
+                                  className={m.starred ? "star-on" : ""}
+                                />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon-xs"
+                                className="row-quick"
+                                aria-label={m.isRead ? "标记未读" : "标记已读"}
+                                title={m.isRead ? "标记未读" : "标记已读"}
+                                onClick={() =>
+                                  void mutate(
+                                    [m.id],
+                                    "read",
+                                    String(!m.isRead),
+                                    grouped,
+                                  )
+                                }
+                              >
+                                <MailOpen size={13} />
+                              </Button>
                             </div>
                             <Button
                               variant="ghost"
@@ -3377,20 +3479,61 @@ export default function App() {
               整理 {moveIds.length} 封本地邮件，不改变服务器上的原件。
             </DialogDescription>
           </DialogHeader>
-          <FolderInput
-            value={moveFolder}
-            onChange={setMoveFolder}
-            folders={data.folders}
-          />
-          <Button
-            disabled={!moveFolder.trim()}
-            onClick={() => {
-              void mutate(moveIds, "folder", moveFolder.trim(), moveThreads);
-              setMoveIds([]);
-            }}
-          >
-            确认归类
-          </Button>
+          {data.folders.length > 0 && (
+            <div className="local-folder-picks">
+              {data.folders.map((f) => (
+                <Button
+                  key={f}
+                  variant={moveFolder === f ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setMoveFolder(f)}
+                >
+                  <Folder size={13} />
+                  {f}
+                </Button>
+              ))}
+            </div>
+          )}
+          <div className="field">
+            <Label htmlFor="move-folder-name">文件夹名称</Label>
+            <Input
+              id="move-folder-name"
+              value={moveFolder}
+              placeholder="选择上面的文件夹，或输入新名称"
+              onChange={(e) => setMoveFolder(e.target.value)}
+            />
+          </div>
+          <div className="dialog-actions">
+            <Button
+              variant="outline"
+              className="mr-auto"
+              onClick={() => {
+                // 移出归类：把邮件退回默认桶「全部存档」
+                void mutate(moveIds, "folder", "全部存档", moveThreads);
+                setMoveIds([]);
+              }}
+            >
+              移出归类
+            </Button>
+            <Button
+              variant="ghost"
+              onClick={() => {
+                setMoveIds([]);
+                setMoveFolder("");
+              }}
+            >
+              取消
+            </Button>
+            <Button
+              disabled={!moveFolder.trim()}
+              onClick={() => {
+                void mutate(moveIds, "folder", moveFolder.trim(), moveThreads);
+                setMoveIds([]);
+              }}
+            >
+              确认归类
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
       {confirmationDialog}

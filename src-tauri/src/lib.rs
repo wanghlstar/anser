@@ -298,6 +298,30 @@ fn import_rules(state: tauri::State<AppState>, rules: Vec<Rule>) -> Result<usize
     state.store.save_rules(&existing)?;
     Ok(added)
 }
+/// 删除本地文件夹：把该文件夹下的邮件移回「全部存档」，文件夹随之消失。
+#[tauri::command]
+fn clear_local_folder(state: tauri::State<AppState>, name: String) -> Result<usize> {
+    state.store.clear_local_folder(&name)
+}
+/// 写文本文件（规则导出用；由保存对话框给出绝对路径）。
+#[tauri::command]
+fn write_text_file(path: String, content: String) -> Result<()> {
+    let p = Path::new(&path);
+    if !p.is_absolute() {
+        return Err("请选择绝对路径".into());
+    }
+    std::fs::write(p, content).map_err(err)
+}
+/// 导出规则：按账号筛选（空数组 = 全部），保持执行顺序。
+/// include_global 控制是否带上全局规则（accountId 为空）。
+#[tauri::command]
+fn export_rules(
+    state: tauri::State<AppState>,
+    account_ids: Vec<String>,
+    include_global: bool,
+) -> Result<Vec<Rule>> {
+    state.store.export_rules(&account_ids, include_global)
+}
 #[tauri::command]
 fn preview_rule(state: tauri::State<AppState>, rule: Rule) -> Result<Vec<String>> {
     state.store.preview_rule(&rule)
@@ -2004,6 +2028,9 @@ pub fn run() {
             save_rules,
             read_text_file,
             import_rules,
+            export_rules,
+            write_text_file,
+            clear_local_folder,
             rule_executions,
             retry_rule_execution,
             preview_rule,

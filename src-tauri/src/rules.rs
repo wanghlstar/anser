@@ -3,33 +3,54 @@ pub fn validate(rule: &Rule) -> Result<()> {
     if rule.name.trim().is_empty() || rule.conditions.is_empty() {
         return Err("规则需要名称和至少一个条件".into());
     }
-    if !["all", "any"].contains(&rule.mode.as_str())
-        || ![
-            "folder",
-            "read",
-            "unread",
-            "star",
-            "trash",
-            "serverCopy",
-            "serverMove",
-        ]
-        .contains(&rule.action.as_str())
-    {
+    let actions = rule.effective_actions_deduped();
+    const KNOWN: [&str; 7] = [
+        "folder",
+        "read",
+        "unread",
+        "star",
+        "trash",
+        "serverCopy",
+        "serverMove",
+    ];
+    if !["all", "any"].contains(&rule.mode.as_str()) || actions.is_empty() {
         return Err("无效的规则配置".into());
     }
-    if rule.action == "folder" && rule.destination.trim().is_empty() {
+    if !actions.iter().all(|a| KNOWN.contains(&a.as_str())) {
+        return Err("无效的规则配置".into());
+    }
+    // 服务器 COPY/MOVE 走独立任务（有确认/重试状态机）：只能有一个，
+    // 且只允许搭配本机标记（已读/未读/星标），不能与归类、删除或另一个服务器动作叠加。
+    let remote_actions: Vec<&String> = actions
+        .iter()
+        .filter(|a| matches!(a.as_str(), "serverCopy" | "serverMove"))
+        .collect();
+    if remote_actions.len() > 1 {
+        return Err("服务器复制/移动不能同时使用两个服务器动作".into());
+    }
+    if let Some(server) = remote_actions.first() {
+        if actions
+            .iter()
+            .any(|a| a != *server && !matches!(a.as_str(), "read" | "unread" | "star"))
+        {
+            return Err("服务器复制/移动只能搭配标记已读/未读或星标".into());
+        }
+    }
+    if actions.iter().any(|a| a == "folder") && rule.destination.trim().is_empty() {
         return Err("请输入本地目标文件夹".into());
     }
+    // 来源目录可以留空：留空时按邮件当前所在的活跃服务器目录动态解析
+    // （合并动作「移动到文件夹」的默认行为，等价于 Foxmail 的移动）。
     if remote(rule)
         && (rule.account_id.is_empty()
-            || rule.source_folder.is_empty()
             || rule.destination.is_empty()
-            || rule.source_folder.eq_ignore_ascii_case(&rule.destination)
+            || (!rule.source_folder.is_empty()
+                && rule.source_folder.eq_ignore_ascii_case(&rule.destination))
             || [&rule.source_folder, &rule.destination]
                 .iter()
                 .any(|s| s.bytes().any(|b| b < 32 || b == 127)))
     {
-        return Err("服务器规则需要指定账号、来源目录和不同的目标目录".into());
+        return Err("服务器规则需要指定账号和不同的目标目录".into());
     }
     for c in &rule.conditions {
         if remote(rule) && c.field == "body" {
@@ -149,5 +170,7 @@ mod body_tests {
 }
 
 pub fn remote(rule: &Rule) -> bool {
-    matches!(rule.action.as_str(), "serverCopy" | "serverMove")
+    rule.effective_actions()
+        .iter()
+        .any(|a| matches!(a.as_str(), "serverCopy" | "serverMove"))
 }

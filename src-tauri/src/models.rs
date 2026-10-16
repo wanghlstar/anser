@@ -160,6 +160,34 @@ pub struct Rule {
     pub source_folder: String,
     pub stop: bool,
 }
+impl Rule {
+    /// 本地动作可以叠加：`action` 里用 `+` `,` `，` `;` `；` 分隔写多个，
+    /// 例如 `folder+read`。单个动作（旧数据）天然兼容。
+    /// 服务器 COPY/MOVE 走独立任务队列，见 `rules::remote`。
+    pub fn effective_actions(&self) -> Vec<String> {
+        self.action
+            .split(['+', ',', '，', ';', '；'])
+            .map(|a| a.trim().to_string())
+            .filter(|a| !a.is_empty())
+            .collect()
+    }
+    /// read/unread 互相矛盾，重复动作也没有意义——同一封邮件只保留
+    /// 各自最后一次，否则会出现自相矛盾的执行结果。
+    pub fn effective_actions_deduped(&self) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        for action in self.effective_actions() {
+            let flag = matches!(action.as_str(), "read" | "unread")
+                .then(|| out.iter().position(|a| matches!(a.as_str(), "read" | "unread")))
+                .flatten();
+            match flag {
+                Some(index) => out[index] = action,
+                None if out.contains(&action) => {}
+                None => out.push(action),
+            }
+        }
+        out
+    }
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

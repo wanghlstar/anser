@@ -1,5 +1,14 @@
 import { describe, it, expect } from "vitest";
-import { ruleMatches } from "./rule-match";
+import {
+  ruleMatches,
+  ruleActions,
+  ruleActionsDeduped,
+  isRemoteRule,
+  isMoveAction,
+  toggleAction,
+  toggleMergedAction,
+  groupRulesByAccount,
+} from "./rule-match";
 import type { Mail, Rule } from "./types";
 const mail = {
   accountId: "work",
@@ -88,4 +97,132 @@ it("does not treat an online or undecodable body as an empty matching body", () 
       online,
     ),
   ).toBe(true);
+});
+
+describe("rule action toggling", () => {
+  const toggle = toggleAction;
+  it("adds and removes local actions in order", () => {
+    expect(toggle("", "folder", true)).toBe("folder");
+    expect(toggle("folder", "read", true)).toBe("folder+read");
+    expect(toggle("folder+read", "star", true)).toBe("folder+read+star");
+    expect(toggle("folder+read", "read", false)).toBe("folder");
+    expect(toggle("folder", "folder", false)).toBe("");
+  });
+  it("keeps read and unread mutually exclusive", () => {
+    expect(toggle("read", "unread", true)).toBe("unread");
+    expect(toggle("unread", "read", true)).toBe("read");
+  });
+  it("treats a server action as exclusive in both directions", () => {
+    expect(toggle("folder+read", "serverMove", true)).toBe("serverMove");
+    expect(toggle("serverMove", "serverMove", false)).toBe("");
+    // 反过来：勾选本地动作自动解除服务器动作
+    expect(toggle("serverMove", "read", true)).toBe("read");
+    expect(toggle("serverCopy", "folder", true)).toBe("folder");
+  });
+  it("ignores duplicates", () => {
+    expect(toggle("folder", "folder", true)).toBe("folder");
+  });
+});
+
+describe("rule grouping by account", () => {
+  const rule = (id: string, accountId: string): Rule =>
+    ({
+      id,
+      name: id,
+      accountId,
+      enabled: true,
+      mode: "all",
+      conditions: [],
+      action: "folder",
+      destination: "",
+      stop: true,
+    }) as Rule;
+  const accounts = [
+    { id: "a", email: "a@example.com" },
+    { id: "b", email: "b@example.com" },
+  ];
+  it("keeps the global group first and preserves execution order", () => {
+    const groups = groupRulesByAccount(
+      [rule("r1", "a"), rule("r2", ""), rule("r3", "b"), rule("r4", "a")],
+      accounts,
+    );
+    expect(groups.map((g) => g.label)).toEqual([
+      "全部账号",
+      "a@example.com",
+      "b@example.com",
+    ]);
+    // 每个分组内带全局顺序号，折叠也不丢执行优先级
+    expect(groups[1].rules.map((r) => [r.rule.name, r.order])).toEqual([
+      ["r1", 0],
+      ["r4", 3],
+    ]);
+  });
+  it("falls back to the account id when the email is unknown", () => {
+    const groups = groupRulesByAccount([rule("r1", "ghost")], accounts);
+    expect(groups[0].label).toBe("ghost");
+  });
+  it("returns nothing for an empty rule set", () => {
+    expect(groupRulesByAccount([], accounts)).toEqual([]);
+  });
+});
+
+describe("merged move action", () => {
+  const asRule = (action: string): Rule =>
+    ({
+      id: "r",
+      name: "r",
+      accountId: "a",
+      enabled: true,
+      mode: "all",
+      conditions: [],
+      action,
+      destination: "",
+      stop: true,
+    }) as Rule;
+  it("recognizes legacy and merged move values", () => {
+    expect(isMoveAction(asRule("folder"))).toBe(true);
+    expect(isMoveAction(asRule("serverMove"))).toBe(true);
+    expect(isMoveAction(asRule("serverCopy"))).toBe(true);
+    expect(isMoveAction(asRule("folder+read"))).toBe(true);
+    expect(isMoveAction(asRule("read"))).toBe(false);
+    expect(isRemoteRule(asRule("folder"))).toBe(false);
+    expect(isRemoteRule(asRule("serverMove"))).toBe(true);
+  });
+  it("lands the move on serverMove for IMAP and folder otherwise", () => {
+    expect(toggleMergedAction(asRule(""), "move", true, true)).toBe(
+      "serverMove",
+    );
+    expect(toggleMergedAction(asRule(""), "move", true, false)).toBe("folder");
+  });
+  it("stacks local marks with the move and excludes trashing", () => {
+    // 移动可搭配已读/星标
+    expect(toggleMergedAction(asRule("read+star"), "move", true, true)).toBe(
+      "serverMove+read+star",
+    );
+    expect(
+      toggleMergedAction(asRule("serverMove+read"), "star", true, true),
+    ).toBe("serverMove+read+star");
+    expect(toggleMergedAction(asRule("folder"), "read", true, false)).toBe(
+      "folder+read",
+    );
+    // 取消移动只去掉移动本身，保留标记
+    expect(
+      toggleMergedAction(asRule("folder+read"), "move", false, false),
+    ).toBe("read");
+    // 移动与废纸篓互斥
+    expect(toggleMergedAction(asRule("trash"), "move", true, true)).toBe(
+      "serverMove",
+    );
+    expect(toggleMergedAction(asRule("serverMove"), "trash", true, true)).toBe(
+      "trash",
+    );
+  });
+  it("keeps stacking non-move actions", () => {
+    expect(toggleMergedAction(asRule("read"), "star", true, true)).toBe(
+      "read+star",
+    );
+    expect(toggleMergedAction(asRule("read"), "unread", true, true)).toBe(
+      "unread",
+    );
+  });
 });

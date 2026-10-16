@@ -1765,3 +1765,80 @@ it("lists an account's local drafts in its drafts folder", async () => {
     ),
   ).toBe(true);
 });
+
+describe("local folder management", () => {
+  it("moves mail out of its local folder from the classify dialog", async () => {
+    await click(nav("本地存档"));
+    const row = host.querySelector("button.mail-row-main")!;
+    await act(async () => {
+      row.dispatchEvent(
+        new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          clientX: 10,
+          clientY: 10,
+        }),
+      );
+    });
+    await click(
+      [...host.querySelectorAll(".row-context-menu button")].find(
+        (b) => b.textContent === "归入本地文件夹",
+      )!,
+    );
+    // 对话框列出已有本地文件夹，并给出明确的移出入口
+    expect(document.body.textContent).toContain("移出归类");
+    const calls = vi.spyOn(api, "call");
+    await click(
+      [...document.querySelectorAll("button")].find(
+        (b) => b.textContent === "移出归类",
+      )!,
+    );
+    expect(calls).toHaveBeenCalledWith(
+      "update_mail",
+      expect.objectContaining({ action: "folder", value: "全部存档" }),
+    );
+  });
+  it("deletes a local folder from the sidebar after confirming", async () => {
+    await click(nav("本地存档"));
+    const calls = vi.spyOn(api, "call");
+    await click(host.querySelector('[aria-label="删除本地文件夹 项目协作"]'));
+    const confirm = [...document.querySelectorAll("button")].find(
+      (b) => b.textContent === "删除文件夹",
+    )!;
+    expect(confirm).toBeTruthy();
+    await click(confirm);
+    expect(calls).toHaveBeenCalledWith("clear_local_folder", {
+      name: "项目协作",
+    });
+  });
+  it("offers the account's local drafts inside the local-archive group", async () => {
+    const seed = await snapshot(localQuery);
+    // 本地存档树按账号 "demo" 聚合，给该账号补一个草稿目录
+    seed.remoteFolders = [
+      {
+        accountId: "demo",
+        name: "Drafts",
+        displayName: "草稿箱",
+        delimiter: "/",
+        selectable: true,
+        roles: ["drafts"],
+      },
+    ];
+    localStorage.setItem("mail-desktop-demo-v1", JSON.stringify(seed));
+    api.restoreDemo();
+    await click(nav("本地存档"));
+    // 展开本地存档账号组
+    await click(
+      [...host.querySelectorAll("button.nav-item.folder-item")].find((b) =>
+        b.textContent?.includes("demo@example.com"),
+      ) ?? null,
+    );
+    const entry = [
+      ...host.querySelectorAll("button.nav-item.folder-item"),
+    ].find((b) => b.textContent?.includes("草稿箱"));
+    expect(entry).toBeTruthy();
+    await click(entry!);
+    // 与账号内的草稿视图一致：显示本地草稿面板
+    expect(document.body.textContent).toContain("没写完的邮件");
+  });
+});
