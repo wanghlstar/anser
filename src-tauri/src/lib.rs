@@ -566,11 +566,18 @@ fn save_preferences(
     // 偏好开启时始终显示 Dock 图标；关闭时跟随主窗口可见性，隐藏/最小化时自动隐藏。
     let visible = dock_icon_should_show(preferences.dock_visible, main_window_shown(&app), false);
     set_dock_visible(visible);
+    // 托盘「免打扰」跟随新邮件通知开关
+    if let Some(tray) = app.try_state::<TrayState>() {
+        if let Some(item) = tray.do_not_disturb.as_ref() {
+            let _ = item.set_checked(!preferences.new_mail_notifications);
+        }
+    }
     Ok(())
 }
 /// 托盘「免打扰」：只切换新邮件通知，不影响菜单栏未读计数与收取。
 #[tauri::command]
 fn toggle_do_not_disturb(
+    app: tauri::AppHandle,
     state: tauri::State<AppState>,
     tray: tauri::State<'_, TrayState>,
 ) -> Result<bool> {
@@ -581,6 +588,8 @@ fn toggle_do_not_disturb(
     if let Some(item) = tray.do_not_disturb.as_ref() {
         let _ = item.set_checked(quiet);
     }
+    // 让已打开的设置页同步「新邮件通知」开关
+    let _ = app.emit("preferences-updated", ());
     Ok(quiet)
 }
 /// 托盘操作的结果反馈：窗口隐藏时系统通知可能不显示，退回写到活动日志。
@@ -1750,7 +1759,7 @@ fn watch_tray_unread(store: Store, tray: tauri::tray::TrayIcon) {
         // 用 Option 区分「尚未写入」与「已写入 0」；0 表示清空标题。
         let mut shown: Option<u64> = None;
         loop {
-            std::thread::sleep(std::time::Duration::from_secs(5));
+            std::thread::sleep(std::time::Duration::from_secs(1));
             let unread = store.tray_unread_count().unwrap_or(0);
             if shown == Some(unread) {
                 continue;
@@ -1893,7 +1902,7 @@ pub fn run() {
                     "tray-do-not-disturb" => {
                         let state = app.state::<AppState>();
                         let tray = app.state::<TrayState>();
-                        match toggle_do_not_disturb(state, tray) {
+                        match toggle_do_not_disturb(app.clone(), state, tray) {
                             Ok(true) => toast_quiet(app, "已开启免打扰，新邮件不再弹通知"),
                             Ok(false) => toast_quiet(app, "已关闭免打扰"),
                             Err(e) => {

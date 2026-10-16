@@ -1585,31 +1585,27 @@ describe("inbox scope of the aggregate badges", () => {
   });
 });
 
-it("collapses the advanced diagnostics on the settings page and keeps the about card last", async () => {
+it("shows activity and diagnostics in a card and keeps the about card last", async () => {
   await click(nav("设置与账号"));
   const section = host.querySelector("section.workspace-panel")!;
-  const [advanced, recent] = [...section.querySelectorAll(".activity-section")];
-  expect(advanced.textContent).toContain("高级与诊断");
-  expect(recent.textContent).toContain("最近活动");
-  // 默认折叠：四块诊断内容不渲染，存储卡与工具卡留在折叠区之外。
-  expect(advanced.textContent).not.toContain("完整保存任务");
-  expect(advanced.textContent).not.toContain("目录来源检查");
+  const diagnostics = section.querySelector(".diagnostics-card")!;
+  expect(diagnostics).not.toBeNull();
+  expect(diagnostics.textContent).toContain("活动与诊断");
+  expect(diagnostics.textContent).toContain("最近活动");
+  expect(diagnostics.textContent).toContain("服务器文件夹操作");
+  expect(diagnostics.textContent).not.toContain("异常目录暂停同步");
   expect(section.querySelector(".storage-card")).not.toBeNull();
   expect(section.querySelector(".storage-tools")).not.toBeNull();
   expect(section.querySelector(".info-strip")).not.toBeNull();
   await click(
-    [...advanced.querySelectorAll("button")].find((b) =>
-      b.textContent?.includes("高级与诊断"),
+    [...diagnostics.querySelectorAll("button")].find((b) =>
+      b.textContent?.includes("目录来源检查"),
     )!,
   );
-  expect(advanced.textContent).toContain("完整保存任务");
-  expect(advanced.textContent).toContain("目录来源检查");
-  // 关于与更新仍在最近活动之后、dev-note 之前。
+  expect(diagnostics.textContent).toContain("异常目录暂停同步");
+  // 关于与更新仍在 dev-note 之前。
   const about = section.querySelector(".settings-about")!;
   expect(about.textContent).toContain("关于与更新");
-  expect(
-    recent.compareDocumentPosition(about) & Node.DOCUMENT_POSITION_FOLLOWING,
-  ).toBeTruthy();
   expect(about.nextElementSibling?.className).toContain("dev-note");
 });
 

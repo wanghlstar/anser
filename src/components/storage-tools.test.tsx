@@ -65,7 +65,7 @@ it("persists independent notification toggles and leaves the sync interval intac
     "true",
   );
 });
-it("keeps the three notification and startup switches side by side in one row", async () => {
+it("groups the notification switches and keeps startup in the background card", async () => {
   await act(async () => root.render(<StorageTools />));
   const switches = host.querySelector(".settings-tool-switches")!;
   expect(switches).not.toBeNull();
@@ -73,10 +73,15 @@ it("keeps the three notification and startup switches side by side in one row", 
   for (const id of [
     "new-mail-notifications",
     "send-result-notifications",
-    "auto-start",
+    "dock-visible",
   ]) {
     expect(switches.querySelector(`#${id}`)).not.toBeNull();
   }
+  // 开机自启归到「后台检查」
+  const background = [...host.querySelectorAll(".settings-tool")].find(
+    (card) => card.querySelector("h3")?.textContent === "后台检查",
+  );
+  expect(background?.querySelector("#auto-start")).not.toBeNull();
   expect(
     [...host.querySelectorAll("button")].some(
       (b) => b.textContent === "测试系统通知",
@@ -149,25 +154,24 @@ it("does not register a development preview as a broken login startup item", asy
   );
   expect(host.textContent).toContain("请在正式应用中开启开机自启");
 });
-it("stacks the taller cards in the left column and the shorter ones in the right", async () => {
+it("lays the settings cards out as a top row then two columns", async () => {
   await act(async () => root.render(<StorageTools />));
-  const titles = [...host.querySelectorAll(".storage-tools-col")].map(
-    (column) =>
-      [
-        ...column.querySelectorAll(
-          ".settings-tool > h3, .settings-tool-title h3",
-        ),
-      ].map((h3) => h3.textContent),
-  );
-  expect(titles).toEqual([
-    ["系统通知与启动", "外观"],
-    ["后台检查", "存档分层"],
+  const titlesOf = (root: Element) =>
+    [
+      ...root.querySelectorAll(".settings-tool > h3, .settings-tool-title h3"),
+    ].map((h3) => h3.textContent);
+  expect(titlesOf(host.querySelector(".storage-tools-top")!)).toEqual([
+    "系统通知",
+    "后台检查",
   ]);
+  const bottom = host.querySelectorAll(".storage-tools-col");
+  expect(titlesOf(bottom[0])).toEqual(["外观", "活动与诊断"]);
+  expect(titlesOf(bottom[1])).toEqual(["存档校验"]);
 });
 it("groups archive integrity under the archive tiering card", async () => {
   await act(async () => root.render(<StorageTools />));
   const tier = [...host.querySelectorAll(".settings-tool")].find(
-    (card) => card.querySelector("h3")?.textContent === "存档分层",
+    (card) => card.querySelector("h3")?.textContent === "存档校验",
   );
   // 校验存档与分层操作同一行；不再有独立的「存档完整性」卡片标题
   const tierText = tier?.textContent ?? "";
@@ -177,7 +181,7 @@ it("groups archive integrity under the archive tiering card", async () => {
     [
       ...host.querySelectorAll(".settings-tool > h3, .settings-tool-title h3"),
     ].map((h3) => h3.textContent),
-  ).toEqual(["系统通知与启动", "外观", "后台检查", "存档分层"]);
+  ).toEqual(["系统通知", "后台检查", "外观", "活动与诊断", "存档校验"]);
   expect(host.querySelector("h4")).toBeNull();
 });
 it("offers the send countdown options in the background check card and saves them", async () => {
@@ -223,23 +227,18 @@ it("offers the send countdown options in the background check card and saves the
     expect.objectContaining({ sendCountdownSeconds: 0 }),
   );
 });
-it("keeps the appearance card with the scale row and the Dock icon switch", async () => {
+it("keeps the appearance card with just the scale row", async () => {
   await act(async () => root.render(<StorageTools />));
-  const appearance = [...host.querySelectorAll(".settings-tool")].find(
-    (card) => card.querySelector("h3")?.textContent === "外观",
-  );
+  const card = (title: string) =>
+    [...host.querySelectorAll(".settings-tool")].find(
+      (c) => c.querySelector("h3")?.textContent === title,
+    );
+  const appearance = card("外观");
   expect(appearance).not.toBeUndefined();
   expect(appearance?.querySelector('[aria-label="侧边栏字号"]')).not.toBeNull();
-  const dock = appearance?.querySelector<HTMLButtonElement>("#dock-visible");
-  expect(dock).not.toBeNull();
-  expect(dock?.getAttribute("aria-checked")).toBe("true");
-  expect(
-    [...appearance!.querySelectorAll("p")].map((p) => p.textContent),
-  ).toEqual(
-    expect.arrayContaining([
-      "开启时始终在 Dock 显示；关闭时仅在打开窗口时显示，关闭或最小化窗口会自动隐藏，菜单栏图标仍可打开主窗口。",
-    ]),
-  );
+  // Dock 开关已归到「系统通知」
+  expect(appearance?.querySelector("#dock-visible")).toBeNull();
+  expect(card("系统通知")?.querySelector("#dock-visible")).not.toBeNull();
 });
 it("saves the Dock icon switch immediately without touching the scale selection", async () => {
   await call("save_preferences", {
