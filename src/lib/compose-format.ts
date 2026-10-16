@@ -88,43 +88,6 @@ export function htmlToText(html: string) {
     .forEach((e) => e.append("\n"));
   return (doc.body.textContent || "").replace(/\n{3,}/g, "\n\n").trim();
 }
-/**
- * 重新编辑已发送邮件：把原件 HTML 里的签名块单独取出，作为「本封签名」快照保留原格式，
- * 正文只留作者内容（问候语保留在正文里，本来就不重复）。
- * 否则富文本编辑器会把签名当正文重排（字体字号丢失），发送时又追加一次，出现两份。
- */
-export function extractOriginalSignature(draft: Compose): Compose {
-  const accountId = draft.accountId;
-  const none: Compose["signature"] = {
-    accountId,
-    included: false,
-    greeting: "",
-    greetingHtml: "",
-    body: "",
-    html: "",
-  };
-  if (!draft.html) return { ...draft, signature: none };
-  const doc = new DOMParser().parseFromString(draft.html, "text/html");
-  const signature = doc.querySelector("[data-yanxin-signature]");
-  if (!signature) return { ...draft, signature: none };
-  const html = signature.innerHTML.trim();
-  const body = htmlToText(html);
-  signature.remove();
-  const cleaned = doc.documentElement.outerHTML;
-  return {
-    ...draft,
-    html: cleaned,
-    body: htmlToText(cleaned),
-    signature: {
-      accountId,
-      included: true,
-      greeting: "",
-      greetingHtml: "",
-      body,
-      html,
-    },
-  };
-}
 export function compileSource(source: string, format: "markdown" | "html") {
   const markup =
     format === "markdown"
@@ -270,6 +233,9 @@ function withDefaultFont(doc: Document) {
   wrapper.style.fontSize = SIZE_DEFAULT;
   wrapper.replaceChildren(...doc.body.childNodes);
   doc.body.append(wrapper);
+  // 顶格：正文首个段落会带上浏览器默认上边距，让问候语看起来比写信窗口低。
+  const first = wrapper.firstElementChild;
+  if (first instanceof HTMLElement) first.style.marginTop = "0";
 }
 
 function withSignature(editor: Compose) {

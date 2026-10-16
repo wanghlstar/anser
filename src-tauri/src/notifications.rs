@@ -1,4 +1,4 @@
-use crate::{archive, models::*, store::Store};
+use crate::{models::*, store::Store};
 use std::{
     collections::HashSet,
     sync::{Mutex, OnceLock},
@@ -49,11 +49,8 @@ pub fn incoming(
         let recent = chrono::DateTime::parse_from_rfc3339(&mail.date)
             .ok()
             .is_some_and(|date| date >= now - chrono::Duration::hours(24));
-        let own = archive::addresses(&mail.sender)
-            .unwrap_or_default()
-            .iter()
-            .any(|a| a.email.eq_ignore_ascii_case(&account.email));
-        if recent && !mail.is_read && !mail.trashed && !own {
+        // 收件箱里的新邮件都提示，包含自己发给自己（自寄）的邮件。
+        if recent && !mail.is_read && !mail.trashed {
             mails.push(mail);
         }
     }

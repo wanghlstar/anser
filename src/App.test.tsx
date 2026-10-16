@@ -419,7 +419,7 @@ describe("message and conversation display modes", () => {
     const trash = await snapshot({ ...localQuery, view: "trash" });
     expect(trash.messages.some((m) => m.id === "demo-0")).toBe(false);
   });
-  it("hides a pending permanent deletion until the next navigation reloads it", async () => {
+  it("keeps a pending permanent deletion hidden when the trash is reopened", async () => {
     await seedReplyThread();
     await click(nav("本地存档"));
     await chooseListMode("逐封邮件");
@@ -428,9 +428,6 @@ describe("message and conversation display modes", () => {
     await click(nav("本地废纸篓"));
     await chooseListMode("逐封邮件");
     expect(host.querySelectorAll("button.mail-row-main")).toHaveLength(1);
-    const subject = host.querySelector(
-      "button.mail-row-main .row-subject",
-    )!.textContent!;
     // 服务器尚未确认时本地行仍在数据里，前端先隐藏
     const originalCall = api.call;
     vi.spyOn(api, "call").mockImplementation(
@@ -446,11 +443,9 @@ describe("message and conversation display modes", () => {
     expect(host.querySelectorAll("button.mail-row-main")).toHaveLength(0);
     const trash = await snapshot({ ...localQuery, view: "trash" });
     expect(trash.messages.some((m) => m.id === "demo-0")).toBe(true);
+    // 重新打开废纸篓：未确认删除的邮件保持隐藏，不闪回
     await click(nav("本地废纸篓"));
-    expect(host.querySelectorAll("button.mail-row-main")).toHaveLength(1);
-    expect(
-      host.querySelector("button.mail-row-main .row-subject")?.textContent,
-    ).toBe(subject);
+    expect(host.querySelectorAll("button.mail-row-main")).toHaveLength(0);
   });
   it("cancels late conversation loading when the user switches to individual messages", async () => {
     await seedReplyThread();

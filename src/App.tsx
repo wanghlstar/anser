@@ -196,7 +196,6 @@ import type {
 } from "./lib/types";
 import { mailLink } from "./lib/mail-html";
 import { printMail } from "./lib/mail-print";
-import { extractOriginalSignature } from "./lib/compose-format";
 import { invoke } from "@tauri-apps/api/core";
 restoreDemo();
 const viewNames: Record<string, string> = {
@@ -634,6 +633,14 @@ export default function App() {
       ids.filter((id) => data.messages.some((m) => m.id === id)),
     );
   }, [data.messages]);
+  // 彻底删除后先把邮件藏起来，直到服务器确认、快照里不再出现再清掉待删标记。
+  // 不随导航清除，否则重开废纸篓又会闪回未确认删除的邮件。
+  useEffect(() => {
+    if (!pendingDeletes.current.size) return;
+    const present = new Set(data.messages.map((m) => m.id));
+    for (const id of [...pendingDeletes.current])
+      if (!present.has(id)) pendingDeletes.current.delete(id);
+  }, [data.messages]);
   useEffect(() => {
     if (!native) return;
     let cleanup = () => {};
@@ -1001,7 +1008,6 @@ export default function App() {
     navigationRequest.current++;
     navigationPending.current = false;
     setNavigationLoading(false);
-    pendingDeletes.current.clear();
     return () => {
       navigationRequest.current++;
       navigationPending.current = false;
@@ -1564,12 +1570,9 @@ export default function App() {
       return;
     }
     try {
-      // 原件的签名单独取出按原格式挂回本封，避免被当正文重排、发送时再重复一次
-      setDraft(
-        extractOriginalSignature(
-          await call<Compose>("reedit_sent_mail", { id: m.id }),
-        ),
-      );
+      // 原样载入已发送邮件的正文（含问候语/落款/引用），保持原状态；
+      // 不再单独抽签名再追加，否则签名会被挪到引用之后、正文顺序错乱。
+      setDraft(await call<Compose>("reedit_sent_mail", { id: m.id }));
     } catch (e) {
       toast.error(String(e));
     }
@@ -1862,7 +1865,6 @@ export default function App() {
     roles: query.remoteFolder
       ? folderRoles(query.accountId, query.remoteFolder)
       : [],
-    own: false,
   });
   const batchMove = moveTargets(
     checked
@@ -3052,7 +3054,6 @@ export default function App() {
                               m.accountId,
                               query.remoteFolder ?? "",
                             ),
-                            own: own(m),
                           });
                           const menuIds = checked.includes(m.id)
                             ? checked

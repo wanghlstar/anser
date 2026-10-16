@@ -104,7 +104,7 @@ export function RichEditor({
       }),
       GreetingParagraph,
       BodyIndent,
-      Image.configure({ inline: false }),
+      Image.configure({ inline: false, allowBase64: true }),
       TextStyle,
       FontFamily,
       FontSize,
