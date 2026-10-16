@@ -1,4 +1,5 @@
 import DOMPurify from "dompurify";
+import { normalizeMailSpacers } from "./mail-image-decorations";
 /** 预览主题色：iframe 是独立文档，解析不到外层的 CSS 变量，必须传字面量。 */
 export type PreviewTheme = { foreground: string; background: string };
 export function safeMailHtml(
@@ -49,6 +50,7 @@ export function safeMailHtml(
   for (const style of doc.querySelectorAll("style")) {
     style.textContent = secureResources(style.textContent || "");
   }
+  normalizeMailSpacers(doc);
   // WebKit suppresses frame event listeners in a scripts-disabled sandbox.
   // Native links use a route the navigation delegate cancels and emits to the
   // app; browser links are neutralized before their listeners attach.

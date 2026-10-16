@@ -2,7 +2,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { isTauri } from "@tauri-apps/api/core";
 import { cn } from "@/lib/utils";
 import { MailBodySkeleton } from "./mail-skeleton";
+import { Button } from "./ui/button";
+import { Alert, AlertDescription } from "./ui/alert";
 import { disableNativeContextMenu } from "../lib/context-menu";
+import { watchMailImages, type MailImageStatus } from "../lib/mail-images";
 import {
   interceptMailLinks,
   isMailDocument,
@@ -40,7 +43,12 @@ export function MailContent({
   const flushPreview = useRef(flush);
   flushPreview.current = flush;
   const [ready, setReady] = useState(false);
-  const [pendingImages, setPendingImages] = useState(0);
+  const [images, setImages] = useState<MailImageStatus>({
+    waiting: 0,
+    timedOut: 0,
+    failed: 0,
+  });
+  const retryImages = useRef(() => {});
   // 主题切换要重建 srcDoc：iframe 是独立文档，色值只能在生成时注入。
   const [theme, setTheme] = useState(themed ? previewTheme() : undefined);
   useEffect(() => {
@@ -68,7 +76,8 @@ export function MailContent({
   open.current = onOpenLink;
   useEffect(() => {
     setReady(false);
-    setPendingImages(0);
+    setImages({ waiting: 0, timedOut: 0, failed: 0 });
+    retryImages.current = () => {};
     initialized.current = null;
     cleanup.current();
     // DOM can be readable before onLoad, which waits for every remote image.
@@ -121,10 +130,18 @@ export function MailContent({
       if (iframe.style.height !== height) iframe.style.height = height;
     };
     let pendingResize = 0;
+    const nativeFrame = isTauri();
+    const imageTracker = watchMailImages(
+      doc,
+      (status) => {
+        setImages(status);
+        resize();
+      },
+      !nativeFrame,
+    );
+    retryImages.current = imageTracker.retry;
     const scheduleResize = () => {
-      setPendingImages(
-        [...doc.images].filter((image) => !image.complete).length,
-      );
+      imageTracker.refresh();
       cancelAnimationFrame(pendingResize);
       pendingResize = requestAnimationFrame(resize);
     };
@@ -140,27 +157,53 @@ export function MailContent({
     });
     const restoreContextMenu = disableNativeContextMenu(doc);
     const restoreLinks = interceptMailLinks(doc, (href) => open.current(href));
-    doc.addEventListener("load", scheduleResize, true);
-    doc.addEventListener("error", scheduleResize, true);
+    if (!nativeFrame) {
+      doc.addEventListener("load", scheduleResize, true);
+      doc.addEventListener("error", scheduleResize, true);
+    }
     resize();
-    setPendingImages([...doc.images].filter((image) => !image.complete).length);
     setReady(true);
     cleanup.current = () => {
       cancelAnimationFrame(pendingResize);
       observer.disconnect();
       mutations.disconnect();
+      imageTracker.dispose();
       restoreContextMenu();
+      retryImages.current = () => {};
       restoreLinks();
-      doc.removeEventListener("load", scheduleResize, true);
-      doc.removeEventListener("error", scheduleResize, true);
+      if (!nativeFrame) {
+        doc.removeEventListener("load", scheduleResize, true);
+        doc.removeEventListener("error", scheduleResize, true);
+      }
     };
   }
   return (
     <div
       className="mail-html-container"
-      aria-busy={!ready || pendingImages > 0}
+      aria-busy={!ready || images.waiting > 0}
     >
-      {(!ready || pendingImages > 0) && <MailBodySkeleton images={ready} />}
+      {(!ready || images.waiting > 0) && <MailBodySkeleton images={ready} />}
+      {ready && images.timedOut + images.failed > 0 && (
+        <Alert className="mb-2">
+          <AlertDescription className="flex flex-wrap items-center justify-between gap-2">
+            <span>
+              {`有 ${images.failed + images.timedOut} 张正文图片未加载（${[
+                images.failed > 0 && `${images.failed} 张失败`,
+                images.timedOut > 0 && `${images.timedOut} 张超时`,
+              ]
+                .filter(Boolean)
+                .join("，")}）`}
+            </span>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => retryImages.current()}
+            >
+              重新加载图片
+            </Button>
+          </AlertDescription>
+        </Alert>
+      )}
       <iframe
         ref={frame}
         className={cn("mail-html", themed && "mail-html-themed")}
