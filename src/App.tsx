@@ -353,7 +353,10 @@ export default function App() {
   const [navigationLoading, setNavigationLoading] = useState(false);
   selectionRef.current = selected;
   const localChanges = useRef(new Map<string, Partial<Mail>>());
-  const pendingDeletes = useRef(new Set<string>());
+  // 彻底删除的待确认标记：id → 发起删除时的视图作用域。
+  // 只有回到同一作用域并确认邮件已不在快照里，才撤销隐藏；这样切到别的
+  // 视图（那里本来就不含已删邮件）不会误清标记，废纸篓也就不会闪回。
+  const pendingDeletes = useRef(new Map<string, string>());
   queryRef.current = query;
   const [notificationToken, setNotificationToken] = useState<{
     token: string;
@@ -649,13 +652,15 @@ export default function App() {
       ids.filter((id) => data.messages.some((m) => m.id === id)),
     );
   }, [data.messages]);
-  // 彻底删除后先把邮件藏起来，直到服务器确认、快照里不再出现再清掉待删标记。
-  // 不随导航清除，否则重开废纸篓又会闪回未确认删除的邮件。
+  // 彻底删除后先把邮件藏起来，直到服务器确认、回到同一作用域的快照里不再出现再清掉标记。
+  // 不随导航清除，否则重开废纸篓又会闪回未确认删除的邮件；也不按别的视图判断，
+  // 因为其他视图本就不含已删邮件，会把标记误清掉。
   useEffect(() => {
     if (!pendingDeletes.current.size) return;
+    const scope = dataScope.current;
     const present = new Set(data.messages.map((m) => m.id));
-    for (const id of [...pendingDeletes.current])
-      if (!present.has(id)) pendingDeletes.current.delete(id);
+    for (const [id, at] of [...pendingDeletes.current])
+      if (at === scope && !present.has(id)) pendingDeletes.current.delete(id);
   }, [data.messages]);
   useEffect(() => {
     if (!native) return;
@@ -930,7 +935,8 @@ export default function App() {
       }));
     try {
       if (action === "delete")
-        for (const id of ids) pendingDeletes.current.add(id);
+        for (const id of ids)
+          pendingDeletes.current.set(id, queryScope(queryRef.current));
       for (const id of ids) await updateMail(id, action, value);
       await refresh();
       setChecked([]);

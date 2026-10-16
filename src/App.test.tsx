@@ -443,7 +443,9 @@ describe("message and conversation display modes", () => {
     expect(host.querySelectorAll("button.mail-row-main")).toHaveLength(0);
     const trash = await snapshot({ ...localQuery, view: "trash" });
     expect(trash.messages.some((m) => m.id === "demo-0")).toBe(true);
-    // 重新打开废纸篓：未确认删除的邮件保持隐藏，不闪回
+    // 切到别的视图再回废纸篓：未确认删除的邮件保持隐藏，不闪回（其他视图
+    // 本就不含已删邮件，不能据此清掉待删标记）
+    await click(nav("全部收件箱"));
     await click(nav("本地废纸篓"));
     expect(host.querySelectorAll("button.mail-row-main")).toHaveLength(0);
   });
