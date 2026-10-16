@@ -6,6 +6,10 @@ import { Alert, AlertDescription } from "./ui/alert";
 import { signatureContent, greetingSpec } from "@/lib/signatures";
 import type { MailSignature } from "@/lib/types";
 import { disableFrameContextMenu } from "@/lib/context-menu";
+import {
+  mergeAttachmentPaths,
+  insideComposeDrop,
+} from "@/lib/compose-attachments";
 import { SelectField, SelectOption } from "@/components/ui/select-field";
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -94,6 +98,58 @@ export function ComposeDialog({
   latest.current = value;
   const sourceFile = useRef<HTMLInputElement>(null);
   const previewFrame = useRef<HTMLIFrameElement>(null);
+  const dialogElement = useRef<HTMLDivElement>(null);
+  // 从 Finder 拖拽文件到写信窗口 → 登记为附件（Tauri 原生拖放，DOM drop 收不到）
+  useEffect(() => {
+    if (!draft?.id || !native || isDemo()) return;
+    const id = draft.id;
+    let live = true;
+    let unlisten: (() => void) | undefined;
+    void import("@tauri-apps/api/webview")
+      .then(({ getCurrentWebview }) =>
+        getCurrentWebview().onDragDropEvent((event) => {
+          if (!live || event.payload.type !== "drop") return;
+          const rect = dialogElement.current?.getBoundingClientRect();
+          if (
+            !rect ||
+            !insideComposeDrop(
+              event.payload.position,
+              rect,
+              window.devicePixelRatio,
+            )
+          )
+            return;
+          try {
+            const paths = event.payload.paths;
+            setValue((current) =>
+              current?.id === id
+                ? {
+                    ...current,
+                    attachments: mergeAttachmentPaths(
+                      current.attachments,
+                      paths,
+                    ),
+                  }
+                : current,
+            );
+          } catch (error) {
+            toast.error(String(error));
+          }
+        }),
+      )
+      .then((stop) => {
+        if (!live) stop();
+        else unlisten = stop;
+      })
+      .catch((error) => {
+        if (live)
+          toast.error(`拖拽附件未就绪，可使用附件按钮：${String(error)}`);
+      });
+    return () => {
+      live = false;
+      unlisten?.();
+    };
+  }, [draft?.id]);
   useEffect(() => {
     if (previewFrame.current)
       return disableFrameContextMenu(previewFrame.current);
@@ -456,6 +512,7 @@ export function ComposeDialog({
       }}
     >
       <DialogContent
+        ref={dialogElement}
         className={`compose-dialog ${expanded ? "compose-expanded" : ""}`}
         showCloseButton={false}
         onInteractOutside={(e) => e.preventDefault()}
@@ -598,6 +655,14 @@ export function ComposeDialog({
                       onChange={(body, html) => update({ body, html })}
                       toolbarExtras={formatControls}
                       greeting={greeting}
+                      onAttachFiles={(paths) =>
+                        update({
+                          attachments: mergeAttachmentPaths(
+                            value.attachments,
+                            paths,
+                          ),
+                        })
+                      }
                     />
                   </Suspense>
                 ) : format === "markdown" || format === "html" ? (

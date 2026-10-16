@@ -1,9 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { isTauri } from "@tauri-apps/api/core";
+import { Copy, Download, ExternalLink } from "lucide-react";
+import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { MailBodySkeleton } from "./mail-skeleton";
 import { Button } from "./ui/button";
 import { Alert, AlertDescription } from "./ui/alert";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "./ui/dropdown-menu";
+import { call } from "../lib/api";
 import { disableNativeContextMenu } from "../lib/context-menu";
 import { watchMailImages, type MailImageStatus } from "../lib/mail-images";
 import {
@@ -49,6 +58,83 @@ export function MailContent({
     failed: 0,
   });
   const retryImages = useRef(() => {});
+  const [imageMenu, setImageMenu] = useState<string | null>(null);
+  const imageMenuAnchor = useRef({ x: -1, y: -1 });
+  const selectedImage = useRef<{ el: HTMLElement; outline: string } | null>(
+    null,
+  );
+  function clearImageSelection() {
+    const current = selectedImage.current;
+    if (!current) return;
+    current.el.style.outline = current.outline;
+    current.el.style.outlineOffset = "";
+    selectedImage.current = null;
+  }
+  function selectImage(el: HTMLElement) {
+    if (selectedImage.current?.el === el) return;
+    clearImageSelection();
+    const outline = el.style.outline;
+    el.style.outline = "2px solid #3b82f6";
+    el.style.outlineOffset = "1px";
+    selectedImage.current = { el, outline };
+  }
+  function imageName(src: string) {
+    if (src.startsWith("data:")) return "图片.png";
+    try {
+      return (
+        decodeURIComponent(new URL(src).pathname.split("/").pop() || "") ||
+        "图片.png"
+      );
+    } catch {
+      return "图片.png";
+    }
+  }
+  async function copyImage(src: string) {
+    if (!isTauri()) {
+      toast.info("请在桌面客户端中复制图片");
+      return;
+    }
+    try {
+      const { mime, data } = await call<{ mime: string; data: string }>(
+        "mail_image_data",
+        { url: src },
+      );
+      const bytes = Uint8Array.from(atob(data), (c) => c.charCodeAt(0));
+      const blob = new Blob([bytes], { type: mime || "image/png" });
+      await navigator.clipboard.write([
+        new ClipboardItem({ [blob.type]: blob }),
+      ]);
+      toast.success("图片已复制");
+    } catch (e) {
+      toast.error(`复制图片失败：${String(e)}`);
+    }
+  }
+  async function saveImage(src: string) {
+    if (!isTauri()) {
+      toast.info("请在桌面客户端中保存图片");
+      return;
+    }
+    try {
+      const { save } = await import("@tauri-apps/plugin-dialog");
+      const path = await save({ defaultPath: imageName(src) });
+      if (!path) return;
+      await call("save_mail_image", { url: src, path });
+      toast.success("图片已保存");
+    } catch (e) {
+      toast.error(`保存图片失败：${String(e)}`);
+    }
+  }
+  async function openImage(src: string) {
+    if (!isTauri()) {
+      toast.info("请在桌面客户端中打开图片");
+      return;
+    }
+    try {
+      await call("save_mail_image", { url: src, path: null });
+    } catch (e) {
+      toast.error(`打开图片失败：${String(e)}`);
+    }
+  }
   // 主题切换要重建 srcDoc：iframe 是独立文档，色值只能在生成时注入。
   const [theme, setTheme] = useState(themed ? previewTheme() : undefined);
   useEffect(() => {
@@ -157,6 +243,42 @@ export function MailContent({
     });
     const restoreContextMenu = disableNativeContextMenu(doc);
     const restoreLinks = interceptMailLinks(doc, (href) => open.current(href));
+    // 图片交互：右键弹自定义菜单（复制/保存/用系统应用打开），左键选中带框，⌘C 复制。
+    const onPointer = (event: MouseEvent) => {
+      const target = event.target instanceof Element ? event.target : null;
+      const img = target?.closest("img");
+      setImageMenu(null);
+      if (img instanceof HTMLElement) selectImage(img);
+      else clearImageSelection();
+    };
+    const onContext = (event: MouseEvent) => {
+      const target = event.target instanceof Element ? event.target : null;
+      const img = target?.closest("img");
+      if (!(img instanceof HTMLImageElement)) return;
+      event.preventDefault();
+      selectImage(img);
+      const rect = iframe.getBoundingClientRect();
+      imageMenuAnchor.current = {
+        x: rect.left + event.clientX,
+        y: rect.top + event.clientY,
+      };
+      setImageMenu(img.getAttribute("src") || img.src);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      const current = selectedImage.current;
+      if (
+        !current ||
+        !(event.metaKey || event.ctrlKey) ||
+        event.key.toLowerCase() !== "c"
+      )
+        return;
+      event.preventDefault();
+      const image = current.el as HTMLImageElement;
+      void copyImage(image.currentSrc || image.src);
+    };
+    doc.addEventListener("mousedown", onPointer, true);
+    doc.addEventListener("contextmenu", onContext, true);
+    doc.addEventListener("keydown", onKey, true);
     if (!nativeFrame) {
       doc.addEventListener("load", scheduleResize, true);
       doc.addEventListener("error", scheduleResize, true);
@@ -171,6 +293,11 @@ export function MailContent({
       restoreContextMenu();
       retryImages.current = () => {};
       restoreLinks();
+      doc.removeEventListener("mousedown", onPointer, true);
+      doc.removeEventListener("contextmenu", onContext, true);
+      doc.removeEventListener("keydown", onKey, true);
+      clearImageSelection();
+      setImageMenu(null);
       if (!nativeFrame) {
         doc.removeEventListener("load", scheduleResize, true);
         doc.removeEventListener("error", scheduleResize, true);
@@ -213,6 +340,50 @@ export function MailContent({
         srcDoc={srcDoc}
         onLoad={loaded}
       />
+      <DropdownMenu
+        open={!!imageMenu}
+        onOpenChange={(open) => {
+          if (!open) setImageMenu(null);
+        }}
+      >
+        <DropdownMenuTrigger asChild>
+          <span
+            aria-hidden
+            data-slot="mail-image-menu-anchor"
+            style={{
+              position: "fixed",
+              left: imageMenuAnchor.current.x,
+              top: imageMenuAnchor.current.y,
+              width: 1,
+              height: 1,
+            }}
+          />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent
+          align="start"
+          side="bottom"
+          onCloseAutoFocus={(event) => event.preventDefault()}
+        >
+          <DropdownMenuItem
+            onSelect={() => imageMenu && void copyImage(imageMenu)}
+          >
+            <Copy />
+            复制图片
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            onSelect={() => imageMenu && void saveImage(imageMenu)}
+          >
+            <Download />
+            保存图片…
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            onSelect={() => imageMenu && void openImage(imageMenu)}
+          >
+            <ExternalLink />
+            用系统应用打开
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
   );
 }

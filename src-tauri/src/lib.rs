@@ -1652,6 +1652,93 @@ async fn notification_mail(state: tauri::State<'_, AppState>, token: String) -> 
         .await
         .map_err(err)?
 }
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MailImageData {
+    mime: String,
+    data: String,
+}
+
+/// 阅读器里复制/保存图片：iframe 有 CSP，前端 fetch 外链图会被拦、canvas 会被跨域污染，
+/// 所以统一由 Rust 取字节（data: 本地解码，http(s): 直接下载）。
+fn fetch_mail_image(url: &str) -> Result<(String, Vec<u8>)> {
+    if let Some(rest) = url.strip_prefix("data:") {
+        let (meta, payload) = rest.split_once(',').ok_or("图片数据无效")?;
+        let mime = meta.split(';').next().unwrap_or("image/png").to_string();
+        let bytes = if meta.contains(";base64") {
+            use base64::{engine::general_purpose::STANDARD, Engine};
+            STANDARD.decode(payload.trim()).map_err(err)?
+        } else {
+            payload.as_bytes().to_vec()
+        };
+        return Ok((mime, bytes));
+    }
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(20))
+        .build()
+        .map_err(err)?;
+    let response = client.get(url).send().map_err(err)?;
+    if !response.status().is_success() {
+        return Err(format!("图片下载失败：HTTP {}", response.status()));
+    }
+    let mime = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.split(';').next().unwrap_or("").trim().to_string())
+        .filter(|value| value.starts_with("image/"))
+        .unwrap_or_else(|| "image/png".into());
+    let bytes = response.bytes().map_err(err)?.to_vec();
+    Ok((mime, bytes))
+}
+
+#[tauri::command]
+async fn mail_image_data(url: String) -> Result<MailImageData> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let (mime, bytes) = fetch_mail_image(&url)?;
+        use base64::{engine::general_purpose::STANDARD, Engine};
+        Ok(MailImageData {
+            mime,
+            data: STANDARD.encode(bytes),
+        })
+    })
+    .await
+    .map_err(err)?
+}
+
+/// 保存图片到指定路径；path 为空时写到临时文件并用系统默认应用打开。
+#[tauri::command]
+async fn save_mail_image(url: String, path: Option<String>) -> Result<String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let (mime, bytes) = fetch_mail_image(&url)?;
+        let (target, temporary) = match path {
+            Some(value) if !value.trim().is_empty() => (std::path::PathBuf::from(value), false),
+            _ => {
+                let ext = match mime.as_str() {
+                    "image/jpeg" => "jpg",
+                    "image/gif" => "gif",
+                    "image/webp" => "webp",
+                    "image/tiff" => "tiff",
+                    other => other.rsplit('/').next().unwrap_or("png"),
+                };
+                (
+                    std::env::temp_dir()
+                        .join(format!("yanxin-image-{}.{ext}", uuid::Uuid::new_v4())),
+                    true,
+                )
+            }
+        };
+        archive::atomic_write(&target, &bytes)?;
+        let text = target.to_string_lossy().into_owned();
+        if temporary {
+            open::that(&target).map_err(|e| format!("无法打开图片，请确认已安装对应应用：{e}"))?;
+        }
+        Ok(text)
+    })
+    .await
+    .map_err(err)?
+}
+
 #[tauri::command]
 async fn open_eml_file(
     state: tauri::State<'_, eml_files::EmlFiles>,
@@ -2044,6 +2131,8 @@ pub fn run() {
             take_eml_paths,
             take_notification_mail,
             notification_mail,
+            mail_image_data,
+            save_mail_image,
             open_eml_file,
             close_eml_file,
             preview_eml_attachment,

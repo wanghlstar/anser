@@ -38,7 +38,8 @@
     ],
     "macOS": {
       "minimumSystemVersion": "12.0",
-      "signingIdentity": "-"
+      "signingIdentity": "-",
+      "infoPlist": "Info.plist"
     },
     "createUpdaterArtifacts": true,
     "fileAssociations": [

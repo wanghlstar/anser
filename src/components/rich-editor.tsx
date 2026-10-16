@@ -40,6 +40,7 @@ import {
 } from "@/lib/fonts";
 import type { GreetingSpec } from "@/lib/signatures";
 import { imageFilesFromList, inlineImageDataUrl } from "@/lib/inline-image";
+import { attachmentPathsFromClipboard } from "@/lib/compose-attachments";
 import { toast } from "sonner";
 
 // 字体栈一律不带引号：带引号的栈在草稿重开后与下拉回显对不上（见 bareFont）。
@@ -79,6 +80,7 @@ export function RichEditor({
   onChange,
   toolbarExtras,
   greeting,
+  onAttachFiles,
 }: {
   body: string;
   html: string;
@@ -86,6 +88,8 @@ export function RichEditor({
   onChange: (body: string, html: string) => void;
   toolbarExtras?: ReactNode;
   greeting?: GreetingSpec | null;
+  /** 粘贴（⌘V）复制的文件时，把文件路径交给写信窗口登记为附件。 */
+  onAttachFiles?: (paths: string[]) => void;
 }) {
   const [linkDialog, setLinkDialog] = useState<{
     from: number;
@@ -94,6 +98,8 @@ export function RichEditor({
   const [href, setHref] = useState("");
   const [linkError, setLinkError] = useState("");
   const imageInput = useRef<HTMLInputElement>(null);
+  const attachFiles = useRef(onAttachFiles);
+  attachFiles.current = onAttachFiles;
   const editor = useEditor({
     extensions: [
       StarterKit.configure({
@@ -121,10 +127,19 @@ export function RichEditor({
         const files = imageFilesFromList([
           ...(event.clipboardData?.files ?? []),
         ]);
-        if (!files.length) return false;
-        event.preventDefault();
-        void insertImages(files);
-        return true;
+        if (files.length) {
+          event.preventDefault();
+          void insertImages(files);
+          return true;
+        }
+        // 粘贴的是复制的文件（非图片）时登记为附件，而不是插入正文。
+        const paths = attachmentPathsFromClipboard(event.clipboardData ?? null);
+        if (paths.length && attachFiles.current) {
+          event.preventDefault();
+          attachFiles.current(paths);
+          return true;
+        }
+        return false;
       },
       handleDrop: (view, event) => {
         const files = imageFilesFromList([
