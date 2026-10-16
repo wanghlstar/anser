@@ -1,5 +1,31 @@
 # 规则「移动到文件夹」合并 —— 工作点（2026-10-16）
 
+> ## 新会话引导语（可直接复制到开场白）
+>
+> 继续「雁信（Anser）」开发。仓库 `/Users/wanghlstar/Mytools/anser`（活跃；旧仓库 `wanghlstar/yanxin` 已废弃）。先读 `AGENTS.md` 和本文件（本文末尾有「邮件列表右键菜单重构建议」）。
+>
+> **当前基线**：`main @ 47c67c8`，tag **`v0.1.7`**（均已推送 `origin`）；工作区干净。可回滚点：`baseline-2026-10-16`（92c14f3）、`checkpoint-ui-2026-10-16`（4bcbc7a）。
+>
+> **已完成（0.1.7）**：规则动作合并为单一「移动到文件夹」（IMAP→真正 `serverMove`，来源=该账号收件箱范围 `inboxFolders`/`INBOX`；POP3/无服务器目录→本地；可与已读/未读/星标叠加，本机即时、移动异步；废纸篓与移动互斥）；撤销上一轮错误的「本地目标列服务器文件夹」；规则卡片条件单行省略/目标中文名/按账号树排序；本地存档账号组草稿箱入口；邮件列表勾选圈（圆形加深）+ 悬停星标/未读快捷动作；设置页重构（顶部「系统通知/后台检查」等高，下方「外观+活动与诊断」｜「存档校验」，「活动与诊断」平铺并底对齐）；托盘未读 1s 轮询 + 免打扰↔通知开关双向同步；清理 `toggleAction`。
+>
+> **待办**：
+> - 短期（优先，用户已定但「今天不做」）：**邮件列表右键菜单重构** —— 迁到 shadcn `ContextMenu`（边界翻转/键盘/Esc/焦点）、分组、`ContextMenuSub` 列「移动到文件夹」目标（本地文件夹 + 账号内文件夹）、状态项改 toggle（已读/星标）、补星标/回复/转发、`ContextMenuShortcut` 快捷键提示；与规则动作/文件夹目标呼应，并核对 `src/lib/mail-shortcuts.ts`。
+> - 中期：同步上游合适功能（0.1.11 原附件转发 + 五项邮件快捷键；0.1.12 完整富文本写信 Tiptap + 更新说明 Markdown 渲染）——cherry-pick 单提交，勿 merge `upstream/main`（基线 `da3b667`）。
+> - 长期/可选：「本地优先/乐观」移动（本机视图即时 + 后台同步 + 失败回滚）。
+>
+> **环境与命令**：门禁 `cargo test --manifest-path src-tauri/Cargo.toml`、`npx vitest run`、`npx tsc --noEmit`、`npx prettier --check "src/**/*.{ts,tsx,css}"`、`npm run check:ui`、`npm run test:desktop`、`npm run build`。构建装机直接做、不要问：
+> ```bash
+> cd ~/Mytools/anser
+> set -a && . ./.env.local && set +a
+> APPLE_SIGNING_IDENTITY="Yanxin Local Code Signing" \
+>   npx tauri build --config '{"plugins":{"updater":{"createUpdaterArtifacts":false}}}' --bundles app
+> # pkill 旧进程 → rm -rf /Applications/雁信.app → cp -R 产物 → open，报 PID
+> ```
+>
+> **约定/注意**：基础组件一律 shadcn（`npm run check:ui`）；桌面 UI 不截图排查，用代码/CSS 推导 + 用户反馈；存储与钥匙串标识 `dev.maildesk.desktop` 不得改，DB 在 `~/Library/Application Support/dev.maildesk.desktop/mail.sqlite3`，直接改库先 `PRAGMA trusted_schema=ON;`；改版本需同步 `package.json`/`src-tauri/Cargo.toml`/`src-tauri/tauri.conf.json`（+ `package-lock.json`/`Cargo.lock`）并更新 `docs/releases/vX.Y.Z.md`，tag `vX.Y.Z` 会触发 `release.yml` 出 DMG。规则迁移前整库备份在 `/Users/wanghlstar/Mytools/mail-before-rule-merge-2026-10-16.sqlite3`。
+>
+> 默认从「邮件列表右键菜单重构」开始，并按 AGENTS.md 的准则（先思考、简洁、精准修改、目标驱动）推进。
+
 ## 目标（用户最终要求）
 
 用户级**只保留一个移动动作：`移动到文件夹`**，语义对齐 Foxmail 的「移动到 <文件夹>」。
