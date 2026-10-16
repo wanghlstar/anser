@@ -16,10 +16,7 @@ import {
   CollapsibleContent,
 } from "./components/ui/collapsible";
 import { Skeleton } from "./components/ui/skeleton";
-import { FolderHealthPanel } from "./components/folder-health";
 import { Alert, AlertTitle, AlertDescription } from "./components/ui/alert";
-import { ServerOperations } from "./components/server-operations";
-import { DirectoryOperationsPanel } from "./components/server-copy";
 import { ServerDirectoryMenu } from "./components/server-directory-menu";
 import { FolderMappingDialog } from "./components/folder-mapping-dialog";
 import { RetentionDialog } from "./components/retention-dialog";
@@ -27,7 +24,6 @@ import { MailSignatures } from "./components/mail-signatures";
 import { InboxScope } from "./components/inbox-scope";
 import { EmlViewer } from "./components/eml-viewer";
 import { MailDateFilter } from "./components/mail-date-filter";
-import { ArchiveJobsPanel } from "./components/archive-jobs";
 import { RemoteFolderList } from "./components/remote-folder-list";
 import { remoteFolderLabel, compareFolders } from "./lib/remote-folders";
 import { coalesceRefresh } from "./lib/refresh-queue";
@@ -48,7 +44,6 @@ import {
   HardDriveDownload,
   ArrowLeft,
   ArrowRight,
-  Check,
   CheckCheck,
   ChevronDown,
   ChevronRight,
@@ -2271,25 +2266,7 @@ export default function App() {
                   </p>
                 )}
               </Card>
-              <StorageTools />
-              <Collapsible defaultOpen={false} className="activity-section">
-                <div className="section-title">
-                  <CollapsibleTrigger asChild>
-                    <Button variant="ghost" size="sm" className="gap-1 px-0">
-                      <ChevronRight size={14} className="collapse-chevron" />
-                      <h3>高级与诊断</h3>
-                    </Button>
-                  </CollapsibleTrigger>
-                </div>
-                <CollapsibleContent>
-                  <div className="flex flex-col gap-4">
-                    <ArchiveJobsPanel />
-                    <ServerOperations />
-                    <FolderHealthPanel />
-                    <DirectoryOperationsPanel />
-                  </div>
-                </CollapsibleContent>
-              </Collapsible>
+              <StorageTools logs={data.logs} onRefresh={() => void refresh()} />
               <div className="info-strip">
                 <Info size={17} />
                 <span>
@@ -2297,38 +2274,6 @@ export default function App() {
                   App、睡眠或断网时暂停。邮件须在服务器删除前完整下载。
                 </span>
               </div>
-              <Collapsible defaultOpen={false} className="activity-section">
-                <div className="section-title">
-                  <CollapsibleTrigger asChild>
-                    <Button variant="ghost" size="sm" className="gap-1 px-0">
-                      <ChevronRight size={14} className="collapse-chevron" />
-                      <h3>最近活动</h3>
-                    </Button>
-                  </CollapsibleTrigger>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => void refresh()}
-                  >
-                    <RefreshCw size={14} />
-                    刷新
-                  </Button>
-                </div>
-                <CollapsibleContent>
-                  <div className="activity-list">
-                    {data.logs.length ? (
-                      data.logs.slice(0, 15).map((l, i) => (
-                        <p key={i}>
-                          <Check size={13} />
-                          {l}
-                        </p>
-                      ))
-                    ) : (
-                      <p>连接邮箱后，这里会显示收取和规则执行记录。</p>
-                    )}
-                  </div>
-                </CollapsibleContent>
-              </Collapsible>
               {page === "settings" && <UpdateSettings updates={updates} />}
               <div className="dev-note">
                 <span>
