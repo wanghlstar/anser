@@ -655,6 +655,25 @@ export default function App() {
           body: mail.body,
           html: source.html,
         };
+        // 转发时把原邮件附件导出到临时文件并预填（未落盘的邮件按需从服务器取）
+        if (forward && native && !isDemo() && source.attachments.length) {
+          void call<string[]>("extract_attachments", { id: mail.id })
+            .then((paths) => {
+              if (!paths.length) return;
+              setDraft((prev) =>
+                prev && prev.id === d.id
+                  ? {
+                      ...prev,
+                      attachments: [
+                        ...prev.attachments,
+                        ...paths.filter((p) => !prev.attachments.includes(p)),
+                      ],
+                    }
+                  : prev,
+              );
+            })
+            .catch((e) => toast.error(`无法附加原邮件附件：${String(e)}`));
+        }
       }
       setDraft(d);
     },

@@ -1042,6 +1042,13 @@ async fn save_attachment(
     .map_err(err)?
 }
 #[tauri::command]
+async fn extract_attachments(state: tauri::State<'_, AppState>, id: String) -> Result<Vec<String>> {
+    let store = state.store.clone();
+    tauri::async_runtime::spawn_blocking(move || store.extract_attachments(&id))
+        .await
+        .map_err(err)?
+}
+#[tauri::command]
 async fn preview_attachment(
     state: tauri::State<'_, AppState>,
     app: tauri::AppHandle,
@@ -2080,6 +2087,7 @@ pub fn run() {
             reschedule_mail,
             export_mail,
             save_attachment,
+            extract_attachments,
             preview_attachment,
             backup_archive,
             archive_deletion_preview,

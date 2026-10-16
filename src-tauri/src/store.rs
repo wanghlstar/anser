@@ -1819,6 +1819,33 @@ impl Store {
             cc,
         })
     }
+    /// 转发时把原邮件的附件导出到临时文件，返回文件路径列表；
+    /// 未落盘的邮件会按需从服务器拉取原始 MIME。
+    pub fn extract_attachments(&self, id: &str) -> Result<Vec<String>> {
+        let mail = self.mail(id)?;
+        let raw = self.message_raw(&mail)?;
+        let (_, _, attachments) =
+            archive::parse(&raw, &self.account_for_mail(&mail), &mail.source_folder)?;
+        if attachments.is_empty() {
+            return Ok(Vec::new());
+        }
+        let dir = std::env::temp_dir().join(format!("yanxin-forward-{}", uuid::Uuid::new_v4()));
+        let mut paths = Vec::new();
+        for item in attachments {
+            let safe = item
+                .name
+                .replace(|c: char| c == '/' || c == '\\' || c == '\0', "_");
+            let name = if safe.trim().is_empty() {
+                format!("attachment-{}", item.index)
+            } else {
+                safe
+            };
+            let path = dir.join(format!("{}-{}", item.index, name));
+            archive::atomic_write(&path, &archive::attachment(&raw, item.index)?)?;
+            paths.push(path.to_string_lossy().into_owned());
+        }
+        Ok(paths)
+    }
     fn reparse(&self, mail: &Mail) -> Result<(Mail, String, Vec<AttachmentInfo>)> {
         let raw = self.read_archive(mail.rel_path.as_deref(), &mail.hash)?;
         let fake = self.account_for_mail(mail);
