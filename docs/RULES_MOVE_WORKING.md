@@ -1,5 +1,7 @@
 # 规则「移动到文件夹」合并 —— 工作点（2026-10-16）
 
+> **本文件是 0.1.7「规则合并」与 0.1.8「右键菜单/移动到文件夹」的工作点。** 本轮（分支 `feat/port-upstream-a`）「同步上游附件体系 + 富文本」的交接文档见 **`docs/RULES_PORT_UPSTREAM.md`**，下次从那里开始。
+
 > ## 新会话引导语（可直接复制到开场白）
 >
 > 继续「雁信（Anser）」开发。仓库 `/Users/wanghlstar/Mytools/anser`（活跃；旧仓库 `wanghlstar/yanxin` 已废弃）。先读 `AGENTS.md` 和本文件（本文末尾有「邮件列表右键菜单重构建议」）。
@@ -11,12 +13,14 @@
 > **已完成（0.1.8）**：邮件列表右键菜单迁到 shadcn `ContextMenu`（边界翻转/键盘/Esc/焦点/Portal 层级），按列表上下文分组显示，状态项改复选框 toggle，补回复/回复全部/转发/重新编辑；「移动到文件夹」统一到右键菜单、批量工具栏、阅读器三处并**跟随账号**（IMAP→服务器文件夹；POP3/无服务器目录→本机归档目录；顺序同账号树 `compareFolders`）；服务器可行→真移（确认+本机自动跟），服务器已删/非 IMAP→新增后端 `move_local_archive` 仅重定本机归档 A→B；批量工具栏按上下文收窄；删除旧的「归入本地文件夹」平铺对话框。
 >
 > **待办**：
-> - 下个版本：**整体同步上游** —— 0.1.11 原附件转发 + 五项邮件快捷键；0.1.12 完整富文本写信（Tiptap）+ 更新说明 Markdown 渲染。**邮件快捷键移植后再补 `ContextMenuShortcut` 快捷键提示**。cherry-pick 单提交，勿 merge `upstream/main`（基线 `da3b667`）。
+>
+> - **进行中（分支 `feat/port-upstream-a`）**：整体同步上游「附件体系 + 富文本编辑器」，保留我们的问候/签名/字体/首行缩进。详见 `docs/RULES_PORT_UPSTREAM.md`。已在该分支完成上游 0.1.11 快捷键/原附件转发（精简版）、0.1.13 单封打印、0.1.14 通知点击定位/图片重试、清空草稿与废纸篓等。
 > - 长期/可选：「本地优先/乐观」移动（本机视图即时 + 后台同步 + 失败回滚）—— **暂停**。
 > - 待用户人工复核：规则页 5 条已迁移为 `serverMove` 的规则仍为停用，需逐条预览匹配数后决定是否启用（启用即真移服务器，不可逆）。
 > - 待真实账号验收：本机归档 A→B 重定（`move_local_archive`）目前仅单测覆盖，需在真实账号对「服务器已删、仅本机存档」邮件实测一次。
 >
 > **环境与命令**：门禁 `cargo test --manifest-path src-tauri/Cargo.toml`、`npx vitest run`、`npx tsc --noEmit`、`npx prettier --check "src/**/*.{ts,tsx,css}"`、`npm run check:ui`、`npm run test:desktop`、`npm run build`。构建装机直接做、不要问：
+>
 > ```bash
 > cd ~/Mytools/anser
 > set -a && . ./.env.local && set +a
@@ -27,7 +31,7 @@
 >
 > **约定/注意**：基础组件一律 shadcn（`npm run check:ui`）；桌面 UI 不截图排查，用代码/CSS 推导 + 用户反馈；存储与钥匙串标识 `dev.maildesk.desktop` 不得改，DB 在 `~/Library/Application Support/dev.maildesk.desktop/mail.sqlite3`，直接改库先 `PRAGMA trusted_schema=ON;`；改版本需同步 `package.json`/`src-tauri/Cargo.toml`/`src-tauri/tauri.conf.json`（+ `package-lock.json`/`Cargo.lock`）并更新 `docs/releases/vX.Y.Z.md`，tag `vX.Y.Z` 会触发 `release.yml` 出 DMG。规则迁移前整库备份在 `/Users/wanghlstar/Mytools/mail-before-rule-merge-2026-10-16.sqlite3`。
 >
-> 默认从「邮件列表右键菜单重构」开始，并按 AGENTS.md 的准则（先思考、简洁、精准修改、目标驱动）推进。
+> 本文件对应的功能（规则合并、右键菜单）已随 0.1.8 完成；**下次开工默认按 `docs/RULES_PORT_UPSTREAM.md` 的引导语进行（同步上游附件 + 富文本）**，并按 AGENTS.md 的准则（先思考、简洁、精准修改、目标驱动）推进。
 
 ## 目标（用户最终要求）
 
@@ -64,12 +68,14 @@
 相关代码：`rule-match.ts::ruleFolderOptions()` 是上一轮新增的（列服务器文件夹），合并方案下应删除或改用途；`rules-panel.tsx` 的 folder 目标字段用了 `FolderInput` + `ruleFolderOptions`。
 
 **处理结果：**
+
 - 代码：已删除 `ruleFolderOptions`；本地移动的目标建议改回 `data.folders`（本地文件夹），不再列服务器文件夹。
 - 数据：库中 5 条把**服务器文件夹展示名**写成目标的历史 `folder` 规则（`紧急告警`/`日检巡检`/`上线申请`/`出账结果`/`日常稽核`）已迁移为 `serverMove`、目标改成服务器**原始目录名**、`sourceFolder` 留空、**全部停用**待用户复核。迁移前库已备份到 `$TMPDIR/opencode/mail-before-rule-merge.sqlite3`。`垃圾邮件`(read+trash) 未动。服务器侧本就有 907 条已完成的 move 记录。
 
 ## 合并动作要做的事 —— **已完成（2026-10-16 会话）**
 
 实现说明：
+
 - 用户层只有一个勾选动作 `move`「移动到文件夹」，`read`/`unread`/`star`/`trash` 为可叠加的本地动作。
 - 目标随账号：`move` 落地值由账号能力决定 —— 已启用 IMAP 账号 → `serverMove`（真正服务器移动，目标列该账号服务器目录、无来源字段）；POP3/Gmail/无服务器目录 → `folder`（纯本地归类，目标列本地文件夹自由文本）。
 - `move` 独占：勾选它清掉其它动作，勾选其它动作也解除它（`rule-match.ts::toggleMergedAction`）。
@@ -185,4 +191,3 @@
 
 - 与「合并动作：移动到文件夹」耦合——子菜单列的目标文件夹应与规则里的目标一致（账号内文件夹）。
 - `src/lib/mail-shortcuts.ts` 若已存在（上游 0.1.11 移植相关），重构右键菜单时核对动作定义是否可共用。
-
