@@ -1206,6 +1206,77 @@ impl Store {
         }
         Ok(ids.len())
     }
+    /// 本机归档重定：把服务器已删（或非 IMAP）邮件的归档目录从当前改为 target。
+    /// 只调整 inactive 来源行，不触发任何服务器操作；服务器仍有活跃来源时应改用服务器移动。
+    /// 返回本机归档实际发生变化的邮件是否成功（错误信息用于前端提示）。
+    pub fn move_local_archive(&self, id: &str, target: &str) -> Result<()> {
+        let target = target.trim();
+        if target.is_empty() {
+            return Err("目标文件夹不能为空".into());
+        }
+        let mail = self.mail(id)?;
+        let mut db = self.db()?;
+        let has_active: bool = db
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM trusted_sources WHERE mail_id=?1 AND active=1)",
+                [id],
+                |r| r.get(0),
+            )
+            .map_err(err)?;
+        if has_active {
+            return Err("该邮件在服务器上仍可移动，应使用服务器移动".into());
+        }
+        let tx = db
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(err)?;
+        let inactive: u64 = tx
+            .query_row(
+                "SELECT COUNT(*) FROM sources WHERE mail_id=?1 AND account_id=?2 AND active=0",
+                params![mail.id, mail.account_id],
+                |r| r.get(0),
+            )
+            .map_err(err)?;
+        if inactive == 0 {
+            // 纯本机邮件没有任何来源行：补一条 inactive 归档行，让存档树能按目标目录归组
+            tx.execute(
+                "INSERT INTO sources(account_id,folder,remote_id,mail_id,active) VALUES(?1,?2,?3,?4,0)",
+                params![
+                    mail.account_id,
+                    target,
+                    format!("local:{}", mail.id),
+                    mail.id
+                ],
+            )
+            .map_err(err)?;
+            tx.commit().map_err(err)?;
+            return Ok(());
+        }
+        let elsewhere: u64 = tx
+            .query_row(
+                "SELECT COUNT(*) FROM sources WHERE mail_id=?1 AND account_id=?2 AND active=0 AND folder<>?3",
+                params![mail.id, mail.account_id, target],
+                |r| r.get(0),
+            )
+            .map_err(err)?;
+        if elsewhere == 0 {
+            // 归档行已全部在目标目录，无需变更
+            tx.commit().map_err(err)?;
+            return Ok(());
+        }
+        // 目标已有该邮件的归档行时先清掉，避免主键 (account_id,folder,remote_id) 冲突
+        tx.execute(
+            "DELETE FROM sources WHERE mail_id=?1 AND account_id=?2 AND folder=?3",
+            params![mail.id, mail.account_id, target],
+        )
+        .map_err(err)?;
+        tx.execute(
+            "UPDATE sources SET folder=?3 WHERE mail_id=?1 AND account_id=?2 AND active=0",
+            params![mail.id, mail.account_id, target],
+        )
+        .map_err(err)?;
+        tx.commit().map_err(err)?;
+        Ok(())
+    }
     pub fn save_rules(&self, rs: &[Rule]) -> Result<()> {
         for r in rs {
             rules::validate(r)?;

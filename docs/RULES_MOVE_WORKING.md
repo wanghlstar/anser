@@ -4,14 +4,17 @@
 >
 > 继续「雁信（Anser）」开发。仓库 `/Users/wanghlstar/Mytools/anser`（活跃；旧仓库 `wanghlstar/yanxin` 已废弃）。先读 `AGENTS.md` 和本文件（本文末尾有「邮件列表右键菜单重构建议」）。
 >
-> **当前基线**：`main @ 47c67c8`，tag **`v0.1.7`**（均已推送 `origin`）；工作区干净。可回滚点：`baseline-2026-10-16`（92c14f3）、`checkpoint-ui-2026-10-16`（4bcbc7a）。
+> **当前基线**：`main`，tag **`v0.1.8`**（0.1.7 之前为 `47c67c8`）。可回滚点：`baseline-2026-10-16`（92c14f3）、`checkpoint-ui-2026-10-16`（4bcbc7a）。
 >
 > **已完成（0.1.7）**：规则动作合并为单一「移动到文件夹」（IMAP→真正 `serverMove`，来源=该账号收件箱范围 `inboxFolders`/`INBOX`；POP3/无服务器目录→本地；可与已读/未读/星标叠加，本机即时、移动异步；废纸篓与移动互斥）；撤销上一轮错误的「本地目标列服务器文件夹」；规则卡片条件单行省略/目标中文名/按账号树排序；本地存档账号组草稿箱入口；邮件列表勾选圈（圆形加深）+ 悬停星标/未读快捷动作；设置页重构（顶部「系统通知/后台检查」等高，下方「外观+活动与诊断」｜「存档校验」，「活动与诊断」平铺并底对齐）；托盘未读 1s 轮询 + 免打扰↔通知开关双向同步；清理 `toggleAction`。
 >
+> **已完成（0.1.8）**：邮件列表右键菜单迁到 shadcn `ContextMenu`（边界翻转/键盘/Esc/焦点/Portal 层级），按列表上下文分组显示，状态项改复选框 toggle，补回复/回复全部/转发/重新编辑；「移动到文件夹」统一到右键菜单、批量工具栏、阅读器三处并**跟随账号**（IMAP→服务器文件夹；POP3/无服务器目录→本机归档目录；顺序同账号树 `compareFolders`）；服务器可行→真移（确认+本机自动跟），服务器已删/非 IMAP→新增后端 `move_local_archive` 仅重定本机归档 A→B；批量工具栏按上下文收窄；删除旧的「归入本地文件夹」平铺对话框。
+>
 > **待办**：
-> - 短期（优先，用户已定但「今天不做」）：**邮件列表右键菜单重构** —— 迁到 shadcn `ContextMenu`（边界翻转/键盘/Esc/焦点）、分组、`ContextMenuSub` 列「移动到文件夹」目标（本地文件夹 + 账号内文件夹）、状态项改 toggle（已读/星标）、补星标/回复/转发、`ContextMenuShortcut` 快捷键提示；与规则动作/文件夹目标呼应，并核对 `src/lib/mail-shortcuts.ts`。
-> - 中期：同步上游合适功能（0.1.11 原附件转发 + 五项邮件快捷键；0.1.12 完整富文本写信 Tiptap + 更新说明 Markdown 渲染）——cherry-pick 单提交，勿 merge `upstream/main`（基线 `da3b667`）。
-> - 长期/可选：「本地优先/乐观」移动（本机视图即时 + 后台同步 + 失败回滚）。
+> - 下个版本：**整体同步上游** —— 0.1.11 原附件转发 + 五项邮件快捷键；0.1.12 完整富文本写信（Tiptap）+ 更新说明 Markdown 渲染。**邮件快捷键移植后再补 `ContextMenuShortcut` 快捷键提示**。cherry-pick 单提交，勿 merge `upstream/main`（基线 `da3b667`）。
+> - 长期/可选：「本地优先/乐观」移动（本机视图即时 + 后台同步 + 失败回滚）—— **暂停**。
+> - 待用户人工复核：规则页 5 条已迁移为 `serverMove` 的规则仍为停用，需逐条预览匹配数后决定是否启用（启用即真移服务器，不可逆）。
+> - 待真实账号验收：本机归档 A→B 重定（`move_local_archive`）目前仅单测覆盖，需在真实账号对「服务器已删、仅本机存档」邮件实测一次。
 >
 > **环境与命令**：门禁 `cargo test --manifest-path src-tauri/Cargo.toml`、`npx vitest run`、`npx tsc --noEmit`、`npx prettier --check "src/**/*.{ts,tsx,css}"`、`npm run check:ui`、`npm run test:desktop`、`npm run build`。构建装机直接做、不要问：
 > ```bash

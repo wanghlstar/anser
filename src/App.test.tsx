@@ -43,6 +43,26 @@ function filter(title: string) {
     ) ?? null
   );
 }
+async function openRowMenu(
+  row: Element | null = host.querySelector("button.mail-row-main"),
+) {
+  expect(row).not.toBeNull();
+  await act(async () => {
+    row!.dispatchEvent(
+      new MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        clientX: 20,
+        clientY: 20,
+      }),
+    );
+  });
+}
+function menuLabels() {
+  return [
+    ...document.querySelectorAll('[role="menuitem"],[role="menuitemcheckbox"]'),
+  ].map((el) => el.textContent || "");
+}
 async function seedReplyThread() {
   const seed = await snapshot(localQuery);
   const mail = seed.messages[0];
@@ -1763,37 +1783,6 @@ it("lists an account's local drafts in its drafts folder", async () => {
 });
 
 describe("local folder management", () => {
-  it("moves mail out of its local folder from the classify dialog", async () => {
-    await click(nav("本地存档"));
-    const row = host.querySelector("button.mail-row-main")!;
-    await act(async () => {
-      row.dispatchEvent(
-        new MouseEvent("contextmenu", {
-          bubbles: true,
-          cancelable: true,
-          clientX: 10,
-          clientY: 10,
-        }),
-      );
-    });
-    await click(
-      [...host.querySelectorAll(".row-context-menu button")].find(
-        (b) => b.textContent === "归入本地文件夹",
-      )!,
-    );
-    // 对话框列出已有本地文件夹，并给出明确的移出入口
-    expect(document.body.textContent).toContain("移出归类");
-    const calls = vi.spyOn(api, "call");
-    await click(
-      [...document.querySelectorAll("button")].find(
-        (b) => b.textContent === "移出归类",
-      )!,
-    );
-    expect(calls).toHaveBeenCalledWith(
-      "update_mail",
-      expect.objectContaining({ action: "folder", value: "全部存档" }),
-    );
-  });
   it("deletes a local folder from the sidebar after confirming", async () => {
     await click(nav("本地存档"));
     const calls = vi.spyOn(api, "call");
@@ -1836,5 +1825,95 @@ describe("local folder management", () => {
     await click(entry!);
     // 与账号内的草稿视图一致：显示本地草稿面板
     expect(document.body.textContent).toContain("没写完的邮件");
+  });
+});
+
+describe("mail list context menu", () => {
+  it("offers receive actions in the inbox and hides send/trash-only ones", async () => {
+    await click(nav("全部收件箱"));
+    await openRowMenu();
+    const labels = menuLabels();
+    expect(labels).toContain("回复");
+    expect(labels).toContain("回复全部");
+    expect(labels).toContain("转发");
+    expect(labels).toContain("星标");
+    expect(labels).toContain("已读");
+    expect(labels).toContain("移动到文件夹");
+    expect(labels).toContain("完整保存到本地");
+    expect(labels).toContain("移到本地废纸篓");
+    expect(labels).not.toContain("重新编辑");
+    expect(labels).not.toContain("彻底删除（含服务器）");
+  });
+  it("offers re-edit and forward in the sent context", async () => {
+    const seed = await snapshot(localQuery);
+    const mail = seed.messages[0];
+    mail.sourceFolder = "Sent";
+    mail.sender = mail.accountEmail;
+    localStorage.setItem("mail-desktop-demo-v1", JSON.stringify(seed));
+    api.restoreDemo();
+    await click(nav("已发送"));
+    await openRowMenu();
+    const labels = menuLabels();
+    expect(labels).toContain("重新编辑");
+    expect(labels).toContain("转发");
+    expect(labels).not.toContain("回复");
+    expect(labels).not.toContain("星标");
+  });
+  it("limits the trash context menu to restore and permanent delete", async () => {
+    const seed = await snapshot(localQuery);
+    seed.messages[0].trashed = true;
+    localStorage.setItem("mail-desktop-demo-v1", JSON.stringify(seed));
+    api.restoreDemo();
+    await click(nav("本地废纸篓"));
+    await openRowMenu();
+    const labels = menuLabels();
+    expect(labels).toContain("从废纸篓恢复");
+    expect(labels).toContain("彻底删除（含服务器）");
+    expect(labels).not.toContain("回复");
+    expect(labels).not.toContain("移到本地废纸篓");
+  });
+  it("moves mail through the account server folders after confirmation", async () => {
+    await click(
+      host.querySelector('button[aria-label="展开 工作邮箱 的服务器文件夹"]'),
+    );
+    await click(nav("全部收件箱"));
+    await openRowMenu();
+    await click(
+      [...document.querySelectorAll('[role="menuitem"]')].find(
+        (el) => el.textContent === "移动到文件夹",
+      )!,
+    );
+    const target = [...document.querySelectorAll('[role="menuitem"]')].find(
+      (el) => el.textContent === "已发送",
+    );
+    expect(target).toBeTruthy();
+    const calls = vi.spyOn(api, "call");
+    await click(target!);
+    const confirm = [...document.querySelectorAll("button")].find(
+      (b) => b.textContent === "移动",
+    );
+    expect(confirm).toBeTruthy();
+    await click(confirm!);
+    expect(
+      calls.mock.calls.some(([command]) => command === "queue_server_move"),
+    ).toBe(true);
+  });
+  it("lists the account server folders in the batch move menu", async () => {
+    await click(
+      host.querySelector('button[aria-label="展开 工作邮箱 的服务器文件夹"]'),
+    );
+    await click(nav("全部收件箱"));
+    await click(host.querySelector('.row-check [role="checkbox"]'));
+    await act(async () => {
+      host
+        .querySelector('.batch-toolbar [title="移动到文件夹"]')!
+        .dispatchEvent(
+          new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }),
+        );
+    });
+    const labels = [...document.querySelectorAll('[role="menuitem"]')].map(
+      (el) => el.textContent || "",
+    );
+    expect(labels).toContain("已发送");
   });
 });

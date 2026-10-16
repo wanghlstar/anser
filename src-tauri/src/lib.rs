@@ -303,6 +303,11 @@ fn import_rules(state: tauri::State<AppState>, rules: Vec<Rule>) -> Result<usize
 fn clear_local_folder(state: tauri::State<AppState>, name: String) -> Result<usize> {
     state.store.clear_local_folder(&name)
 }
+/// 本机归档重定：服务器已删（或非 IMAP）邮件仅调整本地归档目录，不动服务器。
+#[tauri::command]
+fn move_local_archive(state: tauri::State<AppState>, id: String, target: String) -> Result<()> {
+    state.store.move_local_archive(&id, &target)
+}
 /// 写文本文件（规则导出用；由保存对话框给出绝对路径）。
 #[tauri::command]
 fn write_text_file(path: String, content: String) -> Result<()> {
@@ -2040,6 +2045,7 @@ pub fn run() {
             export_rules,
             write_text_file,
             clear_local_folder,
+            move_local_archive,
             rule_executions,
             retry_rule_execution,
             preview_rule,

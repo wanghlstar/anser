@@ -3133,6 +3133,56 @@ fn local_archive_keeps_mail_deleted_on_server_by_original_source_folder() {
 }
 
 #[test]
+fn local_archive_move_reclassifies_server_deleted_mail_only() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = Store::new(dir.path().into()).unwrap();
+    let a = account();
+    s.save_account(&a).unwrap();
+    // 服务器已删、仅本机存档的邮件
+    let gone = b"From: test@example.com\r\nSubject: gone-locally\r\n\r\nKeep";
+    s.ingest(&a, "INBOX", "1", gone, false).unwrap();
+    s.reconcile_folder(&a.id, "INBOX", &[]).unwrap();
+    let gone_id = s.snapshot(&query()).unwrap().messages[0].id.clone();
+    // 服务器仍有活跃来源的邮件不能被本地重定
+    let online = b"From: test@example.com\r\nSubject: online\r\n\r\nOnline";
+    s.ingest(&a, "INBOX", "2", online, false).unwrap();
+    s.reconcile_folder(&a.id, "INBOX", &["2".into()]).unwrap();
+    let online_id = s
+        .snapshot(&query())
+        .unwrap()
+        .messages
+        .into_iter()
+        .find(|m| m.subject == "online")
+        .unwrap()
+        .id;
+    assert!(s.move_local_archive(&online_id, "Work").is_err());
+
+    s.move_local_archive(&gone_id, "Work").unwrap();
+    // 只改本机归档目录：目标文件夹能看到该邮件，原 INBOX 不再含它
+    let tree = s.local_archive_tree().unwrap();
+    let folders: Vec<(&str, u64)> = tree[0]
+        .folders
+        .iter()
+        .map(|f| (f.name.as_str(), f.count))
+        .collect();
+    assert!(folders.contains(&("Work", 1)), "{folders:?}");
+    let mut q = query();
+    q.remote_folder = "Work".into();
+    let snap = s.snapshot(&q).unwrap();
+    assert_eq!(snap.messages.len(), 1);
+    assert_eq!(snap.messages[0].subject, "gone-locally");
+
+    // 纯本机邮件（无任何来源行）也能重定：补一条非活跃归档行
+    s.db()
+        .unwrap()
+        .execute("DELETE FROM sources WHERE mail_id=?1", [&online_id])
+        .unwrap();
+    s.move_local_archive(&online_id, "Archive").unwrap();
+    q.remote_folder = "Archive".into();
+    assert_eq!(s.snapshot(&q).unwrap().messages.len(), 1);
+}
+
+#[test]
 fn rule_moved_mail_leaves_inbox_and_only_server_deleted_archive_keeps_old_folder() {
     let dir = tempfile::tempdir().unwrap();
     let s = Store::new(dir.path().into()).unwrap();
