@@ -61,7 +61,7 @@ async function openRowMenu(
 function menuLabels() {
   return [
     ...document.querySelectorAll('[role="menuitem"],[role="menuitemcheckbox"]'),
-  ].map((el) => el.textContent || "");
+  ].map((el) => (el.textContent || "").replace(/[⌘⇧A-Za-z]+$/, "").trim());
 }
 async function seedReplyThread() {
   const seed = await snapshot(localQuery);
@@ -1915,5 +1915,141 @@ describe("mail list context menu", () => {
       (el) => el.textContent || "",
     );
     expect(labels).toContain("已发送");
+  });
+});
+
+describe("mail action shortcuts", () => {
+  async function key(
+    target: Element,
+    name: string,
+    options: KeyboardEventInit = {},
+    prevented = false,
+  ) {
+    const event = new KeyboardEvent("keydown", {
+      key: name,
+      metaKey: true,
+      bubbles: true,
+      cancelable: true,
+      ...options,
+    });
+    if (prevented) event.preventDefault();
+    await act(async () => target.dispatchEvent(event));
+    return event;
+  }
+  it.each([
+    ["r", false, "Re:"],
+    ["R", true, "Re:"],
+    ["F", true, "Fwd:"],
+  ] as const)(
+    "opens the current message in compose for %s (shift=%s)",
+    async (shortcut, shiftKey, prefix) => {
+      await click(nav("全部收件箱"));
+      await click(host.querySelector("button.mail-row-main"));
+      const event = await key(host.querySelector(".reader")!, shortcut, {
+        shiftKey,
+      });
+      expect(event.defaultPrevented).toBe(true);
+      const subject = document.querySelector("#subject") as HTMLInputElement;
+      expect(subject.value.startsWith(prefix)).toBe(true);
+    },
+  );
+  it("toggles read and star on the current mail only", async () => {
+    await seedReplyThread();
+    await click(nav("本地存档"));
+    await click(host.querySelector("button.mail-row-main"));
+    const before = structuredClone(
+      await snapshot({ ...localQuery, listMode: "messages" }),
+    );
+    const current = before.messages[0];
+    await key(host.querySelector(".reader")!, "U", { shiftKey: true });
+    await key(host.querySelector(".reader")!, "L", {
+      metaKey: false,
+      ctrlKey: true,
+      shiftKey: true,
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    const after = await snapshot({ ...localQuery, listMode: "messages" });
+    expect(after.messages.find((m) => m.id === current.id)).toMatchObject({
+      isRead: !current.isRead,
+      starred: !current.starred,
+    });
+    for (const mail of before.messages.filter((m) => m.id !== current.id))
+      expect(after.messages.find((m) => m.id === mail.id)).toMatchObject({
+        isRead: mail.isRead,
+        starred: mail.starred,
+      });
+  });
+  it("ignores editor, composition, held keys and already-handled events", async () => {
+    await click(host.querySelector("button.mail-row-main"));
+    const calls = vi.spyOn(api, "call");
+    const reader = host.querySelector(".reader")!;
+    const search = host.querySelector(
+      'input[placeholder="搜索当前范围的邮件…"]',
+    )!;
+    expect((await key(search, "r")).defaultPrevented).toBe(false);
+    for (const options of [
+      { repeat: true },
+      { isComposing: true },
+      { altKey: true },
+    ])
+      expect(
+        (await key(reader, "L", { shiftKey: true, ...options }))
+          .defaultPrevented,
+      ).toBe(false);
+    await key(reader, "L", { shiftKey: true }, true);
+    expect(calls.mock.calls.some(([cmd]) => cmd === "update_mail")).toBe(false);
+    await key(reader, "n");
+    const subject = document.querySelector("#subject")!;
+    await key(subject, "n");
+    await key(document.body, "n");
+    await key(document.body, "r");
+    expect(document.querySelectorAll(".compose-dialog")).toHaveLength(1);
+    expect(document.querySelector("#subject")).toBe(subject);
+    expect((subject as HTMLInputElement).value).toBe("");
+  });
+  it("ignores shortcuts during multi-selection and while a menu is open", async () => {
+    await click(host.querySelector("button.mail-row-main"));
+    const calls = vi.spyOn(api, "call");
+    await click(host.querySelector('.row-check [role="checkbox"]'));
+    await key(host.querySelector(".reader")!, "L", { shiftKey: true });
+    await click(host.querySelector('.row-check [role="checkbox"]'));
+    await act(async () => {
+      host
+        .querySelector('button[aria-label="更多回复操作"]')!
+        .dispatchEvent(
+          new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }),
+        );
+    });
+    expect(document.querySelector('[role="menu"]')).not.toBeNull();
+    await key(document.body, "L", { shiftKey: true });
+    expect(calls.mock.calls.some(([cmd]) => cmd === "update_mail")).toBe(false);
+    expect(document.querySelector(".compose-dialog")).toBeNull();
+  });
+  it("does not duplicate a mutation while an earlier shortcut write is pending", async () => {
+    await click(host.querySelector("button.mail-row-main"));
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const original = api.call;
+    const calls = vi
+      .spyOn(api, "call")
+      .mockImplementation(
+        async <T,>(command: string, args: Record<string, unknown> = {}) => {
+          if (command === "update_mail" && args.action === "star") await gate;
+          return original<T>(command, args);
+        },
+      );
+    await key(host.querySelector(".reader")!, "L", { shiftKey: true });
+    await key(host.querySelector(".reader")!, "L", { shiftKey: true });
+    expect(
+      calls.mock.calls.filter(([cmd]) => cmd === "update_mail"),
+    ).toHaveLength(1);
+    await act(async () => {
+      release();
+      await gate;
+    });
   });
 });

@@ -22,6 +22,8 @@ import {
   MoveToFolderMenu,
   type MoveTarget,
 } from "./components/move-to-folder-menu";
+import { MailActionTooltip } from "./components/mail-action-tooltip";
+import { mailShortcut, mailShortcutKeys } from "./lib/mail-shortcuts";
 import { FolderMappingDialog } from "./components/folder-mapping-dialog";
 import { RetentionDialog } from "./components/retention-dialog";
 import { MailSignatures } from "./components/mail-signatures";
@@ -116,6 +118,7 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
+  DropdownMenuShortcut,
   DropdownMenuTrigger,
 } from "./components/ui/dropdown-menu";
 import {
@@ -126,6 +129,7 @@ import {
   ContextMenuCheckboxItem,
   ContextMenuLabel,
   ContextMenuSeparator,
+  ContextMenuShortcut,
   ContextMenuSub,
   ContextMenuSubTrigger,
   ContextMenuSubContent,
@@ -341,6 +345,7 @@ export default function App() {
   } | null>(null);
   const navigationRequest = useRef(0);
   const navigationPending = useRef(false);
+  const shortcutMutationPending = useRef(false);
   const dataScope = useRef("");
   const [navigationLoading, setNavigationLoading] = useState(false);
   selectionRef.current = selected;
@@ -654,6 +659,21 @@ export default function App() {
   );
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      const target = e.target instanceof Element ? e.target : null;
+      // 统一守卫：输入/富文本/下拉、弹层菜单、正在写信、组合输入、长按、已处理
+      if (
+        e.defaultPrevented ||
+        e.isComposing ||
+        e.repeat ||
+        draft ||
+        target?.closest(
+          'input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="combobox"]',
+        ) ||
+        document.querySelector(
+          '[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"]',
+        )
+      )
+        return;
       if (
         e.altKey &&
         !e.metaKey &&
@@ -661,19 +681,7 @@ export default function App() {
         !e.shiftKey &&
         ["ArrowUp", "ArrowDown"].includes(e.key)
       ) {
-        const target = e.target instanceof Element ? e.target : null;
-        if (
-          page !== "mail" ||
-          draft ||
-          !selected ||
-          target?.closest(
-            'input, textarea, [contenteditable="true"], [role="combobox"]',
-          ) ||
-          document.querySelector(
-            '[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"]',
-          )
-        )
-          return;
+        if (page !== "mail" || !selected) return;
         const direction = e.key === "ArrowUp" ? "previous" : "next";
         if (canNavigate(direction)) {
           e.preventDefault();
@@ -681,35 +689,60 @@ export default function App() {
         }
         return;
       }
-      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+      const action = mailShortcut(e);
+      if (action) {
+        // 只作用于“当前正在阅读且落在选中集内”的单封邮件，多选/加载/跳转中不抢键
+        if (
+          page !== "mail" ||
+          loading ||
+          checked.length ||
+          !detail ||
+          detail.mail.id !== selected ||
+          navigationPending.current ||
+          !canSeek()
+        )
+          return;
+        e.preventDefault();
+        const mail = detail.mail;
+        if (
+          action === "reply" ||
+          action === "replyAll" ||
+          action === "forward"
+        ) {
+          compose(mail, action === "forward", action === "replyAll", detail);
+        } else if (!shortcutMutationPending.current) {
+          shortcutMutationPending.current = true;
+          void mutate(
+            [mail.id],
+            action,
+            String(action === "read" ? !mail.isRead : !mail.starred),
+            false,
+            [mail],
+          ).finally(() => {
+            shortcutMutationPending.current = false;
+          });
+        }
+        return;
+      }
+      if (e.altKey || e.shiftKey) return;
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
         searchRef.current?.focus();
       }
-      if ((e.metaKey || e.ctrlKey) && e.key === "n") {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "n") {
         e.preventDefault();
         compose();
       }
       if ((e.metaKey || e.ctrlKey) && (e.key === "a" || e.key === "A")) {
-        // 全选当前列表（输入框/对话框内不拦截）
-        const target = e.target instanceof Element ? e.target : null;
-        if (
-          page !== "mail" ||
-          draft ||
-          target?.closest(
-            'input, textarea, [contenteditable="true"], [role="combobox"]',
-          ) ||
-          document.querySelector(
-            '[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"]',
-          )
-        )
-          return;
+        // 全选当前列表（输入框/对话框内不拦截，见上方守卫）
+        if (page !== "mail") return;
         e.preventDefault();
         setChecked(data.messages.map((m) => m.id));
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [compose, page, draft, selected, data, detail, query]);
+  }, [compose, page, draft, selected, data, detail, query, loading, checked]);
   function navigate(
     view: string,
     accountId = "",
@@ -3060,6 +3093,9 @@ export default function App() {
                                         >
                                           <Reply />
                                           回复
+                                          <ContextMenuShortcut>
+                                            {mailShortcutKeys.reply}
+                                          </ContextMenuShortcut>
                                         </ContextMenuItem>
                                         <ContextMenuItem
                                           onSelect={() =>
@@ -3068,12 +3104,18 @@ export default function App() {
                                         >
                                           <ReplyAll />
                                           回复全部
+                                          <ContextMenuShortcut>
+                                            {mailShortcutKeys.replyAll}
+                                          </ContextMenuShortcut>
                                         </ContextMenuItem>
                                         <ContextMenuItem
                                           onSelect={() => compose(m, true)}
                                         >
                                           <Forward />
                                           转发
+                                          <ContextMenuShortcut>
+                                            {mailShortcutKeys.forward}
+                                          </ContextMenuShortcut>
                                         </ContextMenuItem>
                                         <ContextMenuSeparator />
                                         <ContextMenuCheckboxItem
@@ -3088,6 +3130,9 @@ export default function App() {
                                           }
                                         >
                                           星标
+                                          <ContextMenuShortcut>
+                                            {mailShortcutKeys.star}
+                                          </ContextMenuShortcut>
                                         </ContextMenuCheckboxItem>
                                         <ContextMenuCheckboxItem
                                           checked={allRead}
@@ -3101,6 +3146,9 @@ export default function App() {
                                           }
                                         >
                                           已读
+                                          <ContextMenuShortcut>
+                                            {mailShortcutKeys.read}
+                                          </ContextMenuShortcut>
                                         </ContextMenuCheckboxItem>
                                       </>
                                     ) : (
@@ -3116,6 +3164,9 @@ export default function App() {
                                         >
                                           <Forward />
                                           转发
+                                          <ContextMenuShortcut>
+                                            {mailShortcutKeys.forward}
+                                          </ContextMenuShortcut>
                                         </ContextMenuItem>
                                       </>
                                     )}
@@ -3345,39 +3396,52 @@ export default function App() {
                               <ArrowDownToLine size={17} />
                             </Button>
                             <span className="toolbar-divider" />
-                            <Button
-                              variant="ghost"
-                              size="icon-sm"
-                              title={
+                            <MailActionTooltip
+                              action="read"
+                              label={
                                 detail.mail.isRead ? "标记未读" : "标记已读"
                               }
-                              onClick={() =>
-                                void mutate(
-                                  [detail.mail.id],
-                                  "read",
-                                  String(!detail.mail.isRead),
-                                )
-                              }
                             >
-                              <MailOpen size={17} />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon-sm"
-                              title="星标"
-                              onClick={() =>
-                                void mutate(
-                                  [detail.mail.id],
-                                  "star",
-                                  String(!detail.mail.starred),
-                                )
-                              }
-                            >
-                              <Star
-                                size={17}
-                                className={detail.mail.starred ? "star-on" : ""}
-                              />
-                            </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon-sm"
+                                title={
+                                  detail.mail.isRead ? "标记未读" : "标记已读"
+                                }
+                                aria-keyshortcuts="Meta+Shift+U Control+Shift+U"
+                                onClick={() =>
+                                  void mutate(
+                                    [detail.mail.id],
+                                    "read",
+                                    String(!detail.mail.isRead),
+                                  )
+                                }
+                              >
+                                <MailOpen size={17} />
+                              </Button>
+                            </MailActionTooltip>
+                            <MailActionTooltip action="star" label="星标">
+                              <Button
+                                variant="ghost"
+                                size="icon-sm"
+                                title="星标"
+                                aria-keyshortcuts="Meta+Shift+L Control+Shift+L"
+                                onClick={() =>
+                                  void mutate(
+                                    [detail.mail.id],
+                                    "star",
+                                    String(!detail.mail.starred),
+                                  )
+                                }
+                              >
+                                <Star
+                                  size={17}
+                                  className={
+                                    detail.mail.starred ? "star-on" : ""
+                                  }
+                                />
+                              </Button>
+                            </MailActionTooltip>
                             <Button
                               variant="ghost"
                               size="icon-sm"
@@ -3402,16 +3466,19 @@ export default function App() {
                             </Button>
                           </div>
                           <div className="reader-actions">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              aria-label="回复"
-                              title="回复"
-                              onClick={() => compose(detail.mail)}
-                            >
-                              <Reply size={15} />
-                              <span className="action-label">回复</span>
-                            </Button>
+                            <MailActionTooltip action="reply" label="回复">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                aria-label="回复"
+                                title="回复"
+                                aria-keyshortcuts="Meta+R Control+R"
+                                onClick={() => compose(detail.mail)}
+                              >
+                                <Reply size={15} />
+                                <span className="action-label">回复</span>
+                              </Button>
+                            </MailActionTooltip>
                             <DropdownMenu>
                               <DropdownMenuTrigger asChild>
                                 <Button
@@ -3424,42 +3491,51 @@ export default function App() {
                                 </Button>
                               </DropdownMenuTrigger>
                               <DropdownMenuContent align="end">
-                                <DropdownMenuItem
-                                  onClick={() =>
-                                    compose(detail.mail, false, true)
-                                  }
-                                >
-                                  <ReplyAll size={15} />
-                                  全部回复
-                                </DropdownMenuItem>
-                                <DropdownMenuItem
-                                  onClick={() => {
-                                    const address = parseAddresses(
-                                      detail.mail.sender,
-                                    )[0];
-                                    if (!address) {
-                                      toast.error("无法识别发件人邮箱地址");
-                                      return;
+                                <DropdownMenuGroup>
+                                  <DropdownMenuItem
+                                    aria-keyshortcuts="Meta+Shift+R Control+Shift+R"
+                                    onClick={() =>
+                                      compose(detail.mail, false, true)
                                     }
-                                    setContactSeed(address);
-                                    setPage("contacts");
-                                  }}
-                                >
-                                  <UsersRound size={15} />
-                                  添加发件人为联系人
-                                </DropdownMenuItem>
+                                  >
+                                    <ReplyAll size={15} />
+                                    全部回复
+                                    <DropdownMenuShortcut>
+                                      {mailShortcutKeys.replyAll}
+                                    </DropdownMenuShortcut>
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem
+                                    onClick={() => {
+                                      const address = parseAddresses(
+                                        detail.mail.sender,
+                                      )[0];
+                                      if (!address) {
+                                        toast.error("无法识别发件人邮箱地址");
+                                        return;
+                                      }
+                                      setContactSeed(address);
+                                      setPage("contacts");
+                                    }}
+                                  >
+                                    <UsersRound size={15} />
+                                    添加发件人为联系人
+                                  </DropdownMenuItem>
+                                </DropdownMenuGroup>
                               </DropdownMenuContent>
                             </DropdownMenu>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              aria-label="转发"
-                              title="转发"
-                              onClick={() => compose(detail.mail, true)}
-                            >
-                              <ArrowRight size={15} />
-                              <span className="action-label">转发</span>
-                            </Button>
+                            <MailActionTooltip action="forward" label="转发">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                aria-label="转发"
+                                title="转发"
+                                aria-keyshortcuts="Meta+Shift+F Control+Shift+F"
+                                onClick={() => compose(detail.mail, true)}
+                              >
+                                <ArrowRight size={15} />
+                                <span className="action-label">转发</span>
+                              </Button>
+                            </MailActionTooltip>
                             {own(detail.mail) && (
                               <Button
                                 variant="ghost"
