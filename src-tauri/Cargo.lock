@@ -6191,6 +6191,7 @@ name = "yanxin"
 version = "0.1.8"
 dependencies = [
  "base64 0.22.1",
+ "cc",
  "chrono",
  "encoding_rs",
  "fs2",

@@ -106,6 +106,7 @@ impl Store {
         crate::archive_jobs::initialize(&db)?;
         crate::search::initialize(&db)?;
         crate::paging::initialize(&db)?;
+        crate::notification_open::initialize(&db)?;
         s.migrate_folder_roles()?;
         s.recover_archive_deletion()?;
         s.refresh_archive_roots()?; // 必须先于元数据刷新：读取存档依赖根列表

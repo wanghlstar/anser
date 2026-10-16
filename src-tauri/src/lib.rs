@@ -10,6 +10,7 @@ mod folder_health;
 mod idle;
 mod models;
 mod network;
+mod notification_open;
 mod notifications;
 mod operations;
 mod paging;
@@ -632,7 +633,24 @@ fn set_auto_start(app: tauri::AppHandle, enabled: bool) -> Result<()> {
     }
 }
 #[tauri::command]
-fn test_notification(app: tauri::AppHandle) -> Result<()> {
+fn test_notification(
+    app: tauri::AppHandle,
+    state: tauri::State<AppState>,
+    id: Option<String>,
+) -> Result<()> {
+    #[cfg(target_os = "macos")]
+    if let Some(id) = id.filter(|id| !id.is_empty()) {
+        let mail = state.store.mail_metadata(&id)?;
+        let token = notification_open::bind(&state.store, &mail)?;
+        notification_open::resolve(&state.store, &token)?;
+        return notification_open::show(
+            "雁信 · 通知测试",
+            "点击这条通知，打开刚才阅读的邮件。",
+            &token,
+        );
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = (state, id);
     notifications::show(
         &app,
         "雁信 · 通知测试",
@@ -1622,6 +1640,19 @@ fn take_eml_paths(state: tauri::State<eml_files::EmlFiles>) -> Result<Vec<String
     state.take_pending()
 }
 #[tauri::command]
+fn take_notification_mail(
+    state: tauri::State<notification_open::NotificationOpen>,
+) -> Result<Option<String>> {
+    state.take()
+}
+#[tauri::command]
+async fn notification_mail(state: tauri::State<'_, AppState>, token: String) -> Result<Mail> {
+    let store = state.store.clone();
+    tauri::async_runtime::spawn_blocking(move || notification_open::resolve(&store, &token))
+        .await
+        .map_err(err)?
+}
+#[tauri::command]
 async fn open_eml_file(
     state: tauri::State<'_, eml_files::EmlFiles>,
     path: String,
@@ -1795,6 +1826,7 @@ fn watch_tray_unread(store: Store, tray: tauri::tray::TrayIcon) {
 pub fn run() {
     tauri::Builder::default()
         .manage(eml_files::EmlFiles::default())
+        .manage(notification_open::NotificationOpen::default())
         .plugin(
             tauri::plugin::Builder::<tauri::Wry, ()>::new("mail-links")
                 .on_navigation(|webview, url| {
@@ -1833,10 +1865,6 @@ pub fn run() {
                 std::env::args().skip(1).collect(),
                 &std::env::current_dir()?,
             );
-            // The standard plugin uses Terminal in dev mode. This preview already
-            // runs inside a real .app bundle, so retain Yanxin's own identity.
-            #[cfg(target_os = "macos")]
-            let _ = notify_rust::set_application(&app.config().identifier);
             if std::env::args().any(|arg| arg == "--autostart") {
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.hide();
@@ -1865,6 +1893,8 @@ pub fn run() {
                 dock_enabled: dock_enabled.clone(),
             });
             watch_dock_icon(app.handle().clone(), dock_enabled);
+            #[cfg(target_os = "macos")]
+            notification_open::setup(app.handle());
             // 分层归档：启动时检查一次，之后每 6 小时（未配置外置根或永久保留时自动跳过）
             let tier_store = store.clone();
             tauri::async_runtime::spawn_blocking(move || loop {
@@ -2012,6 +2042,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             restart_for_update,
             take_eml_paths,
+            take_notification_mail,
+            notification_mail,
             open_eml_file,
             close_eml_file,
             preview_eml_attachment,

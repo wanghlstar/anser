@@ -1,4 +1,5 @@
 import { useConfirmation } from "./hooks/use-confirmation";
+import { useNotificationMail } from "./hooks/use-notification-mail";
 import {
   useAppUpdate,
   UpdateIndicator,
@@ -355,6 +356,72 @@ export default function App() {
   const localChanges = useRef(new Map<string, Partial<Mail>>());
   const pendingDeletes = useRef(new Set<string>());
   queryRef.current = query;
+  const [notificationToken, setNotificationToken] = useState<{
+    token: string;
+    click: number;
+  } | null>(null);
+  const notificationGeneration = useRef(0);
+  const notificationReading = useRef("");
+  const notificationContext = useRef({ page, search, draft, demo });
+  notificationContext.current = { page, search, draft, demo };
+  useNotificationMail(native && !demo, (token) => {
+    const click = ++notificationGeneration.current;
+    setNotificationToken({ token, click });
+  });
+  useEffect(() => {
+    if (!notificationToken || draft || demo) return;
+    let live = true;
+    const ticket = ++notificationGeneration.current;
+    const scope = queryRef.current;
+    const reading = selectionRef.current;
+    const context = notificationContext.current;
+    void call<Mail>("notification_mail", { token: notificationToken.token })
+      .then((mail) => {
+        if (
+          !live ||
+          ticket !== notificationGeneration.current ||
+          scope !== queryRef.current ||
+          reading !== selectionRef.current ||
+          context.page !== notificationContext.current.page ||
+          context.search !== notificationContext.current.search ||
+          context.draft !== notificationContext.current.draft ||
+          context.demo !== notificationContext.current.demo
+        )
+          return;
+        setSearch("");
+        setChecked([]);
+        setPage("mail");
+        setQuery({
+          view: mail.trashed
+            ? "trash"
+            : mail.savedLocally !== false
+              ? "local"
+              : "remote",
+          accountId: mail.accountId,
+          folder: "",
+          remoteFolder: mail.savedLocally === false ? mail.sourceFolder : "",
+          search: "",
+          unreadOnly: false,
+          limit: 200,
+          listMode: queryRef.current.listMode,
+        });
+        notificationReading.current = mail.id;
+        setSelected(mail.id);
+        readingNeighbors.current = null;
+        setDetailRetry((value) => value + 1);
+      })
+      .catch((error) => {
+        if (live && ticket === notificationGeneration.current)
+          toast.error(`无法打开通知邮件：${String(error)}`);
+      })
+      .finally(() => {
+        if (live && ticket === notificationGeneration.current)
+          setNotificationToken(null);
+      });
+    return () => {
+      live = false;
+    };
+  }, [notificationToken, draft, demo]);
   const grouped = query.listMode !== "messages";
   useEffect(() => {
     try {
@@ -538,11 +605,19 @@ export default function App() {
     if (selected)
       void call<Detail>("mail_detail", { id: selected })
         .then((d) => {
-          if (live)
+          if (live) {
             setDetail({
               ...d,
               mail: { ...d.mail, ...localChanges.current.get(d.mail.id) },
             });
+            if (notificationReading.current === d.mail.id) {
+              notificationReading.current = "";
+              if (!d.mail.isRead)
+                void updateMail(d.mail.id, "read", "true")
+                  .then(() => refresh())
+                  .catch((error) => toast.error(String(error)));
+            }
+          }
         })
         .catch((e) => {
           if (live) {
@@ -771,6 +846,9 @@ export default function App() {
     folder = "",
     remoteFolder = "",
   ) {
+    ++notificationGeneration.current;
+    setNotificationToken(null);
+    notificationReading.current = "";
     setPage("mail");
     setSearch("");
     setSelected("");
@@ -1166,6 +1244,9 @@ export default function App() {
     }
   }
   async function openMail(m: Mail, messages = data.messages) {
+    ++notificationGeneration.current;
+    setNotificationToken(null);
+    notificationReading.current = "";
     const index = messages.findIndex(
       (item) =>
         item.id === m.id ||
