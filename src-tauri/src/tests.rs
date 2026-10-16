@@ -2003,6 +2003,45 @@ fn online_mail_has_no_mime_archive_and_can_be_upgraded_without_losing_identity()
 }
 
 #[test]
+fn trash_and_delete_only_touch_the_current_copy_not_same_message_id() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::new(dir.path().into()).unwrap();
+    let a = account();
+    store.save_account(&a).unwrap();
+    let base = "Message-ID: <self@example.com>\r\nFrom: me@example.com\r\nTo: me@example.com\r\nSubject: Self\r\nDate: Tue, 29 Sep 2026 10:00:00 +0800\r\n\r\nHello\r\n";
+    let sent = format!("{base}X-Origin: Sent\r\n");
+    store
+        .ingest(&a, "INBOX", "1:1", base.as_bytes(), false)
+        .unwrap();
+    store
+        .ingest(&a, "Sent", "2:1", sent.as_bytes(), false)
+        .unwrap();
+    let mut q = query();
+    q.list_mode = ListMode::Messages;
+    let mails = store.snapshot(&q).unwrap().messages;
+    assert_eq!(mails.len(), 2);
+    let inbox = mails
+        .iter()
+        .find(|m| m.source_folder.eq_ignore_ascii_case("INBOX"))
+        .unwrap()
+        .clone();
+    let sent_mail = mails
+        .iter()
+        .find(|m| m.source_folder == "Sent")
+        .unwrap()
+        .clone();
+    assert_ne!(inbox.id, sent_mail.id);
+    assert_eq!(inbox.message_id, sent_mail.message_id);
+    // 废纸篓只作用于当前副本
+    store.change_mail(&inbox.id, "trash", "true").unwrap();
+    assert!(store.mail(&inbox.id).unwrap().trashed);
+    assert!(!store.mail(&sent_mail.id).unwrap().trashed);
+    // 读仍按 Message-ID 跨副本同步
+    store.change_mail(&inbox.id, "read", "true").unwrap();
+    assert!(store.mail(&sent_mail.id).unwrap().is_read);
+}
+
+#[test]
 fn extract_attachments_writes_original_files_for_forwarding() {
     let dir = tempfile::tempdir().unwrap();
     let store = Store::new(dir.path().into()).unwrap();

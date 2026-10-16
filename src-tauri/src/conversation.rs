@@ -163,9 +163,27 @@ impl Store {
         let tx = db
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .map_err(err)?;
-        let rows = tx.prepare("SELECT data FROM messages WHERE id=?1 OR (account_id=?2 AND ((?3!='' AND json_extract(data,'$.messageId')=?3) OR (?4!='' AND COALESCE(NULLIF(json_extract(data,'$.serverMessageId'),''),json_extract(data,'$.messageId'))=?4)))").map_err(err)?
-            .query_map(rusqlite::params![id, selected.account_id, selected.message_id, if selected.server_message_id.is_empty() { &selected.message_id } else { &selected.server_message_id }], |r| r.get::<_, String>(0)).map_err(err)?
-            .collect::<std::result::Result<Vec<_>,_>>().map_err(err)?;
+        // 读/星标按 Message-ID 同步同账号的其他副本；
+        // 移到废纸篓/彻底删除只作用于当前这一行（当前文件夹的副本），
+        // 否则自寄邮件的收件箱与已发送会互相牵连。
+        let per_row = matches!(action, "trash" | "delete");
+        let mut stmt = if per_row {
+            tx.prepare("SELECT data FROM messages WHERE id=?1")
+                .map_err(err)?
+        } else {
+            tx.prepare("SELECT data FROM messages WHERE id=?1 OR (account_id=?2 AND ((?3!='' AND json_extract(data,'$.messageId')=?3) OR (?4!='' AND COALESCE(NULLIF(json_extract(data,'$.serverMessageId'),''),json_extract(data,'$.messageId'))=?4)))").map_err(err)?
+        };
+        let rows = if per_row {
+            stmt.query_map(rusqlite::params![id], |r| r.get::<_, String>(0))
+                .map_err(err)?
+                .collect::<std::result::Result<Vec<_>, _>>()
+                .map_err(err)?
+        } else {
+            stmt.query_map(rusqlite::params![id, selected.account_id, selected.message_id, if selected.server_message_id.is_empty() { &selected.message_id } else { &selected.server_message_id }], |r| r.get::<_, String>(0)).map_err(err)?
+                .collect::<std::result::Result<Vec<_>, _>>()
+                .map_err(err)?
+        };
+        drop(stmt);
         let mut row_ids: Vec<String> = Vec::new();
         for data in rows {
             let mut mail: Mail = serde_json::from_str(&data).map_err(err)?;
