@@ -975,7 +975,8 @@ fn all_and_unread_views_include_server_deleted_archive_in_default_inbox_scope() 
         ("gone-unsaved-inbox", "3"),
     ] {
         let raw = format!("From: test@example.com\r\nSubject: {subject}\r\n\r\nAggregate archive");
-        s.ingest(&a, "INBOX", remote, raw.as_bytes(), false).unwrap();
+        s.ingest(&a, "INBOX", remote, raw.as_bytes(), false)
+            .unwrap();
     }
     // 服务器上只剩 active-inbox：其余两封的唯一来源行对账后非活跃，但本地仍有存档。
     s.reconcile_folder(&a.id, "INBOX", &["1".into()]).unwrap();
@@ -1014,10 +1015,7 @@ fn all_and_unread_views_include_server_deleted_archive_in_default_inbox_scope() 
     paged.list_mode = ListMode::Messages;
     let page = s
         .mail_page(&crate::paging::PageRequest {
-            query: Query {
-                limit: 10,
-                ..paged
-            },
+            query: Query { limit: 10, ..paged },
             cursor: String::new(),
             date_from: String::new(),
             date_before: String::new(),
@@ -1049,7 +1047,8 @@ fn all_and_unread_views_scope_server_deleted_archive_to_configured_inbox_folders
         let raw = format!("From: test@example.com\r\nSubject: {subject}\r\n\r\nScoped archive");
         s.ingest(&a, folder, remote, raw.as_bytes(), false).unwrap();
     }
-    s.save_inbox_folders(&a.id, Some(vec!["Work".into()])).unwrap();
+    s.save_inbox_folders(&a.id, Some(vec!["Work".into()]))
+        .unwrap();
     // 服务器现存各文件夹一封，其余为已删存档（来源行非活跃、本地仍有存档）。
     s.reconcile_folder(&a.id, "Work", &["1".into()]).unwrap();
     s.reconcile_folder(&a.id, "INBOX", &["2".into()]).unwrap();
@@ -1076,10 +1075,7 @@ fn all_and_unread_views_scope_server_deleted_archive_to_configured_inbox_folders
     paged.list_mode = ListMode::Messages;
     let page = s
         .mail_page(&crate::paging::PageRequest {
-            query: Query {
-                limit: 10,
-                ..paged
-            },
+            query: Query { limit: 10, ..paged },
             cursor: String::new(),
             date_from: String::new(),
             date_before: String::new(),
@@ -1436,6 +1432,43 @@ fn filters_stack_with_category_and_field_search_and_legacy_query_defaults() {
     )
     .unwrap();
     assert!(!legacy.starred_only && !legacy.attachments_only && legacy.search_field.is_empty());
+}
+#[test]
+fn reedit_sent_mail_creates_a_new_draft_and_keeps_the_sent_record() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = Store::new(dir.path().into()).unwrap();
+    let a = account();
+    s.save_account(&a).unwrap();
+    let d = draft();
+    let raw = crate::network::build_message(&a, &d).unwrap().formatted();
+    s.db()
+        .unwrap()
+        .execute(
+            "INSERT INTO outbox(id,status,data,raw) VALUES(?1,'sent',?2,?3)",
+            rusqlite::params![d.id, serde_json::to_string(&d).unwrap(), raw],
+        )
+        .unwrap();
+    s.archive_outbox(&d.id).unwrap();
+    let sent = s.snapshot(&query()).unwrap().messages[0].clone();
+    let edited = s.reedit_sent_mail(&sent.id).unwrap();
+    // 新草稿是另一封邮件：id 不同，收件人/抄送/主题与原件一致，正文与附件可编辑
+    assert_ne!(edited.id, d.id);
+    assert_ne!(edited.id, sent.id);
+    assert_eq!(edited.account_id, d.account_id);
+    assert_eq!(edited.to, d.to);
+    assert_eq!(edited.cc, d.cc);
+    assert_eq!(edited.bcc, "");
+    assert_eq!(edited.subject, sent.subject);
+    assert_eq!(edited.html, d.html);
+    assert!(edited.quote.is_none());
+    // 签名拆分由前端负责：这里保持原件 HTML 原样，交给 extractOriginalSignature 处理
+    assert!(edited.signature.is_none());
+    // 草稿已入草稿箱，原已发送记录与存档不变
+    assert_eq!(s.drafts().unwrap().len(), 1);
+    assert_eq!(s.snapshot(&query()).unwrap().matched, 1);
+    let after = s.snapshot(&query()).unwrap().messages[0].clone();
+    assert_eq!(after.id, sent.id);
+    assert_eq!(after.hash, sent.hash);
 }
 #[test]
 fn uncertain_send_is_preserved_and_never_automatically_retried_after_restart() {
@@ -2932,7 +2965,11 @@ fn local_folder_browse_follows_sources_rows_over_stale_source_folder() {
         let mut subjects: Vec<_> = snap.messages.iter().map(|m| m.subject.as_str()).collect();
         subjects.sort_unstable();
         assert_eq!(subjects, expected, "snapshot {view}/{folder}");
-        assert_eq!(snap.matched as usize, expected.len(), "matched {view}/{folder}");
+        assert_eq!(
+            snap.matched as usize,
+            expected.len(),
+            "matched {view}/{folder}"
+        );
         let page = s
             .mail_page(&crate::paging::PageRequest {
                 query: Query {
@@ -3018,8 +3055,11 @@ fn local_archive_keeps_mail_deleted_on_server_by_original_source_folder() {
             [&a.id],
         )
         .unwrap();
-    s.save_remote_folders(&a.id, &[mapping_folder(&a, "INBOX", vec![FolderRole::Inbox])])
-        .unwrap();
+    s.save_remote_folders(
+        &a.id,
+        &[mapping_folder(&a, "INBOX", vec![FolderRole::Inbox])],
+    )
+    .unwrap();
     // 存档树按 sources 行归组（不要求活跃）：服务器已删的邮件仍按原文件夹计数，
     // 移动过的邮件只计在新来源行下，过期的 sourceFolder 不参与归组。
     let tree = s.local_archive_tree().unwrap();
@@ -3060,7 +3100,11 @@ fn local_archive_keeps_mail_deleted_on_server_by_original_source_folder() {
         let mut subjects: Vec<_> = snap.messages.iter().map(|m| m.subject.as_str()).collect();
         subjects.sort_unstable();
         assert_eq!(subjects, expected, "snapshot {view}/{folder}");
-        assert_eq!(snap.matched as usize, expected.len(), "matched {view}/{folder}");
+        assert_eq!(
+            snap.matched as usize,
+            expected.len(),
+            "matched {view}/{folder}"
+        );
         let page = s
             .mail_page(&crate::paging::PageRequest {
                 query: Query {
@@ -3119,7 +3163,11 @@ fn rule_moved_mail_leaves_inbox_and_only_server_deleted_archive_keeps_old_folder
         let mut subjects: Vec<_> = snap.messages.iter().map(|m| m.subject.as_str()).collect();
         subjects.sort_unstable();
         assert_eq!(subjects, expected, "snapshot {view}/{folder}");
-        assert_eq!(snap.matched as usize, expected.len(), "matched {view}/{folder}");
+        assert_eq!(
+            snap.matched as usize,
+            expected.len(),
+            "matched {view}/{folder}"
+        );
         let page = s
             .mail_page(&crate::paging::PageRequest {
                 query: Query {
@@ -3194,7 +3242,11 @@ fn account_folder_view_includes_server_deleted_archive_and_stats_match() {
         let mut subjects: Vec<_> = snap.messages.iter().map(|m| m.subject.as_str()).collect();
         subjects.sort_unstable();
         assert_eq!(subjects, expected, "snapshot {view}/{folder}");
-        assert_eq!(snap.matched as usize, expected.len(), "matched {view}/{folder}");
+        assert_eq!(
+            snap.matched as usize,
+            expected.len(),
+            "matched {view}/{folder}"
+        );
         let page = s
             .mail_page(&crate::paging::PageRequest {
                 query: Query {
@@ -3316,7 +3368,10 @@ fn unsaved_mail_without_active_source_stays_out_of_account_folder_view() {
             [&a.id, "Work", "9"],
         )
         .unwrap();
-    for (view, expected) in [("remote", vec!["saved-work"]), ("local", vec!["saved-work"])] {
+    for (view, expected) in [
+        ("remote", vec!["saved-work"]),
+        ("local", vec!["saved-work"]),
+    ] {
         let mut q = query();
         q.view = view.into();
         q.remote_folder = "Work".into();
@@ -3548,7 +3603,8 @@ fn tier_log_backfills_archives_moved_before_the_log_existed() {
     s.save_preferences(&prefs).unwrap();
     s.refresh_archive_roots().unwrap();
     // 模拟升级前的旧档案：文件已在外置根，但 tier_log 还没有记录
-    let rel = s.mail(&s.snapshot(&query()).unwrap().messages[0].id)
+    let rel = s
+        .mail(&s.snapshot(&query()).unwrap().messages[0].id)
         .unwrap()
         .rel_path
         .clone()

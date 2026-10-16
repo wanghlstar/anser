@@ -3,7 +3,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { beforeEach, afterEach, describe, it, expect, vi } from "vitest";
 import App from "./App";
-import { call, enterDemo, leaveDemo, snapshot } from "./lib/api";
+import { call, enterDemo, leaveDemo, newDraft, snapshot } from "./lib/api";
 import * as api from "./lib/api";
 import type { Account, Query } from "./lib/types";
 import { toast } from "sonner";
@@ -1709,4 +1709,59 @@ it("reloads the archive tree counts when the list refreshes", async () => {
   await click(nav("星标邮件"));
   await click(nav("全部收件箱"));
   expect(inboxRow()?.querySelector("em")?.textContent).toBe("3");
+});
+it("hides the unread tab in the sent view and keeps it in the inbox", async () => {
+  await click(nav("全部收件箱"));
+  expect(filter("全部")).not.toBeNull();
+  expect(filter("未读")).not.toBeNull();
+  await click(nav("已发送"));
+  expect(filter("全部")).not.toBeNull();
+  expect(filter("未读")).toBeNull();
+});
+it("lists an account's local drafts in its drafts folder", async () => {
+  const seed = await snapshot({
+    view: "all",
+    accountId: "",
+    search: "",
+    folder: "",
+    limit: 100,
+    unreadOnly: false,
+  });
+  await call("save_draft", {
+    draft: {
+      ...newDraft(seed.accounts[0].id),
+      subject: "账号本地草稿",
+      to: "team@example.com",
+      body: "草稿正文",
+    },
+  });
+  await call("save_draft", {
+    draft: {
+      ...newDraft(seed.accounts[1].id),
+      subject: "另一个账号的草稿",
+      to: "other@example.com",
+      body: "不应出现",
+    },
+  });
+  const accountItem = () =>
+    [...host.querySelectorAll("button.nav-item.account-item")].find((b) =>
+      b.textContent?.includes("alex@example.com"),
+    ) ?? null;
+  await click(accountItem());
+  await click(
+    [...host.querySelectorAll(".remote-folder-list button.folder-item")].find(
+      (b) => b.textContent?.includes("草稿"),
+    ) ?? null,
+  );
+  expect(host.querySelector("h1")?.textContent).toContain("草稿箱");
+  expect(host.textContent).toContain("账号本地草稿");
+  expect(host.textContent).toContain("草稿正文");
+  // 只显示该账号的草稿
+  expect(host.textContent).not.toContain("另一个账号的草稿");
+  // 账号内草稿箱同样带「写邮件」入口
+  expect(
+    [...host.querySelectorAll("button")].some(
+      (b) => b.textContent === "写邮件",
+    ),
+  ).toBe(true);
 });

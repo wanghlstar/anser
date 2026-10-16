@@ -16,6 +16,7 @@ import type {
   Compose,
   MailPage,
   MailNeighbor,
+  RemoteFolder,
 } from "./types";
 import { makeDemo } from "./demo";
 import { emptySignature } from "./signatures";
@@ -210,6 +211,13 @@ export async function call<T = void>(
             )[name] || name,
           delimiter: "/",
           selectable: true,
+          // 与真实账号一致的角色标记：已发送/草稿没有未读概念，草稿文件夹列本地草稿
+          roles: (
+            { INBOX: ["inbox"], Sent: ["sent"], Drafts: ["drafts"] } as Record<
+              string,
+              string[]
+            >
+          )[name] as RemoteFolder["roles"],
         }));
         break;
       }
@@ -685,7 +693,7 @@ export async function call<T = void>(
       case "get_preferences":
         result = JSON.parse(
           localStorage.getItem(key + "-preferences") ||
-            '{"syncIntervalMinutes":5,"newMailNotifications":true,"sendResultNotifications":true}',
+            '{"syncIntervalMinutes":5,"newMailNotifications":true,"sendResultNotifications":true,"sendCountdownSeconds":5}',
         );
         break;
       case "save_preferences":

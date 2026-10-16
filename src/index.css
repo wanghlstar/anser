@@ -1572,12 +1572,15 @@ button.nav-collapse .collapse-chevron {
   gap: 14px;
   min-width: 0;
 }
+/* 每列最后一张卡拉伸补齐，两列底部齐平；内容用 space-between 均摊，
+   避免卡片内容少时底部出现一整片空白。 */
 .storage-tools-col > :last-child {
   flex-grow: 1;
 }
 .settings-tool {
   padding: 14px;
   gap: 12px;
+  justify-content: space-between;
 }
 .settings-tool-title {
   display: flex;
@@ -1587,6 +1590,19 @@ button.nav-collapse .collapse-chevron {
 .settings-tool h3 {
   font-size: 14px;
   font-weight: 550;
+}
+.settings-tool h4 {
+  font-size: 13px;
+  font-weight: 550;
+}
+/* 合并到「存档分层」后的子分区：细分隔线区分两块内容 */
+.settings-tool-divider {
+  margin: 2px 0;
+}
+.settings-tool-note {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
 }
 .settings-tool p,
 .settings-tool small {
@@ -1599,6 +1615,13 @@ button.nav-collapse .collapse-chevron {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+}
+/* 同行并排的下拉：两个选择器靠左相邻，保存按钮仍在最右 */
+.settings-tool-selects {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 .settings-tool-row .select-field {
   border: 1px solid var(--border);
@@ -2207,29 +2230,64 @@ button.nav-collapse .collapse-chevron {
 .outbox-card {
   border: 1px solid var(--border);
   border-radius: 10px;
-  padding: 18px;
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
-.outbox-card h3 {
-  font-size: 15px;
-  font-weight: 550;
-  margin: 10px 0 5px;
+/* 第一行：状态 + 主题（占满并省略）+ 时间 */
+.outbox-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
 }
-.outbox-recipient {
+.outbox-main h3 {
+  flex: 1;
+  min-width: 0;
   font-size: 13px;
-  overflow-wrap: anywhere;
+  font-weight: 550;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin: 0;
 }
-.outbox-card small,
-.outbox-hint {
+.outbox-time {
+  flex-shrink: 0;
   font-size: 12px;
   color: var(--muted);
+  white-space: nowrap;
 }
-.outbox-hint {
-  margin: 12px 0;
+/* 第二行：收件人 + 状态说明 + 副本信息 + 操作，放不下自动换行 */
+.outbox-detail {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  min-width: 0;
+}
+.outbox-recipient {
+  font-size: 12px;
+  color: var(--muted);
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.outbox-note {
+  font-size: 12px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.outbox-error {
+  color: var(--destructive);
+}
+.outbox-detail .outbox-actions {
+  margin-left: auto;
 }
 .outbox-status {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
+  flex-shrink: 0;
   font-size: 12px;
   font-weight: 550;
 }
@@ -2242,7 +2300,8 @@ button.nav-collapse .collapse-chevron {
 }
 .outbox-actions {
   display: flex;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 .quick-filters {
   display: flex;
@@ -2324,6 +2383,38 @@ button.nav-collapse .collapse-chevron {
 .compose-footer button {
   font-size: 13px;
 }
+/* 发送倒计时条：写信窗口收起后常驻底部，不拦截其他操作 */
+.pending-send {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  z-index: 45;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  max-width: calc(100% - 48px);
+  padding: 12px 18px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--background);
+  box-shadow: 0 12px 32px oklch(0 0 0 / 18%);
+}
+.pending-send-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 260px;
+}
+.pending-send-body strong {
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.pending-send-actions {
+  display: flex;
+  gap: 8px;
+}
 .compose-attachments {
   flex-shrink: 0;
   display: flex;
@@ -2346,34 +2437,63 @@ button.nav-collapse .collapse-chevron {
   display: flex;
   padding: 0;
 }
-.draft-card {
+/* 草稿箱紧凑行：第一行主题+收件人，第二行正文预览，宽度自适应 */
+.draft-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.draft-row {
   display: flex;
   align-items: center;
+  gap: 6px;
+  min-width: 0;
   border: 1px solid var(--border);
-  border-radius: 9px;
-  padding: 20px;
-  margin: 12px 0;
-  gap: 15px;
+  border-radius: 8px;
+  padding: 7px 10px;
 }
-.draft-card > button:first-child {
+.draft-row-main {
   flex: 1;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  height: auto;
+  padding: 2px 4px;
   background: none;
   border: 0;
   text-align: left;
 }
-.draft-card h3 {
-  font-size: 13px;
-  margin-bottom: 8px;
+.draft-row-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
 }
-.draft-card p {
+.draft-subject {
   font-size: 13px;
-  color: var(--muted);
-  margin-bottom: 6px;
+  font-weight: 550;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-.draft-card small {
+.draft-recipient {
+  flex-shrink: 0;
+  max-width: 45%;
   font-size: 12px;
   color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.draft-preview {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .mail-html {
   display: block;

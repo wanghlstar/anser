@@ -10,6 +10,7 @@ let root: Root, host: HTMLDivElement;
 beforeEach(async () => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   localStorage.clear();
+  HTMLElement.prototype.scrollIntoView = vi.fn();
   enterDemo();
   host = document.createElement("div");
   document.body.append(host);
@@ -159,9 +160,65 @@ it("stacks the taller cards in the left column and the shorter ones in the right
       ].map((h3) => h3.textContent),
   );
   expect(titles).toEqual([
-    ["后台检查", "外观", "存档完整性"],
+    ["后台检查", "外观"],
     ["系统通知与启动", "存档分层"],
   ]);
+});
+it("groups archive integrity under the archive tiering card", async () => {
+  await act(async () => root.render(<StorageTools />));
+  const tier = [...host.querySelectorAll(".settings-tool")].find(
+    (card) => card.querySelector("h3")?.textContent === "存档分层",
+  );
+  // 校验存档与分层操作同一行；不再有独立的「存档完整性」卡片标题
+  const tierText = tier?.textContent ?? "";
+  for (const label of ["立即归档", "取回本地", "规范目录", "校验存档"])
+    expect(tierText).toContain(label);
+  expect(
+    [
+      ...host.querySelectorAll(".settings-tool > h3, .settings-tool-title h3"),
+    ].map((h3) => h3.textContent),
+  ).toEqual(["后台检查", "外观", "系统通知与启动", "存档分层"]);
+  expect(host.querySelector("h4")).toBeNull();
+});
+it("offers the send countdown options in the background check card and saves them", async () => {
+  const calls = vi.spyOn(api, "call");
+  await act(async () => root.render(<StorageTools />));
+  const selector = host.querySelector<HTMLButtonElement>(
+    '[aria-label="延时发送时间"]',
+  );
+  expect(selector?.textContent).toContain("延时 5 秒");
+  await act(async () => {
+    selector!.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }),
+    );
+  });
+  const options = [...document.querySelectorAll('[role="option"]')].map((e) =>
+    e.textContent?.trim(),
+  );
+  expect(options).toEqual(["立即发送", "延时 3 秒", "延时 5 秒", "延时 10 秒"]);
+  await act(async () =>
+    (
+      [...document.querySelectorAll('[role="option"]')].find(
+        (e) => e.textContent?.trim() === "立即发送",
+      ) as HTMLElement
+    ).click(),
+  );
+  const save = [...host.querySelectorAll("button")].find(
+    (b) => b.textContent === "保存",
+  );
+  await act(async () => save!.click());
+  expect(calls.mock.calls).toContainEqual([
+    "save_preferences",
+    {
+      preferences: expect.objectContaining({
+        syncIntervalMinutes: 5,
+        sendCountdownSeconds: 0,
+      }),
+    },
+  ]);
+  expect(await call("get_preferences")).toEqual(
+    expect.objectContaining({ sendCountdownSeconds: 0 }),
+  );
 });
 it("keeps the appearance card with the scale row and the Dock icon switch", async () => {
   await act(async () => root.render(<StorageTools />));

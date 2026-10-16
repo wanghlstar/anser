@@ -171,184 +171,189 @@ export function OutboxPanel({
       <div className="outbox-list">
         {records.map((r) => (
           <article key={r.id} className="outbox-card">
-            <span className={`outbox-status ${r.status}`}>
-              {["scheduled", "overdue", "paused", "cancelled"].includes(
-                r.status,
-              ) ? (
-                <Clock3 size={17} />
-              ) : r.status === "sent" ? (
-                <CheckCircle2 size={17} />
-              ) : r.status === "sending" ? (
-                <LoaderCircle size={17} className="animate-spin" />
-              ) : (
-                <AlertCircle size={17} />
-              )}{" "}
-              {labels[r.status]}
-            </span>
-            <h3>{r.draft.subject || "（无主题）"}</h3>
-            <p className="outbox-recipient">收件人：{r.draft.to}</p>
-            <small>
-              {r.scheduledAt && (
+            <div className="outbox-main">
+              <span className={`outbox-status ${r.status}`}>
+                {["scheduled", "overdue", "paused", "cancelled"].includes(
+                  r.status,
+                ) ? (
+                  <Clock3 size={14} />
+                ) : r.status === "sent" ? (
+                  <CheckCircle2 size={14} />
+                ) : r.status === "sending" ? (
+                  <LoaderCircle size={14} className="animate-spin" />
+                ) : (
+                  <AlertCircle size={14} />
+                )}{" "}
+                {labels[r.status]}
+              </span>
+              <h3 title={r.draft.subject}>{r.draft.subject || "（无主题）"}</h3>
+              <small className="outbox-time">
+                {r.scheduledAt && (
+                  <>
+                    计划时间：
+                    {new Date(r.scheduledAt).toLocaleString("zh-CN", {
+                      hour12: false,
+                    })}{" "}
+                    ·{" "}
+                  </>
+                )}
+                {r.updatedAt
+                  ? new Date(r.updatedAt).toLocaleString("zh-CN", {
+                      hour12: false,
+                    })
+                  : "此前的发送记录"}
+              </small>
+            </div>
+            <div className="outbox-detail">
+              <span className="outbox-recipient">收件人：{r.draft.to}</span>
+              {r.status === "uncertain" && (
+                <span className="outbox-note">
+                  未取得发送确认，可能已送达。先核对服务端已发送邮件。
+                </span>
+              )}
+              {r.status === "sent" && (
+                <span className="outbox-note">
+                  发送服务器已接受，尚不代表收件人已收到。{" "}
+                  {r.archived
+                    ? "本地已发送副本已保存"
+                    : "本地副本尚未归档，原始邮件仍保存在发送记录中"}
+                </span>
+              )}
+              {r.status === "sent" && r.serverCopy && (
                 <>
-                  计划时间：
-                  {new Date(r.scheduledAt).toLocaleString("zh-CN", {
-                    hour12: false,
-                  })}{" "}
-                  ·{" "}
+                  <Badge variant="secondary">
+                    {uploadLabels[r.serverCopy.status] || "保存状态待核对"}
+                  </Badge>
+                  {r.serverCopy.target && (
+                    <span className="outbox-note">
+                      服务器目录：
+                      {r.serverCopy.targetLabel || r.serverCopy.target}
+                    </span>
+                  )}
+                  {r.serverCopy.origin === "existing" && (
+                    <span className="outbox-note">
+                      服务器已有相同副本，未重复上传。
+                    </span>
+                  )}
+                  {r.serverCopy.origin === "smtpReported" && (
+                    <span className="outbox-note">
+                      {r.serverCopy.status === "completed"
+                        ? "服务器报告 SMTP 已保存，唯一副本已核对；未重复上传。"
+                        : ["checking", "verifying"].includes(
+                              r.serverCopy.status,
+                            )
+                          ? "服务器报告 SMTP 已保存，正在核对唯一副本；不会再次上传。"
+                          : "服务器报告 SMTP 已保存，结果尚未确认；只能只读核对，不会再次上传。"}
+                    </span>
+                  )}
+                  {r.serverCopy.status === "uncertain" && (
+                    <span className="outbox-note">
+                      SMTP
+                      发送已经成功，副本可能已保存。仅核对结果，不会自动再次上传。
+                    </span>
+                  )}
                 </>
               )}
-              {r.updatedAt
-                ? new Date(r.updatedAt).toLocaleString("zh-CN", {
-                    hour12: false,
-                  })
-                : "此前的发送记录"}
-            </small>
-            {r.error && r.status !== "sent" && (
-              <p className="form-error">{r.error}</p>
-            )}
-            {r.status === "uncertain" && (
-              <p className="outbox-hint">
-                未取得发送确认，可能已送达。先核对服务端已发送邮件。
-              </p>
-            )}
-            {r.status === "sent" && (
-              <p className="outbox-hint">
-                发送服务器已接受，尚不代表收件人已收到。{" "}
-                {r.archived
-                  ? "本地已发送副本已保存"
-                  : "本地副本尚未归档，原始邮件仍保存在发送记录中"}
-              </p>
-            )}
-            {r.status === "sent" && r.serverCopy && (
-              <div className="outbox-hint">
-                <Badge variant="secondary">
-                  {uploadLabels[r.serverCopy.status] || "保存状态待核对"}
-                </Badge>
-                {r.serverCopy.target && (
-                  <p>
-                    服务器目录：
-                    {r.serverCopy.targetLabel || r.serverCopy.target}
-                  </p>
-                )}
-                {r.serverCopy.error && (
-                  <p className="form-error">{r.serverCopy.error}</p>
-                )}
-                {r.serverCopy.origin === "existing" && (
-                  <p>服务器已有相同副本，未重复上传。</p>
-                )}
-                {r.serverCopy.origin === "smtpReported" && (
-                  <p>
-                    {r.serverCopy.status === "completed"
-                      ? "服务器报告 SMTP 已保存，唯一副本已核对；未重复上传。"
-                      : ["checking", "verifying"].includes(r.serverCopy.status)
-                        ? "服务器报告 SMTP 已保存，正在核对唯一副本；不会再次上传。"
-                        : "服务器报告 SMTP 已保存，结果尚未确认；只能只读核对，不会再次上传。"}
-                  </p>
-                )}
-                {r.serverCopy.status === "uncertain" && (
-                  <p>
-                    SMTP
-                    发送已经成功，副本可能已保存。仅核对结果，不会自动再次上传。
-                  </p>
-                )}
-              </div>
-            )}
-            {r.status === "sent" && r.error && (
-              <p className="form-error">{r.error}</p>
-            )}
-            <div className="outbox-actions">
-              {r.status === "sent" &&
-                r.serverCopyAvailable &&
-                !r.serverCopy && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={!!busy}
-                    onClick={() => void upload(r, "queue")}
-                  >
-                    保存到服务器已发送
-                  </Button>
-                )}
-              {r.status === "sent" &&
-                r.serverCopy?.status === "blocked" &&
-                r.serverCopy.origin !== "smtpReported" && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={!!busy}
-                    onClick={() => void upload(r, "retry")}
-                  >
-                    重试保存副本
-                  </Button>
-                )}
-              {r.status === "sent" &&
-                (["uncertain", "confirmed"].includes(
-                  r.serverCopy?.status || "",
-                ) ||
-                  (r.serverCopy?.status === "blocked" &&
-                    !!r.serverCopy.target &&
-                    r.serverCopy.validity > 0)) && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={!!busy}
-                    onClick={() => void upload(r, "verify")}
-                  >
-                    只读核对副本
-                  </Button>
-                )}
-              {["scheduled", "overdue", "paused"].includes(r.status) && (
-                <>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={!!busy}
-                    onClick={() => {
-                      setEditing(r.id);
-                      setTime(
-                        localDateTime(
-                          new Date(
-                            Math.max(
-                              Date.now() + 3600000,
-                              new Date(r.scheduledAt || "").getTime() || 0,
+              {(r.error && r.status !== "sent" && (
+                <span className="outbox-note outbox-error">{r.error}</span>
+              )) ||
+                (r.status === "sent" && r.error && (
+                  <span className="outbox-note outbox-error">{r.error}</span>
+                ))}
+              <div className="outbox-actions">
+                {r.status === "sent" &&
+                  r.serverCopyAvailable &&
+                  !r.serverCopy && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={!!busy}
+                      onClick={() => void upload(r, "queue")}
+                    >
+                      保存到服务器已发送
+                    </Button>
+                  )}
+                {r.status === "sent" &&
+                  r.serverCopy?.status === "blocked" &&
+                  r.serverCopy.origin !== "smtpReported" && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={!!busy}
+                      onClick={() => void upload(r, "retry")}
+                    >
+                      重试保存副本
+                    </Button>
+                  )}
+                {r.status === "sent" &&
+                  (["uncertain", "confirmed"].includes(
+                    r.serverCopy?.status || "",
+                  ) ||
+                    (r.serverCopy?.status === "blocked" &&
+                      !!r.serverCopy.target &&
+                      r.serverCopy.validity > 0)) && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={!!busy}
+                      onClick={() => void upload(r, "verify")}
+                    >
+                      只读核对副本
+                    </Button>
+                  )}
+                {["scheduled", "overdue", "paused"].includes(r.status) && (
+                  <>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={!!busy}
+                      onClick={() => {
+                        setEditing(r.id);
+                        setTime(
+                          localDateTime(
+                            new Date(
+                              Math.max(
+                                Date.now() + 3600000,
+                                new Date(r.scheduledAt || "").getTime() || 0,
+                              ),
                             ),
                           ),
-                        ),
-                      );
-                    }}
-                  >
-                    修改时间
-                  </Button>
+                        );
+                      }}
+                    >
+                      修改时间
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={!!busy}
+                      onClick={() => void cancel(r)}
+                    >
+                      取消计划并编辑
+                    </Button>
+                  </>
+                )}
+                {(r.status === "failed" || r.status === "uncertain") && (
                   <Button
                     variant="outline"
                     size="sm"
                     disabled={!!busy}
-                    onClick={() => void cancel(r)}
+                    onClick={() => void retry(r)}
                   >
-                    取消计划并编辑
+                    {busy === r.id ? "正在准备…" : "编辑并准备重发"}
                   </Button>
-                </>
-              )}
-              {(r.status === "failed" || r.status === "uncertain") && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={!!busy}
-                  onClick={() => void retry(r)}
-                >
-                  {busy === r.id ? "正在准备…" : "编辑并准备重发"}
-                </Button>
-              )}
-              {r.status === "sent" && !r.archived && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={!!busy}
-                  onClick={() => void archive(r)}
-                >
-                  恢复本地副本
-                </Button>
-              )}
+                )}
+                {r.status === "sent" && !r.archived && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={!!busy}
+                    onClick={() => void archive(r)}
+                  >
+                    恢复本地副本
+                  </Button>
+                )}
+              </div>
             </div>
             {editing === r.id && (
               <SchedulePicker

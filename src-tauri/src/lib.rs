@@ -509,6 +509,14 @@ fn retry_outbox(
 ) -> Result<Compose> {
     state.store.outbox_draft(&id, confirm_duplicate)
 }
+/// 重新编辑已发送邮件：读取存档原件，生成一份可编辑的新草稿（不发送）。
+#[tauri::command]
+async fn reedit_sent_mail(state: tauri::State<'_, AppState>, id: String) -> Result<Compose> {
+    let store = state.store.clone();
+    tauri::async_runtime::spawn_blocking(move || store.reedit_sent_mail(&id))
+        .await
+        .map_err(err)?
+}
 #[tauri::command]
 async fn archive_outbox(state: tauri::State<'_, AppState>, id: String) -> Result<()> {
     let store = state.store.clone();
@@ -1522,8 +1530,8 @@ fn show_main_window(app: &tauri::AppHandle) {
     #[cfg(target_os = "macos")]
     let _ = app.show();
     if let Some(window) = app.get_webview_window("main") {
-        let was_visible = window.is_visible().unwrap_or(false)
-            && !window.is_minimized().unwrap_or(false);
+        let was_visible =
+            window.is_visible().unwrap_or(false) && !window.is_minimized().unwrap_or(false);
         let _ = window.unminimize();
         let _ = window.show();
         let _ = window.set_focus();
@@ -1699,8 +1707,8 @@ fn watch_dock_icon(app: tauri::AppHandle, enabled: Arc<std::sync::atomic::Atomic
         let mut shown = true;
         loop {
             std::thread::sleep(std::time::Duration::from_millis(250));
-            let visible = enabled.load(std::sync::atomic::Ordering::Relaxed)
-                || main_window_shown(&app);
+            let visible =
+                enabled.load(std::sync::atomic::Ordering::Relaxed) || main_window_shown(&app);
             if visible != shown {
                 shown = visible;
                 set_dock_visible(visible);
@@ -1846,12 +1854,9 @@ pub fn run() {
                 true,
                 None::<&str>,
             )?;
-            let quit =
-                tauri::menu::PredefinedMenuItem::quit(app.handle(), Some("退出雁信"))?;
-            let tray_menu = tauri::menu::Menu::with_items(
-                app.handle(),
-                &[&do_not_disturb, &collect, &quit],
-            )?;
+            let quit = tauri::menu::PredefinedMenuItem::quit(app.handle(), Some("退出雁信"))?;
+            let tray_menu =
+                tauri::menu::Menu::with_items(app.handle(), &[&do_not_disturb, &collect, &quit])?;
             app.manage(TrayState {
                 do_not_disturb: Some(do_not_disturb),
             });
@@ -2013,6 +2018,7 @@ pub fn run() {
             list_outbox,
             sent_upload_action,
             retry_outbox,
+            reedit_sent_mail,
             archive_outbox,
             get_preferences,
             save_preferences,

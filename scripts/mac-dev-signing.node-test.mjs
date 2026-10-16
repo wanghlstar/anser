@@ -16,18 +16,21 @@ const second = {
   name: "Apple Development: Other (TEAM456)",
 };
 
-test("only valid numbered identities are parsed, without invalid or expired entries", () => {
+test("parses self-signed identities but still rejects expired ones", () => {
   assert.deepEqual(
     parseSigningIdentities(`
-  1) ${certificate.hash} "${certificate.name}"
+  1) ${certificate.hash} "${certificate.name}" (CSSMERR_TP_NOT_TRUSTED)
   2) ${second.hash} "${second.name}" (CSSMERR_TP_CERT_EXPIRED)
-     1 valid identities found
+     2 identities found
+
+  Valid identities only
+     0 valid identities found
 `),
     [certificate],
   );
 });
 
-test("automatic selection requires exactly one development identity", () => {
+test("automatic selection requires exactly one usable identity", () => {
   const distribution = {
     hash: "C".repeat(40),
     name: "Developer ID Application: Example (TEAM123)",
@@ -36,6 +39,9 @@ test("automatic selection requires exactly one development identity", () => {
     selectSigningIdentity([distribution, certificate]),
     certificate,
   );
+  // 本机自签证书同样可用，不必强制 Apple Development 前缀
+  const local = { hash: "D".repeat(40), name: "Yanxin Local Code Signing" };
+  assert.deepEqual(selectSigningIdentity([local]), local);
   assert.throws(() => selectSigningIdentity([]), /需要固定/);
   assert.throws(() => selectSigningIdentity([certificate, second]), /多个/);
 });
@@ -63,18 +69,27 @@ test("explicit identity is exact, unique, and cannot downgrade to ad hoc signing
   );
 });
 
-test("certificate discovery only lists identities and honors the explicit override", async () => {
+test("certificate discovery lists every identity and honors the explicit override", async () => {
   const identity = await getDevelopmentSigningIdentity(
     { YANXIN_DEV_SIGNING_IDENTITY: second.name },
     async (file, args) => {
       assert.equal(file, "/usr/bin/security");
-      assert.deepEqual(args, ["find-identity", "-v", "-p", "codesigning"]);
+      // 不能带 -v：新系统带 -v 时只输出有效身份段，自签证书会解析成空
+      assert.deepEqual(args, ["find-identity", "-p", "codesigning"]);
       return {
-        stdout: `1) ${certificate.hash} "${certificate.name}"\n2) ${second.hash} "${second.name}"`,
+        stdout: `1) ${certificate.hash} "${certificate.name}" (CSSMERR_TP_NOT_TRUSTED)\n2) ${second.hash} "${second.name}"\n     2 identities found`,
       };
     },
   );
   assert.deepEqual(identity, second);
+});
+
+test("finds the local self-signed certificate without any environment variable", async () => {
+  const local = { hash: "D".repeat(40), name: "Yanxin Local Code Signing" };
+  const identity = await getDevelopmentSigningIdentity({}, async () => ({
+    stdout: `1) ${local.hash} "${local.name}" (CSSMERR_TP_NOT_TRUSTED)\n     1 identities found\n\n  Valid identities only\n     0 valid identities found`,
+  }));
+  assert.deepEqual(identity, local);
 });
 
 test("sign the complete bundle with the unchanged ID and verify before launch", async () => {
