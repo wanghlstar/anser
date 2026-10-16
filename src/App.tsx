@@ -18,6 +18,10 @@ import {
 import { Skeleton } from "./components/ui/skeleton";
 import { Alert, AlertTitle, AlertDescription } from "./components/ui/alert";
 import { ServerDirectoryMenu } from "./components/server-directory-menu";
+import {
+  MoveToFolderMenu,
+  type MoveTarget,
+} from "./components/move-to-folder-menu";
 import { FolderMappingDialog } from "./components/folder-mapping-dialog";
 import { RetentionDialog } from "./components/retention-dialog";
 import { MailSignatures } from "./components/mail-signatures";
@@ -26,6 +30,8 @@ import { EmlViewer } from "./components/eml-viewer";
 import { MailDateFilter } from "./components/mail-date-filter";
 import { RemoteFolderList } from "./components/remote-folder-list";
 import { remoteFolderLabel, compareFolders } from "./lib/remote-folders";
+import { directorySource } from "./lib/server-destinations";
+import { mailMenuKind } from "./lib/mail-menu";
 import { coalesceRefresh } from "./lib/refresh-queue";
 import { ConversationReader } from "./components/conversation-reader";
 import { ScrollPane } from "./components/scroll-pane";
@@ -50,8 +56,10 @@ import {
   Cloud,
   FileText,
   Folder,
+  FolderInput,
   FolderPlus,
   FolderOpen,
+  Forward,
   HardDrive,
   Inbox,
   Info,
@@ -110,6 +118,18 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "./components/ui/dropdown-menu";
+import {
+  ContextMenu,
+  ContextMenuTrigger,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuCheckboxItem,
+  ContextMenuLabel,
+  ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubTrigger,
+  ContextMenuSubContent,
+} from "./components/ui/context-menu";
 import { Input } from "./components/ui/input";
 import { Label } from "./components/ui/label";
 import {
@@ -286,9 +306,6 @@ export default function App() {
     [syncText, setSyncText] = useState(""),
     [loading, setLoading] = useState(true),
     [demo, setDemo] = useState(isDemo()),
-    [moveIds, setMoveIds] = useState<string[]>([]),
-    [moveFolder, setMoveFolder] = useState(""),
-    [moveThreads, setMoveThreads] = useState(false),
     [dark, setDark] = useState(localStorage.getItem("mail-theme") === "dark");
   const searchRef = useRef<HTMLInputElement>(null),
     request = useRef(0),
@@ -343,13 +360,7 @@ export default function App() {
   }, [data.remoteFolders]);
   const [dataDir, setDataDir] = useState<DataDirInfo | null>(null);
   const [archiveTree, setArchiveTree] = useState<LocalArchiveGroup[]>([]);
-  // 邮件列表右键菜单与 Shift 范围选择锚点
-  const [rowMenu, setRowMenu] = useState<{
-    x: number;
-    y: number;
-    ids: string[];
-    threads: boolean;
-  } | null>(null);
+  // Shift 范围选择锚点
   const lastRowIndex = useRef(-1);
   // 服务器文件夹新建/删除对话框
   const [folderDialog, setFolderDialog] = useState<{
@@ -381,19 +392,6 @@ export default function App() {
       })
       .catch(() => {});
   }, []);
-  useEffect(() => {
-    if (!rowMenu) return;
-    const close = () => setRowMenu(null);
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") close();
-    };
-    window.addEventListener("mousedown", close);
-    window.addEventListener("keydown", onKey);
-    return () => {
-      window.removeEventListener("mousedown", close);
-      window.removeEventListener("keydown", onKey);
-    };
-  }, [rowMenu]);
   // 本地存档树（按账号/服务器文件夹聚合）——跟随 refresh 同源刷新：
   // 服务器删信不改变 stats.saved/folderTotals，按它们触发会留下陈旧计数。
   const loadArchiveTree = useCallback(() => {
@@ -1222,6 +1220,147 @@ export default function App() {
       setArchiving(false);
     }
   }
+  // 右键菜单「移动到文件夹」：服务器可行就真移服务器（本机归档随后自动跟随），
+  // 服务器已无副本/非 IMAP 时退化为仅重定本机归档目录，可逆。
+  async function moveToFolder(
+    ids: string[],
+    accountId: string,
+    target: string,
+    targetLabel: string,
+    server: boolean,
+  ) {
+    const mails = ids
+      .map(
+        (id) =>
+          data.messages.find((m) => m.id === id) ??
+          (detail?.mail.id === id ? detail.mail : undefined),
+      )
+      .filter((m): m is Mail => !!m);
+    if (!mails.length) return;
+    if (!server) {
+      let moved = 0;
+      let failed = 0;
+      for (const m of mails) {
+        try {
+          await call("move_local_archive", { id: m.id, target });
+          moved++;
+        } catch {
+          failed++;
+        }
+      }
+      if (moved)
+        toast.success(`已将 ${moved} 封邮件移入本机「${targetLabel}」`);
+      if (failed) toast.error(`${failed} 封邮件无法移动`);
+      void refresh();
+      return;
+    }
+    const folders = serverFolders.filter((f) => f.accountId === accountId);
+    const plan: { id: string; source: string }[] = [];
+    const localOnly: string[] = [];
+    for (const m of mails) {
+      try {
+        const sources = await call<string[]>("copy_sources", { id: m.id });
+        if (!sources.length) {
+          localOnly.push(m.id);
+          continue;
+        }
+        const source = directorySource(
+          m,
+          sources,
+          folders,
+          query.view,
+          query.remoteFolder,
+        );
+        if (source.toLowerCase() === target.toLowerCase()) continue;
+        plan.push({ id: m.id, source });
+      } catch {
+        localOnly.push(m.id);
+      }
+    }
+    if (plan.length) {
+      const ok = await askConfirmation({
+        title: `移动到「${targetLabel}」？`,
+        description: `将在服务器上移动其中 ${plan.length} 封邮件，所有设备可见，操作不可逆${
+          localOnly.length
+            ? `；另有 ${localOnly.length} 封服务器已无副本，仅调整本机归档`
+            : ""
+        }。`,
+        action: "移动",
+        destructive: true,
+      });
+      if (!ok) return;
+    }
+    let queued = 0;
+    let local = 0;
+    let failed = 0;
+    for (const item of plan) {
+      try {
+        await call("queue_server_move", {
+          id: item.id,
+          source: item.source,
+          target,
+        });
+        queued++;
+      } catch {
+        failed++;
+      }
+    }
+    for (const id of localOnly) {
+      try {
+        await call("move_local_archive", { id, target });
+        local++;
+      } catch {
+        failed++;
+      }
+    }
+    if (queued) toast.success(`已记录 ${queued} 封服务器移动任务`);
+    if (local)
+      toast.success(`已将 ${local} 封邮件调整到本机「${targetLabel}」`);
+    if (failed) toast.error(`${failed} 封邮件无法移动`);
+    void refresh();
+  }
+  // 批量与阅读器共用的移动目标：跟随选中账号（服务器目录或本机归档目录），顺序与账号内一致
+  function moveTargets(mails: Mail[]): {
+    accountId: string;
+    accountName: string;
+    server: boolean;
+    targets: MoveTarget[];
+  } | null {
+    const accountIds = new Set(mails.map((m) => m.accountId));
+    if (!mails.length || accountIds.size !== 1) return null;
+    const accountId = mails[0].accountId;
+    const account = data.accounts.find((a) => a.id === accountId);
+    if (!account) return null;
+    const server = account.enabled && account.protocol === "imap";
+    const roles = (name: string) =>
+      serverFolders.find((f) => f.accountId === accountId && f.name === name)
+        ?.roles;
+    const targets = server
+      ? serverFolders
+          .filter(
+            (f) => f.accountId === accountId && f.selectable && !f.syncError,
+          )
+          .sort(compareFolders)
+          .map((f) => ({ name: f.name, label: f.displayName }))
+      : (archiveTree.find((g) => g.accountId === accountId)?.folders ?? [])
+          .filter((f) => f.count > 0)
+          .sort((a, b) =>
+            compareFolders(
+              {
+                name: a.name,
+                displayName: a.displayName || a.name,
+                roles: roles(a.name),
+              },
+              {
+                name: b.name,
+                displayName: b.displayName || b.name,
+                roles: roles(b.name),
+              },
+            ),
+          )
+          .map((f) => ({ name: f.name, label: f.displayName || f.name }));
+    return { accountId, accountName: account.name, server, targets };
+  }
   // 自己账号发出的邮件（含服务器已发送副本与本机 SMTP 存档）
   const own = (m: Mail) =>
     parseAddresses(m.sender).some(
@@ -1533,6 +1672,23 @@ export default function App() {
   );
   const visibleMessages = data.messages.filter(
     (m) => !pendingDeletes.current.has(m.id),
+  );
+  // 批量工具栏按当前列表上下文收窄：回复类动作不适合多选，只保留批量适用的项
+  const batchMenuKind = mailMenuKind({
+    view: query.view,
+    roles: query.remoteFolder
+      ? folderRoles(query.accountId, query.remoteFolder)
+      : [],
+    own: false,
+  });
+  const batchMove = moveTargets(
+    checked
+      .map(
+        (id) =>
+          data.messages.find((x) => x.id === id) ??
+          (detail?.mail.id === id ? detail.mail : null),
+      )
+      .filter((x): x is Mail => x !== null),
   );
   return (
     <SidebarProvider
@@ -2572,181 +2728,111 @@ export default function App() {
                       <span>
                         已选 {checked.length} {grouped ? "个对话" : "封邮件"}
                       </span>
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        title="完整保存到本地"
-                        disabled={archiving}
-                        onClick={() => void queueArchives(checked, grouped)}
-                      >
-                        <HardDriveDownload />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        title="标记为已读"
-                        onClick={() =>
-                          void mutate(checked, "read", "true", grouped)
-                        }
-                      >
-                        <CheckCheck size={15} />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        title="归入本地文件夹"
-                        onClick={() => {
-                          setMoveIds(checked);
-                          setMoveThreads(grouped);
-                          setMoveFolder("");
-                        }}
-                      >
-                        <Folder size={15} />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        title={
-                          query.view === "trash"
-                            ? "从本地废纸篓恢复"
-                            : "移到本地废纸篓"
-                        }
-                        onClick={() =>
-                          void mutate(
-                            checked,
-                            "trash",
-                            query.view === "trash" ? "false" : "true",
-                            grouped,
-                          )
-                        }
-                      >
-                        {query.view === "trash" ? (
-                          <Undo2 size={15} />
-                        ) : (
-                          <Trash2 size={15} />
-                        )}
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        className="text-destructive"
-                        title="彻底删除（含服务器副本）"
-                        onClick={() =>
-                          void mutate(checked, "delete", "true", grouped)
-                        }
-                      >
-                        <Trash2 size={15} />
-                      </Button>
-                    </div>
-                  )}
-                  {rowMenu && (
-                    <div
-                      className="row-context-menu"
-                      style={{ left: rowMenu.x, top: rowMenu.y }}
-                      onMouseDown={(e) => e.stopPropagation()}
-                    >
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="w-full justify-start"
-                        onClick={() => {
-                          void mutate(
-                            rowMenu.ids,
-                            "read",
-                            "true",
-                            rowMenu.threads,
-                          );
-                          setRowMenu(null);
-                        }}
-                      >
-                        标记为已读
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="w-full justify-start"
-                        onClick={() => {
-                          void mutate(
-                            rowMenu.ids,
-                            "read",
-                            "false",
-                            rowMenu.threads,
-                          );
-                          setRowMenu(null);
-                        }}
-                      >
-                        标记为未读
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="w-full justify-start"
-                        onClick={() => {
-                          void queueArchives(rowMenu.ids, rowMenu.threads);
-                          setRowMenu(null);
-                        }}
-                      >
-                        完整保存到本地
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="w-full justify-start"
-                        onClick={() => {
-                          setMoveIds(rowMenu.ids);
-                          setMoveThreads(rowMenu.threads);
-                          setMoveFolder("");
-                          setRowMenu(null);
-                        }}
-                      >
-                        归入本地文件夹
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="w-full justify-start"
-                        onClick={() => {
-                          // 按邮件实际状态决定删除/恢复，避免多视图间来回踢
-                          const anyTrashed = rowMenu.ids.some((id) => {
-                            const m =
-                              data.messages.find((x) => x.id === id) ??
-                              (detail?.mail.id === id ? detail.mail : null);
-                            return m?.trashed === true;
-                          });
-                          void mutate(
-                            rowMenu.ids,
-                            "trash",
-                            anyTrashed ? "false" : "true",
-                            rowMenu.threads,
-                          );
-                          setRowMenu(null);
-                        }}
-                      >
-                        {rowMenu.ids.some((id) => {
-                          const m =
-                            data.messages.find((x) => x.id === id) ??
-                            (detail?.mail.id === id ? detail.mail : null);
-                          return m?.trashed === true;
-                        })
-                          ? "从废纸篓恢复"
-                          : "移到本地废纸篓"}
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="w-full justify-start text-destructive"
-                        onClick={() => {
-                          void mutate(
-                            rowMenu.ids,
-                            "delete",
-                            "true",
-                            rowMenu.threads,
-                          );
-                          setRowMenu(null);
-                        }}
-                      >
-                        彻底删除（含服务器）
-                      </Button>
+                      {batchMenuKind === "trash" ? (
+                        <>
+                          <Button
+                            variant="ghost"
+                            size="icon-sm"
+                            title="从本地废纸篓恢复"
+                            onClick={() =>
+                              void mutate(checked, "trash", "false", grouped)
+                            }
+                          >
+                            <Undo2 size={15} />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon-sm"
+                            className="text-destructive"
+                            title="彻底删除（含服务器副本）"
+                            onClick={() =>
+                              void mutate(checked, "delete", "true", grouped)
+                            }
+                          >
+                            <Trash2 size={15} />
+                          </Button>
+                        </>
+                      ) : (
+                        <>
+                          {batchMenuKind === "received" && (
+                            <>
+                              <Button
+                                variant="ghost"
+                                size="icon-sm"
+                                title="完整保存到本地"
+                                disabled={archiving}
+                                onClick={() =>
+                                  void queueArchives(checked, grouped)
+                                }
+                              >
+                                <HardDriveDownload />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon-sm"
+                                title="标记为已读"
+                                onClick={() =>
+                                  void mutate(checked, "read", "true", grouped)
+                                }
+                              >
+                                <CheckCheck size={15} />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon-sm"
+                                title="标记为未读"
+                                onClick={() =>
+                                  void mutate(checked, "read", "false", grouped)
+                                }
+                              >
+                                <MailOpen size={15} />
+                              </Button>
+                            </>
+                          )}
+                          <MoveToFolderMenu
+                            accountName={batchMove?.accountName}
+                            server={batchMove?.server ?? false}
+                            targets={batchMove?.targets ?? []}
+                            reason={
+                              !batchMove
+                                ? "请选择同一账号的邮件"
+                                : batchMove.targets.length
+                                  ? undefined
+                                  : batchMove.server
+                                    ? "没有可用的服务器文件夹"
+                                    : "该账号暂无本地归档目录"
+                            }
+                            onSelect={(target) =>
+                              batchMove &&
+                              void moveToFolder(
+                                checked,
+                                batchMove.accountId,
+                                target.name,
+                                target.label,
+                                batchMove.server,
+                              )
+                            }
+                          >
+                            <Button
+                              variant="ghost"
+                              size="icon-sm"
+                              title="移动到文件夹"
+                            >
+                              <Folder size={15} />
+                            </Button>
+                          </MoveToFolderMenu>
+                          <Button
+                            variant="ghost"
+                            size="icon-sm"
+                            title="移到本地废纸篓"
+                            onClick={() =>
+                              void mutate(checked, "trash", "true", grouped)
+                            }
+                          >
+                            <Trash2 size={15} />
+                          </Button>
+                        </>
+                      )}
                     </div>
                   )}
                   <div className="mail-rows sb-host">
@@ -2754,150 +2840,361 @@ export default function App() {
                       {loading ? (
                         <MailListSkeleton />
                       ) : visibleMessages.length ? (
-                        visibleMessages.map((m, rowIndex) => (
-                          <div
-                            key={m.id}
-                            className={`mail-row ${selected === m.id || (grouped && !!m.conversationId && m.conversationId === detail?.mail.conversationId) ? "selected" : ""} ${!m.isRead ? "unread" : ""}`}
-                            onContextMenu={(event) => {
-                              event.preventDefault();
-                              const keep =
-                                checked.includes(m.id) && checked.length > 1;
-                              if (!keep) setChecked([m.id]);
-                              setRowMenu({
-                                x: event.clientX,
-                                y: event.clientY,
-                                ids: keep ? checked : [m.id],
-                                threads: grouped,
-                              });
-                            }}
-                          >
-                            <div className="row-check">
-                              <Checkbox
-                                aria-label={`选择 ${m.subject}`}
-                                checked={checked.includes(m.id)}
-                                onCheckedChange={(v) => {
-                                  lastRowIndex.current = rowIndex;
-                                  setChecked((ids) =>
-                                    v
-                                      ? [...ids, m.id]
-                                      : ids.filter((id) => id !== m.id),
-                                  );
-                                }}
-                              />
-                              <Button
-                                variant="ghost"
-                                size="icon-xs"
-                                className="row-quick"
-                                aria-label={m.starred ? "取消星标" : "星标"}
-                                title={m.starred ? "取消星标" : "星标"}
-                                onClick={() =>
-                                  void mutate(
-                                    [m.id],
-                                    "star",
-                                    String(!m.starred),
-                                    grouped,
-                                  )
-                                }
-                              >
-                                <Star
-                                  size={13}
-                                  className={m.starred ? "star-on" : ""}
-                                />
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="icon-xs"
-                                className="row-quick"
-                                aria-label={m.isRead ? "标记未读" : "标记已读"}
-                                title={m.isRead ? "标记未读" : "标记已读"}
-                                onClick={() =>
-                                  void mutate(
-                                    [m.id],
-                                    "read",
-                                    String(!m.isRead),
-                                    grouped,
-                                  )
-                                }
-                              >
-                                <MailOpen size={13} />
-                              </Button>
-                            </div>
-                            <Button
-                              variant="ghost"
-                              className="mail-row-main"
-                              onClick={(event) => {
-                                // Shift+点击：从上次行到本行范围勾选
-                                if (
-                                  event.shiftKey &&
-                                  lastRowIndex.current >= 0 &&
-                                  lastRowIndex.current !== rowIndex
-                                ) {
-                                  const from = Math.min(
-                                    lastRowIndex.current,
-                                    rowIndex,
-                                  );
-                                  const to = Math.max(
-                                    lastRowIndex.current,
-                                    rowIndex,
-                                  );
-                                  const range = visibleMessages
-                                    .slice(from, to + 1)
-                                    .map((item) => item.id);
-                                  setChecked((ids) =>
-                                    Array.from(new Set([...ids, ...range])),
-                                  );
-                                  return;
-                                }
-                                lastRowIndex.current = rowIndex;
-                                void openMail(m);
-                              }}
-                            >
-                              <div className="row-top">
-                                <span className="sender-name">
-                                  {senderName(m.sender)}
-                                </span>
-                                <time dateTime={m.date}>{time(m.date)}</time>
-                              </div>
-                              <div className="row-subject">
-                                {!m.isRead && (
-                                  <i aria-label="未读" title="未读" />
-                                )}
-                                <span className="row-subject-text">
-                                  {m.subject}
-                                </span>
-                                {grouped && (m.conversationCount || 0) > 1 && (
-                                  <Badge
-                                    variant="secondary"
-                                    className="conversation-count"
+                        visibleMessages.map((m, rowIndex) => {
+                          const menuKind = mailMenuKind({
+                            view: query.view,
+                            roles: folderRoles(
+                              m.accountId,
+                              query.remoteFolder ?? "",
+                            ),
+                            own: own(m),
+                          });
+                          const menuIds = checked.includes(m.id)
+                            ? checked
+                            : [m.id];
+                          const menuMails = menuIds
+                            .map(
+                              (id) =>
+                                data.messages.find((x) => x.id === id) ??
+                                (detail?.mail.id === id ? detail.mail : null),
+                            )
+                            .filter((x): x is Mail => x !== null);
+                          const allStarred =
+                            menuMails.length > 0 &&
+                            menuMails.every((x) => x.starred);
+                          const allRead =
+                            menuMails.length > 0 &&
+                            menuMails.every((x) => x.isRead);
+                          const anyTrashed = menuMails.some((x) => x.trashed);
+                          const move = moveTargets(menuMails);
+                          return (
+                            <ContextMenu key={m.id}>
+                              <ContextMenuTrigger asChild>
+                                <div
+                                  className={`mail-row ${selected === m.id || (grouped && !!m.conversationId && m.conversationId === detail?.mail.conversationId) ? "selected" : ""} ${!m.isRead ? "unread" : ""}`}
+                                  onContextMenu={() => {
+                                    if (!(
+                                      checked.includes(m.id) &&
+                                      checked.length > 1
+                                    ))
+                                      setChecked([m.id]);
+                                  }}
+                                >
+                                  <div className="row-check">
+                                    <Checkbox
+                                      aria-label={`选择 ${m.subject}`}
+                                      checked={checked.includes(m.id)}
+                                      onCheckedChange={(v) => {
+                                        lastRowIndex.current = rowIndex;
+                                        setChecked((ids) =>
+                                          v
+                                            ? [...ids, m.id]
+                                            : ids.filter((id) => id !== m.id),
+                                        );
+                                      }}
+                                    />
+                                    <Button
+                                      variant="ghost"
+                                      size="icon-xs"
+                                      className="row-quick"
+                                      aria-label={
+                                        m.starred ? "取消星标" : "星标"
+                                      }
+                                      title={m.starred ? "取消星标" : "星标"}
+                                      onClick={() =>
+                                        void mutate(
+                                          [m.id],
+                                          "star",
+                                          String(!m.starred),
+                                          grouped,
+                                        )
+                                      }
+                                    >
+                                      <Star
+                                        size={13}
+                                        className={m.starred ? "star-on" : ""}
+                                      />
+                                    </Button>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon-xs"
+                                      className="row-quick"
+                                      aria-label={
+                                        m.isRead ? "标记未读" : "标记已读"
+                                      }
+                                      title={m.isRead ? "标记未读" : "标记已读"}
+                                      onClick={() =>
+                                        void mutate(
+                                          [m.id],
+                                          "read",
+                                          String(!m.isRead),
+                                          grouped,
+                                        )
+                                      }
+                                    >
+                                      <MailOpen size={13} />
+                                    </Button>
+                                  </div>
+                                  <Button
+                                    variant="ghost"
+                                    className="mail-row-main"
+                                    onClick={(event) => {
+                                      // Shift+点击：从上次行到本行范围勾选
+                                      if (
+                                        event.shiftKey &&
+                                        lastRowIndex.current >= 0 &&
+                                        lastRowIndex.current !== rowIndex
+                                      ) {
+                                        const from = Math.min(
+                                          lastRowIndex.current,
+                                          rowIndex,
+                                        );
+                                        const to = Math.max(
+                                          lastRowIndex.current,
+                                          rowIndex,
+                                        );
+                                        const range = visibleMessages
+                                          .slice(from, to + 1)
+                                          .map((item) => item.id);
+                                        setChecked((ids) =>
+                                          Array.from(
+                                            new Set([...ids, ...range]),
+                                          ),
+                                        );
+                                        return;
+                                      }
+                                      lastRowIndex.current = rowIndex;
+                                      void openMail(m);
+                                    }}
                                   >
-                                    {m.conversationCount}
-                                  </Badge>
+                                    <div className="row-top">
+                                      <span className="sender-name">
+                                        {senderName(m.sender)}
+                                      </span>
+                                      <time dateTime={m.date}>
+                                        {time(m.date)}
+                                      </time>
+                                    </div>
+                                    <div className="row-subject">
+                                      {!m.isRead && (
+                                        <i aria-label="未读" title="未读" />
+                                      )}
+                                      <span className="row-subject-text">
+                                        {m.subject}
+                                      </span>
+                                      {grouped &&
+                                        (m.conversationCount || 0) > 1 && (
+                                          <Badge
+                                            variant="secondary"
+                                            className="conversation-count"
+                                          >
+                                            {m.conversationCount}
+                                          </Badge>
+                                        )}
+                                    </div>
+                                    <p>{m.preview}</p>
+                                    <div className="row-meta">
+                                      <span
+                                        className={`mini-dot color-${data.accounts.findIndex((a) => a.id === m.accountId) % 4}`}
+                                        aria-hidden="true"
+                                        title="邮箱颜色标识"
+                                      />
+                                      <span>
+                                        {data.accounts.find(
+                                          (a) => a.id === m.accountId,
+                                        )?.name || "已移除账号"}
+                                      </span>
+                                      {m.localFolder !== "全部存档" && (
+                                        <small>{m.localFolder}</small>
+                                      )}
+                                      {m.hasAttachments && (
+                                        <Paperclip size={12} />
+                                      )}
+                                      <span className="row-spacer" />
+                                      {m.starred && (
+                                        <Star size={13} className="star-on" />
+                                      )}
+                                    </div>
+                                  </Button>
+                                </div>
+                              </ContextMenuTrigger>
+                              <ContextMenuContent className="w-56">
+                                {menuKind === "trash" ? (
+                                  <>
+                                    {anyTrashed && (
+                                      <ContextMenuItem
+                                        onSelect={() =>
+                                          void mutate(
+                                            menuIds,
+                                            "trash",
+                                            "false",
+                                            grouped,
+                                          )
+                                        }
+                                      >
+                                        <Undo2 />
+                                        从废纸篓恢复
+                                      </ContextMenuItem>
+                                    )}
+                                    <ContextMenuItem
+                                      variant="destructive"
+                                      onSelect={() =>
+                                        void mutate(
+                                          menuIds,
+                                          "delete",
+                                          "true",
+                                          grouped,
+                                        )
+                                      }
+                                    >
+                                      <Trash2 />
+                                      彻底删除（含服务器）
+                                    </ContextMenuItem>
+                                  </>
+                                ) : (
+                                  <>
+                                    {menuKind === "received" ? (
+                                      <>
+                                        <ContextMenuItem
+                                          onSelect={() => compose(m)}
+                                        >
+                                          <Reply />
+                                          回复
+                                        </ContextMenuItem>
+                                        <ContextMenuItem
+                                          onSelect={() =>
+                                            compose(m, false, true)
+                                          }
+                                        >
+                                          <ReplyAll />
+                                          回复全部
+                                        </ContextMenuItem>
+                                        <ContextMenuItem
+                                          onSelect={() => compose(m, true)}
+                                        >
+                                          <Forward />
+                                          转发
+                                        </ContextMenuItem>
+                                        <ContextMenuSeparator />
+                                        <ContextMenuCheckboxItem
+                                          checked={allStarred}
+                                          onSelect={() =>
+                                            void mutate(
+                                              menuIds,
+                                              "star",
+                                              String(!allStarred),
+                                              grouped,
+                                            )
+                                          }
+                                        >
+                                          星标
+                                        </ContextMenuCheckboxItem>
+                                        <ContextMenuCheckboxItem
+                                          checked={allRead}
+                                          onSelect={() =>
+                                            void mutate(
+                                              menuIds,
+                                              "read",
+                                              String(!allRead),
+                                              grouped,
+                                            )
+                                          }
+                                        >
+                                          已读
+                                        </ContextMenuCheckboxItem>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <ContextMenuItem
+                                          onSelect={() => void reeditSent(m)}
+                                        >
+                                          <SquarePen />
+                                          重新编辑
+                                        </ContextMenuItem>
+                                        <ContextMenuItem
+                                          onSelect={() => compose(m, true)}
+                                        >
+                                          <Forward />
+                                          转发
+                                        </ContextMenuItem>
+                                      </>
+                                    )}
+                                    <ContextMenuSeparator />
+                                    <ContextMenuSub>
+                                      <ContextMenuSubTrigger>
+                                        <FolderInput />
+                                        移动到文件夹
+                                      </ContextMenuSubTrigger>
+                                      <ContextMenuSubContent className="w-56">
+                                        {!move ? (
+                                          <ContextMenuItem disabled>
+                                            请选择同一账号的邮件
+                                          </ContextMenuItem>
+                                        ) : move.targets.length ? (
+                                          <>
+                                            <ContextMenuLabel>
+                                              {move.server
+                                                ? "服务器文件夹"
+                                                : "本机归档目录"}{" "}
+                                              · {move.accountName}
+                                            </ContextMenuLabel>
+                                            {move.targets.map((target) => (
+                                              <ContextMenuItem
+                                                key={target.name}
+                                                onSelect={() =>
+                                                  void moveToFolder(
+                                                    menuIds,
+                                                    move.accountId,
+                                                    target.name,
+                                                    target.label,
+                                                    move.server,
+                                                  )
+                                                }
+                                              >
+                                                <Folder />
+                                                {target.label}
+                                              </ContextMenuItem>
+                                            ))}
+                                          </>
+                                        ) : (
+                                          <ContextMenuItem disabled>
+                                            {move.server
+                                              ? "没有可用的服务器文件夹"
+                                              : "该账号暂无本地归档目录"}
+                                          </ContextMenuItem>
+                                        )}
+                                      </ContextMenuSubContent>
+                                    </ContextMenuSub>
+                                    {menuKind === "received" && (
+                                      <ContextMenuItem
+                                        onSelect={() =>
+                                          void queueArchives(menuIds, grouped)
+                                        }
+                                      >
+                                        <HardDriveDownload />
+                                        完整保存到本地
+                                      </ContextMenuItem>
+                                    )}
+                                    <ContextMenuSeparator />
+                                    <ContextMenuItem
+                                      onSelect={() =>
+                                        void mutate(
+                                          menuIds,
+                                          "trash",
+                                          "true",
+                                          grouped,
+                                        )
+                                      }
+                                    >
+                                      <Trash2 />
+                                      移到本地废纸篓
+                                    </ContextMenuItem>
+                                  </>
                                 )}
-                              </div>
-                              <p>{m.preview}</p>
-                              <div className="row-meta">
-                                <span
-                                  className={`mini-dot color-${data.accounts.findIndex((a) => a.id === m.accountId) % 4}`}
-                                  aria-hidden="true"
-                                  title="邮箱颜色标识"
-                                />
-                                <span>
-                                  {data.accounts.find(
-                                    (a) => a.id === m.accountId,
-                                  )?.name || "已移除账号"}
-                                </span>
-                                {m.localFolder !== "全部存档" && (
-                                  <small>{m.localFolder}</small>
-                                )}
-                                {m.hasAttachments && <Paperclip size={12} />}
-                                <span className="row-spacer" />
-                                {m.starred && (
-                                  <Star size={13} className="star-on" />
-                                )}
-                              </div>
-                            </Button>
-                          </div>
-                        ))
+                              </ContextMenuContent>
+                            </ContextMenu>
+                          );
+                        })
                       ) : (
                         <div className="list-empty">
                           <Inbox size={30} />
@@ -3002,18 +3299,43 @@ export default function App() {
                               )}
                             </Tooltip>
                             <span className="toolbar-divider" />
-                            <Button
-                              variant="ghost"
-                              size="icon-sm"
-                              title="归入本地文件夹"
-                              onClick={() => {
-                                setMoveIds([detail.mail.id]);
-                                setMoveThreads(false);
-                                setMoveFolder(detail.mail.localFolder);
-                              }}
-                            >
-                              <Folder size={17} />
-                            </Button>
+                            {(() => {
+                              const move = moveTargets([detail.mail]);
+                              return (
+                                <MoveToFolderMenu
+                                  accountName={move?.accountName}
+                                  server={move?.server ?? false}
+                                  targets={move?.targets ?? []}
+                                  reason={
+                                    !move
+                                      ? "无法移动这封邮件"
+                                      : move.targets.length
+                                        ? undefined
+                                        : move.server
+                                          ? "没有可用的服务器文件夹"
+                                          : "该账号暂无本地归档目录"
+                                  }
+                                  onSelect={(target) =>
+                                    move &&
+                                    void moveToFolder(
+                                      [detail.mail.id],
+                                      move.accountId,
+                                      target.name,
+                                      target.label,
+                                      move.server,
+                                    )
+                                  }
+                                >
+                                  <Button
+                                    variant="ghost"
+                                    size="icon-sm"
+                                    title="移动到文件夹"
+                                  >
+                                    <Folder size={17} />
+                                  </Button>
+                                </MoveToFolderMenu>
+                              );
+                            })()}
                             <Button
                               variant="ghost"
                               size="icon-sm"
@@ -3411,76 +3733,6 @@ export default function App() {
           }}
         />
       )}
-      <Dialog
-        open={moveIds.length > 0}
-        onOpenChange={(v) => {
-          if (!v) setMoveIds([]);
-        }}
-      >
-        <DialogContent className="sm:max-w-[430px]">
-          <DialogHeader>
-            <DialogTitle>归入本地文件夹</DialogTitle>
-            <DialogDescription>
-              整理 {moveIds.length} 封本地邮件，不改变服务器上的原件。
-            </DialogDescription>
-          </DialogHeader>
-          {data.folders.length > 0 && (
-            <div className="local-folder-picks">
-              {data.folders.map((f) => (
-                <Button
-                  key={f}
-                  variant={moveFolder === f ? "default" : "outline"}
-                  size="sm"
-                  onClick={() => setMoveFolder(f)}
-                >
-                  <Folder size={13} />
-                  {f}
-                </Button>
-              ))}
-            </div>
-          )}
-          <div className="field">
-            <Label htmlFor="move-folder-name">文件夹名称</Label>
-            <Input
-              id="move-folder-name"
-              value={moveFolder}
-              placeholder="选择上面的文件夹，或输入新名称"
-              onChange={(e) => setMoveFolder(e.target.value)}
-            />
-          </div>
-          <div className="dialog-actions">
-            <Button
-              variant="outline"
-              className="mr-auto"
-              onClick={() => {
-                // 移出归类：把邮件退回默认桶「全部存档」
-                void mutate(moveIds, "folder", "全部存档", moveThreads);
-                setMoveIds([]);
-              }}
-            >
-              移出归类
-            </Button>
-            <Button
-              variant="ghost"
-              onClick={() => {
-                setMoveIds([]);
-                setMoveFolder("");
-              }}
-            >
-              取消
-            </Button>
-            <Button
-              disabled={!moveFolder.trim()}
-              onClick={() => {
-                void mutate(moveIds, "folder", moveFolder.trim(), moveThreads);
-                setMoveIds([]);
-              }}
-            >
-              确认归类
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
       {confirmationDialog}
       {folderDialog && (
         <Dialog open onOpenChange={(open) => !open && setFolderDialog(null)}>

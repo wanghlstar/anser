@@ -3829,35 +3829,6 @@ button.nav-collapse .collapse-chevron {
 .nav-item.folder-item.nested > svg:first-child {
   opacity: 0.7;
 }
-/* 邮件列表右键菜单 */
-.row-context-menu {
-  position: fixed;
-  z-index: 60;
-  min-width: 168px;
-  display: flex;
-  flex-direction: column;
-  padding: 4px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--background);
-  color: var(--foreground);
-  box-shadow: 0 8px 24px rgb(0 0 0 / 18%);
-  backdrop-filter: blur(8px);
-}
-.row-context-menu button {
-  background: none;
-  border: 0;
-  text-align: left;
-  padding: 7px 10px;
-  border-radius: 6px;
-  font-size: 13px;
-  color: inherit;
-  cursor: pointer;
-}
-.row-context-menu button:hover {
-  background: var(--accent);
-  color: var(--accent-foreground);
-}
 
 .mail-signature-layout {
   container: signature-settings / inline-size;
