@@ -84,29 +84,6 @@ export function isMoveAction(rule: Rule): boolean {
   return ruleActions(rule).some((a) => MOVE_ACTIONS.includes(a));
 }
 
-const SERVER_ACTIONS = ["serverCopy", "serverMove"];
-
-/**
- * 勾选/取消一个动作，返回新的 action 字符串。
- * 规则：服务器动作独立（选了就清掉本地，反之亦然），read/unread 互斥，不重复。
- */
-export function toggleAction(
-  action: string,
-  target: string,
-  on: boolean,
-): string {
-  const current = ruleActionsDeduped({ action } as Rule);
-  if (!on) return current.filter((a) => a !== target).join("+");
-  // 服务器 COPY/MOVE 是独立任务：选了它就不能有本地动作，直接替换
-  if (SERVER_ACTIONS.includes(target)) return target;
-  // 反过来，勾选本地动作时自动解除服务器动作
-  const local = current.filter((a) => !SERVER_ACTIONS.includes(a));
-  if (local.includes(target)) return local.join("+");
-  const rivals =
-    target === "read" ? ["unread"] : target === "unread" ? ["read"] : [];
-  return [...local.filter((a) => !rivals.includes(a)), target].join("+");
-}
-
 /**
  * 用户层合并动作「移动到文件夹」的勾选：
  * - `move` 可搭配本机标记（已读/未读/星标），与「移到废纸篓」互斥；

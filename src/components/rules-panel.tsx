@@ -313,7 +313,7 @@ export function RulesPanel({
                 </Button>
               </CollapsibleTrigger>
             </div>
-            <CollapsibleContent className="flex flex-col gap-8">
+            <CollapsibleContent className="flex flex-col gap-3">
               {group.rules.map(({ rule: r, order }) => (
                 <article
                   className={`rule-card ${r.enabled ? "" : "disabled-rule"}`}

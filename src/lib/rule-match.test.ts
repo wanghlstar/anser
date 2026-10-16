@@ -5,7 +5,6 @@ import {
   ruleActionsDeduped,
   isRemoteRule,
   isMoveAction,
-  toggleAction,
   toggleMergedAction,
   groupRulesByAccount,
 } from "./rule-match";
@@ -97,31 +96,6 @@ it("does not treat an online or undecodable body as an empty matching body", () 
       online,
     ),
   ).toBe(true);
-});
-
-describe("rule action toggling", () => {
-  const toggle = toggleAction;
-  it("adds and removes local actions in order", () => {
-    expect(toggle("", "folder", true)).toBe("folder");
-    expect(toggle("folder", "read", true)).toBe("folder+read");
-    expect(toggle("folder+read", "star", true)).toBe("folder+read+star");
-    expect(toggle("folder+read", "read", false)).toBe("folder");
-    expect(toggle("folder", "folder", false)).toBe("");
-  });
-  it("keeps read and unread mutually exclusive", () => {
-    expect(toggle("read", "unread", true)).toBe("unread");
-    expect(toggle("unread", "read", true)).toBe("read");
-  });
-  it("treats a server action as exclusive in both directions", () => {
-    expect(toggle("folder+read", "serverMove", true)).toBe("serverMove");
-    expect(toggle("serverMove", "serverMove", false)).toBe("");
-    // 反过来：勾选本地动作自动解除服务器动作
-    expect(toggle("serverMove", "read", true)).toBe("read");
-    expect(toggle("serverCopy", "folder", true)).toBe("folder");
-  });
-  it("ignores duplicates", () => {
-    expect(toggle("folder", "folder", true)).toBe("folder");
-  });
 });
 
 describe("rule grouping by account", () => {
