@@ -3951,3 +3951,10 @@ button.nav-collapse .collapse-chevron {
     margin: 0;
   }
 }
+
+.list-heading > .list-heading-actions,
+.panel-heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}

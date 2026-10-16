@@ -312,6 +312,7 @@ export default function App() {
     [syncText, setSyncText] = useState(""),
     [loading, setLoading] = useState(true),
     [demo, setDemo] = useState(isDemo()),
+    [clearingDrafts, setClearingDrafts] = useState(false),
     [dark, setDark] = useState(localStorage.getItem("mail-theme") === "dark");
   const searchRef = useRef<HTMLInputElement>(null),
     request = useRef(0),
@@ -1235,6 +1236,53 @@ export default function App() {
   async function showDrafts() {
     setPage("drafts");
     await loadDrafts();
+  }
+  // 清空草稿：删除列出的草稿，正在编辑的那份保留
+  async function clearDrafts(list: Compose[]) {
+    if (clearingDrafts) return;
+    const removable = list.filter((d) => d.id !== draft?.id);
+    if (!removable.length) {
+      toast.info("没有可清空的草稿");
+      return;
+    }
+    const ok = await askConfirmation({
+      title: "清空草稿箱？",
+      description: `将删除 ${removable.length} 份草稿，删除后无法恢复；正在编辑的草稿会保留。`,
+      action: "清空草稿",
+      destructive: true,
+    });
+    if (!ok) return;
+    setClearingDrafts(true);
+    let done = 0;
+    let failed = 0;
+    for (const d of removable) {
+      try {
+        await call("delete_draft", { id: d.id });
+        done++;
+      } catch {
+        failed++;
+      }
+    }
+    setClearingDrafts(false);
+    await loadDrafts();
+    if (done) toast.success(`已清空 ${done} 份草稿`);
+    if (failed) toast.error(`${failed} 份草稿删除失败`);
+  }
+  // 清空本地废纸篓：彻底删除其中的邮件（含服务器副本）
+  async function clearTrash() {
+    const ids = data.messages.filter((m) => m.trashed).map((m) => m.id);
+    if (!ids.length) {
+      toast.info("本地废纸篓已空");
+      return;
+    }
+    const ok = await askConfirmation({
+      title: "清空本地废纸篓？",
+      description: `将彻底删除 ${ids.length} 封邮件（含服务器副本），无法恢复。`,
+      action: "清空废纸篓",
+      destructive: true,
+    });
+    if (!ok) return;
+    await mutate(ids, "delete", "true", grouped);
   }
   async function queueArchives(ids: string[], conversations = false) {
     if (archiving) return;
@@ -2491,6 +2539,12 @@ export default function App() {
               onCompose={() =>
                 compose(undefined, false, false, undefined, query.accountId)
               }
+              onClearAll={() =>
+                void clearDrafts(
+                  drafts.filter((d) => d.accountId === query.accountId),
+                )
+              }
+              clearing={clearingDrafts}
             />
           ) : page === "drafts" ? (
             <DraftsPanel
@@ -2500,6 +2554,8 @@ export default function App() {
               onOpen={setDraft}
               onDeleted={() => void showDrafts()}
               onCompose={() => compose()}
+              onClearAll={() => void clearDrafts(drafts)}
+              clearing={clearingDrafts}
             />
           ) : (
             <MailLayout
@@ -2517,18 +2573,32 @@ export default function App() {
                         {visibleMessages.length} {grouped ? "个对话" : "封邮件"}
                       </span>
                     </div>
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      disabled={syncing || !data.accounts.length}
-                      title="收取邮件"
-                      onClick={() => void sync()}
-                    >
-                      <RefreshCw
-                        size={16}
-                        className={syncing ? "animate-spin" : ""}
-                      />
-                    </Button>
+                    <div className="list-heading-actions">
+                      {query.view === "trash" && visibleMessages.length > 0 && (
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          className="text-destructive"
+                          title="清空本地废纸篓（含服务器副本）"
+                          aria-label="清空本地废纸篓"
+                          onClick={() => void clearTrash()}
+                        >
+                          <Trash2 size={16} />
+                        </Button>
+                      )}
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        disabled={syncing || !data.accounts.length}
+                        title="收取邮件"
+                        onClick={() => void sync()}
+                      >
+                        <RefreshCw
+                          size={16}
+                          className={syncing ? "animate-spin" : ""}
+                        />
+                      </Button>
+                    </div>
                   </div>
                   {serverFolders.find(
                     (f) =>

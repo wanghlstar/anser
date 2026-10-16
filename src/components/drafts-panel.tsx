@@ -18,6 +18,8 @@ export function DraftsPanel({
   onOpen,
   onDeleted,
   onCompose,
+  onClearAll,
+  clearing,
 }: {
   drafts: Compose[];
   title: string;
@@ -25,6 +27,8 @@ export function DraftsPanel({
   onOpen: (draft: Compose) => void;
   onDeleted: () => void;
   onCompose?: () => void;
+  onClearAll?: () => void;
+  clearing?: boolean;
 }) {
   const { askConfirmation, confirmationDialog } = useConfirmation();
   async function remove(draft: Compose) {
@@ -54,12 +58,20 @@ export function DraftsPanel({
           </div>
           <p>{description}</p>
         </div>
-        {onCompose && (
-          <Button onClick={onCompose}>
-            <SquarePen size={16} />
-            写邮件
-          </Button>
-        )}
+        <div className="panel-heading-actions">
+          {onClearAll && drafts.length > 0 && (
+            <Button variant="outline" disabled={clearing} onClick={onClearAll}>
+              <Trash2 size={16} />
+              {clearing ? "正在清空…" : "清空草稿"}
+            </Button>
+          )}
+          {onCompose && (
+            <Button onClick={onCompose}>
+              <SquarePen size={16} />
+              写邮件
+            </Button>
+          )}
+        </div>
       </div>
       {drafts.length ? (
         <div className="draft-list">

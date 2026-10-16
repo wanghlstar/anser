@@ -2053,3 +2053,59 @@ describe("mail action shortcuts", () => {
     });
   });
 });
+
+describe("bulk clearing", () => {
+  it("clears every draft from the draft box after confirmation", async () => {
+    await api.call("save_draft", {
+      draft: {
+        ...newDraft("demo-work"),
+        id: "draft-1",
+        subject: "草稿一",
+        body: "内容",
+      },
+    });
+    await api.call("save_draft", {
+      draft: {
+        ...newDraft("demo-work"),
+        id: "draft-2",
+        subject: "草稿二",
+        body: "内容",
+      },
+    });
+    await click(nav("草稿箱"));
+    expect(host.querySelectorAll(".draft-row")).toHaveLength(2);
+    const calls = vi.spyOn(api, "call");
+    await click(host.querySelector(".panel-heading-actions button"));
+    const confirm = [
+      ...document.querySelectorAll('[role="alertdialog"] button'),
+    ].find((b) => b.textContent === "清空草稿");
+    expect(confirm).toBeTruthy();
+    await click(confirm!);
+    expect(
+      calls.mock.calls.filter(([command]) => command === "delete_draft"),
+    ).toHaveLength(2);
+    expect(host.querySelectorAll(".draft-row")).toHaveLength(0);
+  });
+  it("empties the local trash with permanent deletion after confirmation", async () => {
+    const seed = await snapshot(localQuery);
+    seed.messages[0].trashed = true;
+    seed.messages[1].trashed = true;
+    localStorage.setItem("mail-desktop-demo-v1", JSON.stringify(seed));
+    api.restoreDemo();
+    await click(nav("本地废纸篓"));
+    const calls = vi.spyOn(api, "call");
+    await click(host.querySelector('[aria-label="清空本地废纸篓"]'));
+    const confirm = [
+      ...document.querySelectorAll('[role="alertdialog"] button'),
+    ].find((b) => b.textContent === "清空废纸篓");
+    expect(confirm).toBeTruthy();
+    await click(confirm!);
+    expect(
+      calls.mock.calls.some(
+        ([command, args]) =>
+          command === "update_mail" &&
+          (args as { action?: string }).action === "delete",
+      ),
+    ).toBe(true);
+  });
+});
