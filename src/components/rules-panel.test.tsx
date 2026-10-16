@@ -33,6 +33,14 @@ async function click(label: string) {
   expect(button).toBeTruthy();
   await act(async () => button!.click());
 }
+/// 动作勾选项：Checkbox 是 role=checkbox 的按钮，文字在包裹它的 Label 里。
+async function pickAction(action: string) {
+  const checkbox = document.querySelector<HTMLButtonElement>(
+    `#action-${action}`,
+  );
+  expect(checkbox, `找不到动作勾选项 ${action}`).toBeTruthy();
+  await act(async () => checkbox!.click());
+}
 async function select(label: string, option: string) {
   await act(async () =>
     document
@@ -107,15 +115,15 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-it("requires account/source/target, excludes isolated and same folders, and only previews before saving", async () => {
+it("merges the folder action into one move with a server target list", async () => {
   await render();
   await click("新建规则");
-  await select("规则执行动作", "移动到服务器文件夹");
-  expect(
-    (document.querySelector("#rule-source") as HTMLButtonElement).disabled,
-  ).toBe(true);
   await select("规则适用账号", account.email);
-  await select("规则来源文件夹", "收件箱");
+  await pickAction("move");
+  // IMAP 账号：移动到文件夹落地为服务器移动，只有目标、没有来源
+  expect(document.querySelector("#rule-source")).toBeNull();
+  await act(async () => {});
+  expect(document.querySelector("#rule-target")).toBeTruthy();
   await act(async () =>
     document
       .querySelector("#rule-target")!
@@ -126,7 +134,6 @@ it("requires account/source/target, excludes isolated and same folders, and only
   const options = [...document.querySelectorAll('[role="option"]')].map(
     (e) => e.textContent,
   );
-  expect(options).not.toContain("收件箱");
   expect(options).not.toContain("异常目录");
   expect(options).toContain("其他文件夹");
   const target = [...document.querySelectorAll('[role="option"]')].find(
@@ -138,7 +145,7 @@ it("requires account/source/target, excludes isolated and same folders, and only
     rule: expect.objectContaining({
       action: "serverMove",
       accountId: account.id,
-      sourceFolder: "INBOX",
+      sourceFolder: "",
       destination: "&UXZO1mWHTvZZOQ-",
     }),
   });
@@ -152,28 +159,29 @@ it("requires account/source/target, excludes isolated and same folders, and only
   expect(api.call).toHaveBeenCalledWith("save_rules", {
     rules: [
       expect.objectContaining({
-        sourceFolder: "INBOX",
+        sourceFolder: "",
         destination: "&UXZO1mWHTvZZOQ-",
         action: "serverMove",
       }),
     ],
   });
 });
-it("clears destinations when switching back to local actions", async () => {
+it("stacks a local mark with the merged move and keeps its target", async () => {
   await render();
   await click("新建规则");
-  await select("规则执行动作", "复制到服务器文件夹");
   await select("规则适用账号", account.email);
-  await select("规则来源文件夹", "收件箱");
+  await pickAction("move");
+  await act(async () => {});
   await select("规则目标文件夹", "归档");
-  await select("规则执行动作", "归入本地文件夹");
-  expect(document.querySelector("#rule-source")).toBeNull();
+  // 勾选其它动作与移动叠加，目标保留
+  await pickAction("read");
+  expect(document.querySelector("#rule-target")).toBeTruthy();
   await click("预览匹配，不执行动作");
   expect(api.call).toHaveBeenLastCalledWith("preview_rule", {
     rule: expect.objectContaining({
       sourceFolder: "",
-      destination: "",
-      action: "folder",
+      destination: "Archive",
+      action: "serverMove+read",
     }),
   });
 });
@@ -205,19 +213,12 @@ it("shows task uncertainty without offering replay and retries only a failed enq
     expect.anything(),
   );
 });
-it("does not expose a full-address Gmail account as a supported remote rule account", async () => {
+it("degrades the merged move to a local folder for a non-IMAP account", async () => {
   await render();
   await click("新建规则");
-  await select("规则执行动作", "复制到服务器文件夹");
-  await act(async () =>
-    document
-      .querySelector('[aria-label="规则适用账号"]')!
-      .dispatchEvent(
-        new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }),
-      ),
-  );
-  const gmail = [...document.querySelectorAll('[role="option"]')].find(
-    (e) => e.textContent === data.accounts[0].email,
-  )!;
-  expect(gmail.getAttribute("data-disabled")).not.toBeNull();
+  await select("规则适用账号", data.accounts[0].email);
+  await pickAction("move");
+  // Gmail / 无服务器目录：退化为本地归类，不再显示服务器目标
+  expect(document.querySelector("#rule-target")).toBeNull();
+  expect(document.querySelector('[aria-label="本地文件夹名称"]')).toBeTruthy();
 });

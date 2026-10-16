@@ -160,8 +160,8 @@ it("stacks the taller cards in the left column and the shorter ones in the right
       ].map((h3) => h3.textContent),
   );
   expect(titles).toEqual([
-    ["后台检查", "外观"],
-    ["系统通知与启动", "存档分层"],
+    ["系统通知与启动", "外观"],
+    ["后台检查", "存档分层"],
   ]);
 });
 it("groups archive integrity under the archive tiering card", async () => {
@@ -177,7 +177,7 @@ it("groups archive integrity under the archive tiering card", async () => {
     [
       ...host.querySelectorAll(".settings-tool > h3, .settings-tool-title h3"),
     ].map((h3) => h3.textContent),
-  ).toEqual(["后台检查", "外观", "系统通知与启动", "存档分层"]);
+  ).toEqual(["系统通知与启动", "外观", "后台检查", "存档分层"]);
   expect(host.querySelector("h4")).toBeNull();
 });
 it("offers the send countdown options in the background check card and saves them", async () => {
@@ -203,7 +203,10 @@ it("offers the send countdown options in the background check card and saves the
       ) as HTMLElement
     ).click(),
   );
-  const save = [...host.querySelectorAll("button")].find(
+  const card = [...host.querySelectorAll(".settings-tool")].find(
+    (c) => c.querySelector("h3")?.textContent === "后台检查",
+  );
+  const save = [...card!.querySelectorAll("button")].find(
     (b) => b.textContent === "保存",
   );
   await act(async () => save!.click());

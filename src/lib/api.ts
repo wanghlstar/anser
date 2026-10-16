@@ -359,22 +359,36 @@ export async function call<T = void>(
         if (current) current.serverRetentionDays = days ?? null;
         break;
       }
-      case "preview_rule":
+      case "preview_rule": {
+        const rule = args.rule as Rule;
+        const actions = rule.action.split(/[+,,;；]/).map((a) => a.trim());
+        const isRemote = actions.some(
+          (a) => a === "serverCopy" || a === "serverMove",
+        );
         result = demo.messages
           .filter(
             (m) =>
-              ruleMatches({ ...(args.rule as Rule), enabled: true }, m) &&
-              (!["serverCopy", "serverMove"].includes(
-                (args.rule as Rule).action,
-              ) ||
-                m.sourceFolder === (args.rule as Rule).sourceFolder),
+              ruleMatches({ ...rule, enabled: true }, m) &&
+              (!isRemote ||
+                !rule.sourceFolder ||
+                m.sourceFolder === rule.sourceFolder),
           )
           .map((m) => m.subject);
         break;
+      }
       case "run_rules": {
+        const actionsOf = (r: Rule) =>
+          r.action
+            .split(/[+,,;；]/)
+            .map((a) => a.trim())
+            .filter(Boolean);
         if (
           demo.rules.some(
-            (r) => r.enabled && ["serverCopy", "serverMove"].includes(r.action),
+            (r) =>
+              r.enabled &&
+              actionsOf(r).some(
+                (a) => a === "serverCopy" || a === "serverMove",
+              ),
           )
         )
           throw new Error("演示模式不执行服务器规则，请在真实桌面预览中测试");
@@ -382,11 +396,13 @@ export async function call<T = void>(
         for (const m of demo.messages) {
           for (const r of demo.rules) {
             if (ruleMatches(r, m)) {
-              if (r.action === "folder") m.localFolder = r.destination;
-              if (r.action === "read") m.isRead = true;
-              if (r.action === "unread") m.isRead = false;
-              if (r.action === "star") m.starred = true;
-              if (r.action === "trash") m.trashed = true;
+              for (const action of actionsOf(r)) {
+                if (action === "folder") m.localFolder = r.destination;
+                if (action === "read") m.isRead = true;
+                if (action === "unread") m.isRead = false;
+                if (action === "star") m.starred = true;
+                if (action === "trash") m.trashed = true;
+              }
               count++;
               if (r.stop) break;
             }

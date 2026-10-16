@@ -1159,6 +1159,53 @@ impl Store {
         rows.map(|r| serde_json::from_str(&r.map_err(err)?).map_err(err))
             .collect()
     }
+    /// 导出规则：按账号筛选（空 = 全部），保持执行顺序。
+    /// `include_global` 控制是否带上全局规则（accountId 为空）；
+    /// 默认带上，否则导出的规则在别处导入会丢掉通用条件。
+    pub fn export_rules(
+        &self,
+        account_ids: &[String],
+        include_global: bool,
+    ) -> Result<Vec<Rule>> {
+        Ok(self
+            .rules()?
+            .into_iter()
+            .filter(|r| {
+                if r.account_id.is_empty() {
+                    include_global || account_ids.is_empty()
+                } else {
+                    account_ids.is_empty() || account_ids.contains(&r.account_id)
+                }
+            })
+            .collect())
+    }
+    /// 删除本地文件夹：把该文件夹下的邮件移回默认桶「全部存档」，
+    /// 侧栏的平铺列表是 localFolder 去重值，清空后该文件夹自然消失。
+    pub fn clear_local_folder(&self, name: &str) -> Result<usize> {
+        if name.trim().is_empty() || name == "全部存档" {
+            return Ok(0);
+        }
+        let ids: Vec<String> = {
+            let db = self.db()?;
+            let mut q = db
+                .prepare(
+                    "SELECT id FROM messages WHERE json_extract(data,'$.localFolder')=?1",
+                )
+                .map_err(err)?;
+            let rows = q
+                .query_map([name], |r| r.get::<_, String>(0))
+                .map_err(err)?
+                .collect::<std::result::Result<Vec<String>, _>>()
+                .map_err(err)?;
+            rows
+        };
+        for id in &ids {
+            let mut mail = self.mail(id)?;
+            mail.local_folder = "全部存档".into();
+            self.update_mail(&mail)?;
+        }
+        Ok(ids.len())
+    }
     pub fn save_rules(&self, rs: &[Rule]) -> Result<()> {
         for r in rs {
             rules::validate(r)?;
@@ -1365,36 +1412,55 @@ impl Store {
                 continue;
             }
             if rules::matches(&r, &m) {
-                if rules::remote(&r) {
-                    if self.apply_remote_rule(&r, &m, false)? {
-                        count += 1;
-                    } else {
-                        continue;
-                    }
-                    if r.stop {
-                        break;
-                    }
+                let is_remote = rules::remote(&r);
+                if is_remote && !self.apply_remote_rule(&r, &m, false)? {
+                    // 服务器来源不适用（如已不在收件箱）：整条规则都不生效
                     continue;
                 }
-                match r.action.as_str() {
-                    "folder" => m.local_folder = r.destination.clone(),
-                    "read" => {
-                        m.is_read = true;
-                        m.local_read_override = Some(true);
-                    }
-                    "unread" => {
-                        m.is_read = false;
-                        m.local_read_override = Some(false);
-                    }
-                    "star" => {
-                        m.starred = true;
-                        m.local_star_override = Some(true);
-                    }
-                    "trash" => m.trashed = true,
-                    _ => return Err("未知动作".into()),
+                // 本机动作立即应用；服务器规则只允许叠加 read/unread/star。
+                let actions = r.effective_actions_deduped();
+                let local: Vec<String> = if is_remote {
+                    actions
+                        .iter()
+                        .filter(|a| !matches!(a.as_str(), "serverCopy" | "serverMove"))
+                        .cloned()
+                        .collect()
+                } else {
+                    actions.clone()
                 };
-                self.update_mail(&m)?;
-                self.log(&format!("规则「{}」已执行 · {}", r.name, m.subject))?;
+                for action in &local {
+                    match action.as_str() {
+                        "folder" => m.local_folder = r.destination.clone(),
+                        "read" => {
+                            m.is_read = true;
+                            m.local_read_override = Some(true);
+                        }
+                        "unread" => {
+                            m.is_read = false;
+                            m.local_read_override = Some(false);
+                        }
+                        "star" => {
+                            m.starred = true;
+                            m.local_star_override = Some(true);
+                        }
+                        "trash" => m.trashed = true,
+                        _ => return Err("未知动作".into()),
+                    }
+                }
+                // 一次命中把该规则的所有动作都应用上，只写库、只记一次日志。
+                if !local.is_empty() {
+                    self.update_mail(&m)?;
+                    self.log(&format!(
+                        "规则「{}」已执行 · {}{}",
+                        r.name,
+                        m.subject,
+                        if actions.len() > 1 {
+                            format!("（{} 个动作）", actions.len())
+                        } else {
+                            String::new()
+                        }
+                    ))?;
+                }
                 count += 1;
                 if r.stop {
                     break;

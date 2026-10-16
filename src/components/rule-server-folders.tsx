@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { call } from "@/lib/api";
+import { compareFolders } from "@/lib/remote-folders";
 import type { Account, FolderSettings, Rule } from "@/lib/types";
 import { Field, FieldGroup, FieldLabel, FieldDescription } from "./ui/field";
 import { SelectGroup } from "./ui/select";
@@ -10,10 +11,12 @@ export function RuleServerFolders({
   rule,
   account,
   onChange,
+  targetOnly = false,
 }: {
   rule: Rule;
   account?: Account;
   onChange: (rule: Rule) => void;
+  targetOnly?: boolean;
 }) {
   const [settings, setSettings] = useState<FolderSettings | null>(null);
   const [error, setError] = useState("");
@@ -37,8 +40,15 @@ export function RuleServerFolders({
       live = false;
     };
   }, [account?.id, supported]);
-  const folders =
-    settings?.folders.filter((f) => f.selectable && !f.syncError) || [];
+  const folders = (
+    settings?.folders.filter((f) => f.selectable && !f.syncError) || []
+  ).sort((a, b) =>
+    // 与账号树同一套排序：先按角色（收件箱/已发送/…），再按中文拼音
+    compareFolders(
+      { name: a.name, displayName: a.displayName, roles: a.roles },
+      { name: b.name, displayName: b.displayName, roles: b.roles },
+    ),
+  );
   return (
     <FieldGroup>
       {!supported && (
@@ -60,35 +70,37 @@ export function RuleServerFolders({
           </AlertDescription>
         </Alert>
       )}
-      <Field>
-        <FieldLabel htmlFor="rule-source">来源文件夹</FieldLabel>
-        <SelectField
-          id="rule-source"
-          aria-label="规则来源文件夹"
-          value={rule.sourceFolder || ""}
-          disabled={!supported || !settings}
-          onValueChange={(sourceFolder) =>
-            onChange({
-              ...rule,
-              sourceFolder,
-              destination:
-                rule.destination === sourceFolder ? "" : rule.destination,
-            })
-          }
-        >
-          <SelectGroup>
-            <SelectOption value="">选择来源文件夹</SelectOption>
-            {folders.map((f) => (
-              <SelectOption key={f.name} value={f.name}>
-                {f.displayName}
-              </SelectOption>
-            ))}
-          </SelectGroup>
-        </SelectField>
-        <FieldDescription>
-          仅处理当前位于此服务器文件夹的匹配邮件。服务器动作暂不支持正文条件。
-        </FieldDescription>
-      </Field>
+      {targetOnly ? null : (
+        <Field>
+          <FieldLabel htmlFor="rule-source">来源文件夹</FieldLabel>
+          <SelectField
+            id="rule-source"
+            aria-label="规则来源文件夹"
+            value={rule.sourceFolder || ""}
+            disabled={!supported || !settings}
+            onValueChange={(sourceFolder) =>
+              onChange({
+                ...rule,
+                sourceFolder,
+                destination:
+                  rule.destination === sourceFolder ? "" : rule.destination,
+              })
+            }
+          >
+            <SelectGroup>
+              <SelectOption value="">选择来源文件夹</SelectOption>
+              {folders.map((f) => (
+                <SelectOption key={f.name} value={f.name}>
+                  {f.displayName}
+                </SelectOption>
+              ))}
+            </SelectGroup>
+          </SelectField>
+          <FieldDescription>
+            仅处理当前位于此服务器文件夹的匹配邮件。服务器动作暂不支持正文条件。
+          </FieldDescription>
+        </Field>
+      )}
       <Field>
         <FieldLabel htmlFor="rule-target">目标文件夹</FieldLabel>
         <SelectField
@@ -101,7 +113,7 @@ export function RuleServerFolders({
           <SelectGroup>
             <SelectOption value="">选择目标文件夹</SelectOption>
             {folders
-              .filter((f) => f.name !== rule.sourceFolder)
+              .filter((f) => targetOnly || f.name !== rule.sourceFolder)
               .map((f) => (
                 <SelectOption key={f.name} value={f.name}>
                   {f.displayName}
@@ -110,8 +122,8 @@ export function RuleServerFolders({
           </SelectGroup>
         </SelectField>
         <FieldDescription>
-          {rule.action === "serverMove"
-            ? "移动核对完成后从来源目录移除，已有本地存档保留。"
+          {targetOnly || rule.action === "serverMove"
+            ? "按邮件当前所在的服务器目录移动，核对完成后从该目录移除，已有本地存档保留。"
             : "保留来源目录的邮件，并核对目标副本。"}
           同一规则配置命中过的邮件不会重复入队；停用或删除规则不会取消已创建的服务器任务。
         </FieldDescription>

@@ -13,6 +13,8 @@ import {
   Star,
   MailCheck,
   MoreHorizontal,
+  Download,
+  ChevronRight,
 } from "lucide-react";
 import { SidebarTrigger } from "./ui/sidebar";
 import { Button } from "./ui/button";
@@ -30,8 +32,22 @@ import type { Rule, Snapshot, FolderSettings } from "@/lib/types";
 import { call, isDemo } from "@/lib/api";
 import { toast } from "sonner";
 import { SelectGroup } from "./ui/select";
+import { Checkbox } from "./ui/checkbox";
+import {
+  ruleActionsDeduped,
+  isRemoteRule,
+  isMoveAction,
+  toggleMergedAction,
+  groupRulesByAccount,
+} from "@/lib/rule-match";
 import { RuleServerFolders } from "./rule-server-folders";
 import { RuleExecutions } from "./rule-executions";
+import { FolderInput } from "./folder-input";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "./ui/collapsible";
 
 const fields: { [key: string]: string } = {
   sender: "发件人",
@@ -42,14 +58,25 @@ const fields: { [key: string]: string } = {
   date: "邮件日期",
 };
 const actions: { [key: string]: string } = {
-  folder: "归入本地文件夹",
+  // 用户层只有一个「移动到文件夹」：IMAP 落地为服务器移动，POP3 退化为本地归类。
+  // serverCopy 仅用于兼容旧规则展示。
+  move: "移动到文件夹",
+  folder: "移动到文件夹",
+  serverMove: "移动到文件夹",
   read: "标记为已读",
   unread: "标记为未读",
   star: "添加星标",
   trash: "移到本地废纸篓",
   serverCopy: "复制到服务器文件夹",
-  serverMove: "移动到服务器文件夹",
 };
+/** 可勾选的动作：合并后的移动动作独占，其余本地动作可叠加。 */
+const ALL_ACTIONS: [string, string][] = [
+  ["move", "移动到文件夹"],
+  ["read", "标记为已读"],
+  ["unread", "标记为未读"],
+  ["star", "添加星标"],
+  ["trash", "移到本地废纸篓"],
+];
 export function RulesPanel({
   data,
   onChange,
@@ -61,13 +88,15 @@ export function RulesPanel({
 }) {
   const [editing, setEditing] = useState<Rule | null>(null),
     [busy, setBusy] = useState(false),
+    [exportOpen, setExportOpen] = useState(false),
+    [exportAccounts, setExportAccounts] = useState<string[]>([]),
+    [exportGlobal, setExportGlobal] = useState(true),
     [preview, setPreview] = useState<string[] | null>(null);
-  const remote = (r: Rule) => ["serverCopy", "serverMove"].includes(r.action);
   const [folderNames, setFolderNames] = useState<
     Record<string, Record<string, string>>
   >({});
   const remoteAccounts = [
-    ...new Set(data.rules.filter(remote).map((r) => r.accountId)),
+    ...new Set(data.rules.filter(isRemoteRule).map((r) => r.accountId)),
   ]
     .sort()
     .join(",");
@@ -90,8 +119,18 @@ export function RulesPanel({
     };
   }, [remoteAccounts]);
   const folderLabel = (r: Rule, path: string, fallback: string) =>
+    // 优先用快照里的服务器目录展示名做转码；加载中再退回 folder_settings
+    data.remoteFolders?.find(
+      (f) => f.accountId === r.accountId && f.name === path,
+    )?.displayName ||
     folderNames[r.accountId]?.[path] ||
     (path === "INBOX" ? "收件箱" : fallback);
+  /// 合并动作「移动到文件夹」在哪些账号上走真正的服务器移动：
+  /// 已启用的 IMAP 账号（Gmail 标签动作暂不支持，退化为本地归类）。
+  const serverMoveCapable = (accountId: string) => {
+    const a = data.accounts.find((x) => x.id === accountId);
+    return !!a && a.enabled && a.protocol === "imap" && a.provider !== "gmail";
+  };
   async function save(rs: Rule[]) {
     try {
       await call("save_rules", { rules: rs });
@@ -126,6 +165,52 @@ export function RulesPanel({
         added ? `已导入 ${added} 条规则` : "没有新规则（同名已跳过）",
       );
       onChange();
+    } catch (e) {
+      toast.error(String(e));
+    }
+  }
+  /// 导出：按账号筛选（默认带上全局规则），保持执行顺序写盘。
+  async function exportRules() {
+    if (isDemo()) {
+      toast.error("演示模式不支持导出");
+      return;
+    }
+    const accounts = data.accounts;
+    if (!accounts.length) {
+      toast.error("没有可导出的账号");
+      return;
+    }
+    setExportAccounts(accounts.map((a) => a.id));
+    setExportGlobal(true);
+    setExportOpen(true);
+  }
+  async function confirmExport() {
+    if (isDemo()) {
+      toast.error("演示模式不支持导出");
+      return;
+    }
+    setExportOpen(false);
+    try {
+      const { save } = await import("@tauri-apps/plugin-dialog");
+      const picked = await save({
+        filters: [{ name: "规则 JSON", extensions: ["json"] }],
+        defaultPath: `雁信规则-${new Date().toISOString().slice(0, 10)}.json`,
+        title: "导出规则到",
+      });
+      if (!picked) return;
+      const rules = await call<Rule[]>("export_rules", {
+        accountIds: exportAccounts,
+        includeGlobal: exportGlobal,
+      });
+      if (!rules.length) {
+        toast.error("没有符合所选条件的规则");
+        return;
+      }
+      await call("write_text_file", {
+        path: picked,
+        content: JSON.stringify(rules, null, 2),
+      });
+      toast.success(`已导出 ${rules.length} 条规则`);
     } catch (e) {
       toast.error(String(e));
     }
@@ -168,6 +253,14 @@ export function RulesPanel({
             导入…
           </Button>
           <Button
+            variant="outline"
+            onClick={() => void exportRules()}
+            disabled={busy}
+          >
+            <Download size={16} />
+            导出…
+          </Button>
+          <Button
             onClick={() => {
               setPreview(null);
               setEditing({
@@ -179,7 +272,7 @@ export function RulesPanel({
                 conditions: [
                   { field: "subject", operator: "contains", value: "" },
                 ],
-                action: "folder",
+                action: "",
                 destination: "",
                 stop: true,
               });
@@ -193,7 +286,8 @@ export function RulesPanel({
       <div className="info-strip">
         <SlidersHorizontal size={17} />
         <span>
-          规则按顺序执行。本地归类保留原件；服务器复制和移动会创建独立任务。
+          规则按顺序执行。「移动到文件夹」在 IMAP
+          账号走服务器移动，其它账号为本地归类。
         </span>
         <Button
           variant="ghost"
@@ -206,81 +300,111 @@ export function RulesPanel({
         </Button>
       </div>
       <div className="rule-list">
-        {data.rules.map((r, i) => (
-          <article
-            className={`rule-card ${r.enabled ? "" : "disabled-rule"}`}
-            key={r.id}
-          >
-            <div className="rule-number">{String(i + 1).padStart(2, "0")}</div>
-            <div className="rule-body">
-              <div className="rule-title">
-                <h3>{r.name}</h3>
-                {r.stop && <span>命中后停止</span>}
-              </div>
-              <p className="rule-summary">
-                {r.conditions
-                  .map(
-                    (c) =>
-                      `${fields[c.field]} ${c.operator === "equals" ? "等于" : c.operator === "notContains" ? "不包含" : c.operator === "before" ? "早于" : c.operator === "after" ? "晚于" : "包含"}「${c.value}」`,
-                  )
-                  .join(r.mode === "all" ? " 且 " : " 或 ")}
-                <span className="rule-action">
-                  <ArrowRight size={13} />
-                  {r.action === "folder" ? (
-                    <Folder size={13} />
-                  ) : r.action === "star" ? (
-                    <Star size={13} />
-                  ) : (
-                    <MailCheck size={13} />
-                  )}
-                  {actions[r.action]}
-                  {r.action === "folder" && <strong>{r.destination}</strong>}
-                </span>
-              </p>
+        {groupRulesByAccount(data.rules, data.accounts).map((group) => (
+          <Collapsible key={group.key} className="rule-group-card">
+            <div className="rule-group-heading">
+              <CollapsibleTrigger asChild>
+                <Button variant="ghost" size="sm" className="gap-1 px-0">
+                  <ChevronRight size={14} className="collapse-chevron" />
+                  {group.label}
+                  <span className="rule-group-count">
+                    {group.rules.length} 条
+                  </span>
+                </Button>
+              </CollapsibleTrigger>
             </div>
-            <div className="rule-controls">
-              <Switch
-                checked={r.enabled}
-                aria-label={`启用 ${r.name}`}
-                onCheckedChange={(v) =>
-                  void save(
-                    data.rules.map((x) =>
-                      x.id === r.id ? { ...x, enabled: v } : x,
-                    ),
-                  )
-                }
-              />
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                title="上移"
-                disabled={i === 0}
-                onClick={() => move(i, -1)}
-              >
-                <ArrowUp size={15} />
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                title="下移"
-                disabled={i === data.rules.length - 1}
-                onClick={() => move(i, 1)}
-              >
-                <ArrowDown size={15} />
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                title="编辑规则"
-                onClick={() => {
-                  setPreview(null);
-                  setEditing(structuredClone(r));
-                }}
-              >
-                <MoreHorizontal size={18} />
-              </Button>
-            </div>
-          </article>
+            <CollapsibleContent className="flex flex-col gap-8">
+              {group.rules.map(({ rule: r, order }) => (
+                <article
+                  className={`rule-card ${r.enabled ? "" : "disabled-rule"}`}
+                  key={r.id}
+                >
+                  <div className="rule-number">
+                    {String(order + 1).padStart(2, "0")}
+                  </div>
+                  <div className="rule-body">
+                    <div className="rule-title">
+                      <h3>{r.name}</h3>
+                      {r.stop && <span>命中后停止</span>}
+                    </div>
+                    <p className="rule-summary">
+                      <span className="rule-conditions">
+                        {r.conditions
+                          .map(
+                            (c) =>
+                              `${fields[c.field]} ${c.operator === "equals" ? "等于" : c.operator === "notContains" ? "不包含" : c.operator === "before" ? "早于" : c.operator === "after" ? "晚于" : "包含"}「${c.value}」`,
+                          )
+                          .join(r.mode === "all" ? " 且 " : " 或 ")}
+                      </span>
+                      <span className="rule-action">
+                        <ArrowRight size={13} />
+                        {ruleActionsDeduped(r).map((action) => (
+                          <span className="rule-action-item" key={action}>
+                            {isMoveAction({ action } as Rule) ? (
+                              <Folder size={13} />
+                            ) : action === "star" ? (
+                              <Star size={13} />
+                            ) : (
+                              <MailCheck size={13} />
+                            )}
+                            {actions[action]}
+                            {isMoveAction({ action } as Rule) &&
+                              r.destination && (
+                                <strong>
+                                  {folderLabel(r, r.destination, r.destination)}
+                                </strong>
+                              )}
+                          </span>
+                        ))}
+                      </span>
+                    </p>
+                  </div>
+                  <div className="rule-controls">
+                    <Switch
+                      checked={r.enabled}
+                      aria-label={`启用 ${r.name}`}
+                      onCheckedChange={(v) =>
+                        void save(
+                          data.rules.map((x) =>
+                            x.id === r.id ? { ...x, enabled: v } : x,
+                          ),
+                        )
+                      }
+                    />
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      title="上移"
+                      disabled={order === 0}
+                      onClick={() => move(order, -1)}
+                    >
+                      <ArrowUp size={15} />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      title="下移"
+                      disabled={order === data.rules.length - 1}
+                      onClick={() => move(order, 1)}
+                    >
+                      <ArrowDown size={15} />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      title="编辑规则"
+                      onClick={() => {
+                        setPreview(null);
+                        setEditing(structuredClone(r));
+                      }}
+                    >
+                      <MoreHorizontal size={18} />
+                    </Button>
+                  </div>
+                </article>
+              ))}
+            </CollapsibleContent>
+          </Collapsible>
         ))}
         {!data.rules.length && (
           <div className="panel-empty">
@@ -300,11 +424,11 @@ export function RulesPanel({
           if (!v) setEditing(null);
         }}
       >
-        <DialogContent className="sm:max-w-[620px]">
+        <DialogContent className="sm:max-w-[620px] sm:max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>编辑过滤规则</DialogTitle>
             <DialogDescription>
-              按账号和条件设置本地整理或服务器文件夹动作，预览后保存。
+              按账号和条件设置「移动到文件夹」或本地动作，预览后保存。
             </DialogDescription>
           </DialogHeader>
           {editing && (
@@ -338,18 +462,25 @@ export function RulesPanel({
                   <SelectField
                     value={editing.accountId}
                     aria-label="规则适用账号"
-                    onValueChange={(value) =>
+                    onValueChange={(value) => {
+                      const changed = value !== editing.accountId;
+                      // 合并动作跟随账号：换账号后重新决定服务器移动还是本地归类
+                      const action =
+                        changed && isMoveAction(editing)
+                          ? serverMoveCapable(value)
+                            ? "serverMove"
+                            : "folder"
+                          : editing.action;
+                      const next = { ...editing, accountId: value, action };
                       setEditing({
-                        ...editing,
-                        accountId: value,
-                        ...(remote(editing)
-                          ? { sourceFolder: "", destination: "" }
-                          : {}),
-                      })
-                    }
+                        ...next,
+                        ...(isRemoteRule(next) ? {} : { sourceFolder: "" }),
+                        ...(changed ? { destination: "" } : {}),
+                      });
+                    }}
                   >
                     <SelectGroup>
-                      <SelectOption value="" disabled={remote(editing)}>
+                      <SelectOption value="" disabled={isRemoteRule(editing)}>
                         全部账号
                       </SelectOption>
                       {data.accounts.map((a) => (
@@ -357,7 +488,7 @@ export function RulesPanel({
                           key={a.id}
                           value={a.id}
                           disabled={
-                            remote(editing) &&
+                            isRemoteRule(editing) &&
                             (!a.enabled ||
                               a.protocol !== "imap" ||
                               a.provider === "gmail")
@@ -418,7 +549,7 @@ export function RulesPanel({
                           <SelectOption
                             key={k}
                             value={k}
-                            disabled={remote(editing) && k === "body"}
+                            disabled={isRemoteRule(editing) && k === "body"}
                           >
                             {v}
                           </SelectOption>
@@ -513,49 +644,79 @@ export function RulesPanel({
               </Button>
               <div className="field">
                 <Label>执行动作</Label>
-                <SelectField
-                  aria-label="规则执行动作"
-                  value={editing.action}
-                  onValueChange={(value) =>
-                    setEditing({
-                      ...editing,
-                      action: value,
-                      destination: "",
-                      sourceFolder: "",
-                    })
-                  }
-                >
-                  <SelectGroup>
-                    {Object.entries(actions).map(([k, v]) => (
-                      <SelectOption key={k} value={k}>
-                        {v}
-                      </SelectOption>
-                    ))}
-                  </SelectGroup>
-                </SelectField>
-              </div>
-              {remote(editing) && (
-                <RuleServerFolders
-                  rule={editing}
-                  account={data.accounts.find(
-                    (a) => a.id === editing.accountId,
-                  )}
-                  onChange={setEditing}
-                />
-              )}
-              {editing.action === "folder" && (
-                <div className="field">
-                  <Label>本地文件夹</Label>
-                  <Input
-                    required
-                    placeholder="例如：项目 / 设计"
-                    value={editing.destination}
-                    onChange={(e) =>
-                      setEditing({ ...editing, destination: e.target.value })
-                    }
-                  />
+                <div className="rule-action-picker">
+                  {ALL_ACTIONS.map(([k, v]) => {
+                    const chosen =
+                      k === "move"
+                        ? isMoveAction(editing)
+                        : ruleActionsDeduped(editing).includes(k);
+                    return (
+                      <Label
+                        key={k}
+                        className="rule-action-option"
+                        htmlFor={`action-${k}`}
+                      >
+                        <Checkbox
+                          id={`action-${k}`}
+                          checked={chosen}
+                          onCheckedChange={(next) => {
+                            const on = next === true;
+                            const action = toggleMergedAction(
+                              editing,
+                              k,
+                              on,
+                              serverMoveCapable(editing.accountId),
+                            );
+                            const updated = { ...editing, action };
+                            // 切换移动或勾选废纸篓会改变移动本身：清掉移动的目标与来源
+                            const clearingMove =
+                              k === "move" || (k === "trash" && on);
+                            setEditing({
+                              ...updated,
+                              ...(isRemoteRule(updated)
+                                ? {}
+                                : { sourceFolder: "" }),
+                              ...(clearingMove ? { destination: "" } : {}),
+                            });
+                          }}
+                        />
+                        <span>{v}</span>
+                      </Label>
+                    );
+                  })}
                 </div>
-              )}
+                <p className="rule-action-hint">
+                  {isMoveAction(editing)
+                    ? isRemoteRule(editing)
+                      ? "「移动到文件夹」通过服务器移动邮件，可搭配标记已读/未读/星标（本机立即生效）；与废纸篓互斥。"
+                      : "本地归类可搭配标记已读/未读/星标；与废纸篓互斥。"
+                    : "本地动作可多选叠加，例如「标记为已读 + 添加星标」。"}
+                </p>
+              </div>
+              {isMoveAction(editing) &&
+                (isRemoteRule(editing) ? (
+                  <RuleServerFolders
+                    rule={editing}
+                    account={data.accounts.find(
+                      (a) => a.id === editing.accountId,
+                    )}
+                    onChange={setEditing}
+                    targetOnly
+                  />
+                ) : (
+                  <div className="field">
+                    <Label>移动到本地文件夹</Label>
+                    {/* 目标列该账号已有的本地文件夹；也可输入新名称，
+                        首次归类时自动创建 */}
+                    <FolderInput
+                      value={editing.destination}
+                      onChange={(value) =>
+                        setEditing({ ...editing, destination: value })
+                      }
+                      folders={data.folders}
+                    />
+                  </div>
+                ))}
               <Label className="switch-label">
                 <Switch
                   checked={editing.stop}
@@ -614,18 +775,12 @@ export function RulesPanel({
                 <Button
                   type="submit"
                   disabled={
-                    remote(editing) &&
-                    (!editing.accountId ||
-                      editing.conditions.some((c) => c.field === "body") ||
-                      !editing.sourceFolder ||
-                      !editing.destination ||
-                      !data.accounts.some(
-                        (a) =>
-                          a.id === editing.accountId &&
-                          a.enabled &&
-                          a.protocol === "imap" &&
-                          a.provider !== "gmail",
-                      ))
+                    !ruleActionsDeduped(editing).length ||
+                    (isMoveAction(editing) && !editing.destination.trim()) ||
+                    (isRemoteRule(editing) &&
+                      (!editing.accountId ||
+                        editing.conditions.some((c) => c.field === "body") ||
+                        !serverMoveCapable(editing.accountId)))
                   }
                 >
                   保存规则
@@ -633,6 +788,55 @@ export function RulesPanel({
               </div>
             </form>
           )}
+        </DialogContent>
+      </Dialog>
+      <Dialog open={exportOpen} onOpenChange={setExportOpen}>
+        <DialogContent className="sm:max-w-[420px]">
+          <DialogHeader>
+            <DialogTitle>导出规则</DialogTitle>
+            <DialogDescription>
+              选择要导出的账号；规则按执行顺序导出，可迁移到其他电脑。
+            </DialogDescription>
+          </DialogHeader>
+          <div className="rule-export-list">
+            {data.accounts.map((a) => (
+              <Label
+                key={a.id}
+                className="rule-action-option"
+                htmlFor={`export-${a.id}`}
+              >
+                <Checkbox
+                  id={`export-${a.id}`}
+                  checked={exportAccounts.includes(a.id)}
+                  onCheckedChange={(next) =>
+                    setExportAccounts((ids) =>
+                      next ? [...ids, a.id] : ids.filter((id) => id !== a.id),
+                    )
+                  }
+                />
+                <span>{a.email}</span>
+              </Label>
+            ))}
+          </div>
+          <Label className="rule-action-option" htmlFor="export-global">
+            <Checkbox
+              id="export-global"
+              checked={exportGlobal}
+              onCheckedChange={(next) => setExportGlobal(next === true)}
+            />
+            <span>包含「全部账号」的通用规则</span>
+          </Label>
+          <div className="dialog-actions">
+            <Button variant="outline" onClick={() => setExportOpen(false)}>
+              取消
+            </Button>
+            <Button
+              disabled={!exportAccounts.length && !exportGlobal}
+              onClick={() => void confirmExport()}
+            >
+              选择位置并导出
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
     </section>

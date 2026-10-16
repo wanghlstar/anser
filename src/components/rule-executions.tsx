@@ -142,7 +142,7 @@ export function RuleExecutions({ onShowTasks }: { onShowTasks: () => void }) {
                     </p>
                     <p className="text-sm text-muted-foreground">
                       {item.accountEmail} ·{" "}
-                      {item.action === "serverMove" ? "移动" : "复制"} ·{" "}
+                      {item.action.includes("serverCopy") ? "复制" : "移动"} ·{" "}
                       {item.source} → {item.target}
                     </p>
                     {item.error && (

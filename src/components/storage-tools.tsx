@@ -284,56 +284,54 @@ export function StorageTools() {
     <div className="storage-tools">
       <div className="storage-tools-col">
         <Card className="settings-tool">
-          <div className="settings-tool-title">
-            <Clock3 size={18} />
-            <h3>后台检查</h3>
-          </div>
-          <div className="settings-tool-row">
-            <div className="settings-tool-selects">
-              <SelectField
-                aria-label="后台检查间隔"
-                value={interval}
+          <h3>系统通知与启动</h3>
+          <div className="settings-tool-switches">
+            <div className="settings-tool-row justify-between">
+              <Label htmlFor="new-mail-notifications">新邮件通知</Label>
+              <Switch
+                id="new-mail-notifications"
+                checked={preferences.newMailNotifications ?? true}
                 disabled={!ready || saving}
-                onValueChange={(value) => setInterval(Number(value))}
-              >
-                {[1, 5, 10, 15, 30, 60].map((n) => (
-                  <SelectOption key={n} value={n}>
-                    每 {n} 分钟
-                  </SelectOption>
-                ))}
-              </SelectField>
-              <SelectField
-                aria-label="延时发送时间"
-                value={countdown}
-                disabled={!ready || saving}
-                onValueChange={(value) => setCountdown(Number(value))}
-              >
-                {SEND_COUNTDOWN_OPTIONS.map((n) => (
-                  <SelectOption key={n} value={n}>
-                    {n ? `延时 ${n} 秒` : "立即发送"}
-                  </SelectOption>
-                ))}
-              </SelectField>
+                onCheckedChange={(enabled) =>
+                  void notifications("newMailNotifications", enabled)
+                }
+              />
             </div>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={
-                !ready ||
-                saving ||
-                (interval === preferences.syncIntervalMinutes &&
-                  countdown === (preferences.sendCountdownSeconds ?? 5))
-              }
-              onClick={() => void save()}
-            >
-              {saving ? "保存中…" : "保存"}
-            </Button>
+            <div className="settings-tool-row justify-between">
+              <Label htmlFor="send-result-notifications">发送结果通知</Label>
+              <Switch
+                id="send-result-notifications"
+                checked={preferences.sendResultNotifications ?? true}
+                disabled={!ready || saving}
+                onCheckedChange={(enabled) =>
+                  void notifications("sendResultNotifications", enabled)
+                }
+              />
+            </div>
+            <div className="settings-tool-row justify-between">
+              <Label htmlFor="auto-start">开机自启</Label>
+              <Switch
+                id="auto-start"
+                checked={desktop?.autoStart || false}
+                disabled={
+                  !desktop ||
+                  desktopBusy ||
+                  (!desktop.autoStartAvailable && !desktop.autoStart)
+                }
+                onCheckedChange={(enabled) => void autoStart(enabled)}
+              />
+            </div>
           </div>
-          <p>IMAP 优先实时收取；此间隔用于定时补查和 POP3。</p>
           <p>
-            延时发送：点「发送邮件」后先收起写信窗口，倒计时结束再发送；
-            期间可继续操作其他功能，也能撤回或立即发送。
+            新邮件和发送结果使用系统通知；首次导入旧邮件不通知，横幅由 macOS
+            设置控制。
           </p>
+          <p>
+            {desktop?.autoStartAvailable === false
+              ? "开发预览依赖前端服务，请在正式应用中开启开机自启。"
+              : "登录 Mac 后自动在后台启动，继续收信和处理定时发送。"}
+          </p>
+          {isDemo() && <p>演示模式不修改系统启动项。</p>}
         </Card>
         <Card className="settings-tool">
           <div className="settings-tool-title">
@@ -386,54 +384,56 @@ export function StorageTools() {
       </div>
       <div className="storage-tools-col">
         <Card className="settings-tool">
-          <h3>系统通知与启动</h3>
-          <div className="settings-tool-switches">
-            <div className="settings-tool-row justify-between">
-              <Label htmlFor="new-mail-notifications">新邮件通知</Label>
-              <Switch
-                id="new-mail-notifications"
-                checked={preferences.newMailNotifications ?? true}
-                disabled={!ready || saving}
-                onCheckedChange={(enabled) =>
-                  void notifications("newMailNotifications", enabled)
-                }
-              />
-            </div>
-            <div className="settings-tool-row justify-between">
-              <Label htmlFor="send-result-notifications">发送结果通知</Label>
-              <Switch
-                id="send-result-notifications"
-                checked={preferences.sendResultNotifications ?? true}
-                disabled={!ready || saving}
-                onCheckedChange={(enabled) =>
-                  void notifications("sendResultNotifications", enabled)
-                }
-              />
-            </div>
-            <div className="settings-tool-row justify-between">
-              <Label htmlFor="auto-start">开机自启</Label>
-              <Switch
-                id="auto-start"
-                checked={desktop?.autoStart || false}
-                disabled={
-                  !desktop ||
-                  desktopBusy ||
-                  (!desktop.autoStartAvailable && !desktop.autoStart)
-                }
-                onCheckedChange={(enabled) => void autoStart(enabled)}
-              />
-            </div>
+          <div className="settings-tool-title">
+            <Clock3 size={18} />
+            <h3>后台检查</h3>
           </div>
+          <div className="settings-tool-row">
+            <div className="settings-tool-selects">
+              <SelectField
+                aria-label="后台检查间隔"
+                value={interval}
+                disabled={!ready || saving}
+                onValueChange={(value) => setInterval(Number(value))}
+              >
+                {[1, 5, 10, 15, 30, 60].map((n) => (
+                  <SelectOption key={n} value={n}>
+                    每 {n} 分钟
+                  </SelectOption>
+                ))}
+              </SelectField>
+              <SelectField
+                aria-label="延时发送时间"
+                value={countdown}
+                disabled={!ready || saving}
+                onValueChange={(value) => setCountdown(Number(value))}
+              >
+                {SEND_COUNTDOWN_OPTIONS.map((n) => (
+                  <SelectOption key={n} value={n}>
+                    {n ? `延时 ${n} 秒` : "立即发送"}
+                  </SelectOption>
+                ))}
+              </SelectField>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={
+                !ready ||
+                saving ||
+                (interval === preferences.syncIntervalMinutes &&
+                  countdown === (preferences.sendCountdownSeconds ?? 5))
+              }
+              onClick={() => void save()}
+            >
+              {saving ? "保存中…" : "保存"}
+            </Button>
+          </div>
+          <p>IMAP 优先实时收取；此间隔用于定时补查和 POP3。</p>
           <p>
-            新邮件和发送结果使用系统通知；首次导入旧邮件不通知，横幅由 macOS
-            设置控制。
+            延时发送：点「发送邮件」后先收起写信窗口，倒计时结束再发送；
+            期间可继续操作其他功能，也能撤回或立即发送。
           </p>
-          <p>
-            {desktop?.autoStartAvailable === false
-              ? "开发预览依赖前端服务，请在正式应用中开启开机自启。"
-              : "登录 Mac 后自动在后台启动，继续收信和处理定时发送。"}
-          </p>
-          {isDemo() && <p>演示模式不修改系统启动项。</p>}
         </Card>
         <Card className="settings-tool">
           <div className="settings-tool-title">

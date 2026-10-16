@@ -3697,3 +3697,104 @@ fn folder_name_encodes_and_decodes_roundtrip() {
     // 纯 ASCII 原样通过（"/"是 IMAP 层级分隔符，由 UI 层拦截）
     assert_eq!(encode_folder_name("PlainName-1"), "PlainName-1");
 }
+
+#[test]
+fn exported_rules_filter_by_account_and_keep_execution_order() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = Store::new(dir.path().into()).unwrap();
+    let a = account();
+    s.save_account(&a).unwrap();
+    let rule = |id: &str, name: &str, account: &str| Rule {
+        id: id.into(),
+        name: name.into(),
+        account_id: account.into(),
+        enabled: true,
+        mode: "all".into(),
+        conditions: vec![Condition {
+            field: "subject".into(),
+            operator: "contains".into(),
+            value: "x".into(),
+        }],
+        action: "folder".into(),
+        destination: "项目".into(),
+        source_folder: String::new(),
+        stop: true,
+    };
+    // 按执行顺序保存：全局 → 账号 A → 账号 B
+    s.save_rules(&[
+        rule("r1", "全局规则", ""),
+        rule("r2", "A 的第一条", &a.id),
+        rule("r3", "B 的第一条", "other"),
+        rule("r4", "A 的第二条", &a.id),
+    ])
+    .unwrap();
+    // 不筛选：全部导出且保持顺序
+    let all = s.export_rules(&[], true).unwrap();
+    assert_eq!(
+        all.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(),
+        vec!["全局规则", "A 的第一条", "B 的第一条", "A 的第二条"]
+    );
+    // 按账号导出：默认带上全局规则，顺序不变
+    let scoped = s.export_rules(std::slice::from_ref(&a.id), true).unwrap();
+    assert_eq!(
+        scoped.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(),
+        vec!["全局规则", "A 的第一条", "A 的第二条"]
+    );
+    // 可以只要该账号的规则
+    let only = s.export_rules(&["other".to_string()], false).unwrap();
+    assert_eq!(
+        only.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(),
+        vec!["B 的第一条"]
+    );
+    // 账号不存在时：带全局就只剩全局规则，不带则为空
+    assert_eq!(
+        s.export_rules(&["missing".to_string()], true)
+            .unwrap()
+            .iter()
+            .map(|r| r.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["全局规则"]
+    );
+    assert!(s.export_rules(&["missing".to_string()], false).unwrap().is_empty());
+}
+
+#[test]
+fn clearing_a_local_folder_returns_its_mail_to_the_default_bucket() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = Store::new(dir.path().into()).unwrap();
+    let a = account();
+    s.save_account(&a).unwrap();
+    s.ingest(&a, "INBOX", "1", &raw(), false).unwrap();
+    s.ingest(&a, "INBOX", "2", &raw2(), false).unwrap();
+    let ids: Vec<String> = s
+        .snapshot(&query())
+        .unwrap()
+        .messages
+        .iter()
+        .map(|m| m.id.clone())
+        .collect();
+    for id in &ids {
+        s.change_mail(id, "folder", "深港日检").unwrap();
+    }
+    assert!(
+        s.snapshot(&query())
+            .unwrap()
+            .folders
+            .contains(&"深港日检".to_string()),
+        "文件夹应出现在侧栏"
+    );
+    // 清空后邮件回到「全部存档」，文件夹随之消失
+    assert_eq!(s.clear_local_folder("深港日检").unwrap(), 2);
+    assert_eq!(s.mail(&ids[0]).unwrap().local_folder, "全部存档");
+    assert!(
+        !s.snapshot(&query())
+            .unwrap()
+            .folders
+            .contains(&"深港日检".to_string()),
+        "清空后不应再列出该文件夹"
+    );
+    // 幂等：再清一次没有邮件可动
+    assert_eq!(s.clear_local_folder("深港日检").unwrap(), 0);
+    // 默认桶本身不可被清空
+    assert_eq!(s.clear_local_folder("全部存档").unwrap(), 0);
+}
