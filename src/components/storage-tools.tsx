@@ -3,7 +3,6 @@ import { useEffect, useState } from "react";
 import {
   Clock3,
   LoaderCircle,
-  ShieldCheck,
   AlertCircle,
   Type,
   HardDrive,
@@ -16,6 +15,7 @@ import type {
   TierLog,
 } from "@/lib/types";
 import { Switch } from "./ui/switch";
+import { Separator } from "./ui/separator";
 import { Label } from "./ui/label";
 import { Card } from "./ui/card";
 import { Button } from "./ui/button";
@@ -33,6 +33,9 @@ function formatArchivedAt(value: string): string {
   return `${pad(at.getMonth() + 1)}-${pad(at.getDate())} ${pad(at.getHours())}:${pad(at.getMinutes())}`;
 }
 
+// 发送倒计时可选档位；0 = 立即发送
+const SEND_COUNTDOWN_OPTIONS = [0, 3, 5, 10];
+
 export function StorageTools() {
   const [preferences, setPreferences] = useState<Preferences>({
       syncIntervalMinutes: 5,
@@ -40,6 +43,7 @@ export function StorageTools() {
       sendResultNotifications: true,
     }),
     [interval, setInterval] = useState(5),
+    [countdown, setCountdown] = useState(5),
     [ready, setReady] = useState(false),
     [scale, setScale] = useState(1),
     [tier, setTier] = useState<TierInfo | null>(null),
@@ -60,6 +64,13 @@ export function StorageTools() {
         if (live) {
           setPreferences(p);
           setInterval(p.syncIntervalMinutes);
+          // 下拉只提供 0/3/5/10；历史值或缺失时回退 8 会匹配不上选项，
+          // 这里统一归到最近的合法档位（5 秒），保证回显不为空。
+          setCountdown(
+            SEND_COUNTDOWN_OPTIONS.includes(p.sendCountdownSeconds ?? 8)
+              ? p.sendCountdownSeconds!
+              : 5,
+          );
           setScale(p.sidebarScale ?? 1);
           setReady(true);
         }
@@ -83,7 +94,11 @@ export function StorageTools() {
   async function save() {
     setSaving(true);
     try {
-      const p = { ...preferences, syncIntervalMinutes: interval };
+      const p = {
+        ...preferences,
+        syncIntervalMinutes: interval,
+        sendCountdownSeconds: countdown,
+      };
       await call("save_preferences", { preferences: p });
       setPreferences(p);
       toast.success("后台检查间隔已更新");
@@ -274,23 +289,40 @@ export function StorageTools() {
             <h3>后台检查</h3>
           </div>
           <div className="settings-tool-row">
-            <SelectField
-              aria-label="后台检查间隔"
-              value={interval}
-              disabled={!ready || saving}
-              onValueChange={(value) => setInterval(Number(value))}
-            >
-              {[1, 5, 10, 15, 30, 60].map((n) => (
-                <SelectOption key={n} value={n}>
-                  每 {n} 分钟
-                </SelectOption>
-              ))}
-            </SelectField>
+            <div className="settings-tool-selects">
+              <SelectField
+                aria-label="后台检查间隔"
+                value={interval}
+                disabled={!ready || saving}
+                onValueChange={(value) => setInterval(Number(value))}
+              >
+                {[1, 5, 10, 15, 30, 60].map((n) => (
+                  <SelectOption key={n} value={n}>
+                    每 {n} 分钟
+                  </SelectOption>
+                ))}
+              </SelectField>
+              <SelectField
+                aria-label="延时发送时间"
+                value={countdown}
+                disabled={!ready || saving}
+                onValueChange={(value) => setCountdown(Number(value))}
+              >
+                {SEND_COUNTDOWN_OPTIONS.map((n) => (
+                  <SelectOption key={n} value={n}>
+                    {n ? `延时 ${n} 秒` : "立即发送"}
+                  </SelectOption>
+                ))}
+              </SelectField>
+            </div>
             <Button
               variant="outline"
               size="sm"
               disabled={
-                !ready || saving || interval === preferences.syncIntervalMinutes
+                !ready ||
+                saving ||
+                (interval === preferences.syncIntervalMinutes &&
+                  countdown === (preferences.sendCountdownSeconds ?? 5))
               }
               onClick={() => void save()}
             >
@@ -298,6 +330,10 @@ export function StorageTools() {
             </Button>
           </div>
           <p>IMAP 优先实时收取；此间隔用于定时补查和 POP3。</p>
+          <p>
+            延时发送：点「发送邮件」后先收起写信窗口，倒计时结束再发送；
+            期间可继续操作其他功能，也能撤回或立即发送。
+          </p>
         </Card>
         <Card className="settings-tool">
           <div className="settings-tool-title">
@@ -346,55 +382,6 @@ export function StorageTools() {
             开启时始终在 Dock
             显示；关闭时仅在打开窗口时显示，关闭或最小化窗口会自动隐藏，菜单栏图标仍可打开主窗口。
           </p>
-        </Card>
-        <Card className="settings-tool">
-          <div className="settings-tool-title">
-            <ShieldCheck size={18} />
-            <h3>存档完整性</h3>
-          </div>
-          <div className="settings-tool-row">
-            <p>
-              {checking
-                ? "正在校验原始邮件与附件…"
-                : health
-                  ? `${health.healthy} / ${health.checked} 封校验通过`
-                  : "校验本地原件及附件的完整性"}
-            </p>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={checking}
-              onClick={() => void check()}
-            >
-              {checking && <LoaderCircle className="animate-spin" size={14} />}
-              校验存档
-            </Button>
-          </div>
-          {isDemo() && <p>演示模式仅展示示例校验结果。</p>}
-          {health && (
-            <>
-              <small>
-                最近校验：
-                {new Date(health.checkedAt).toLocaleString("zh-CN", {
-                  hour12: false,
-                })}
-              </small>
-              {health.problems.length > 0 && (
-                <div className="archive-problems" role="alert">
-                  <p>
-                    <AlertCircle size={14} /> {health.problems.length}{" "}
-                    封需要检查，可从备份恢复
-                  </p>
-                  {health.problems.map((p) => (
-                    <div key={p.mailId}>
-                      <strong>{p.subject || "（无主题）"}</strong>
-                      <span>{p.error}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </>
-          )}
         </Card>
       </div>
       <div className="storage-tools-col">
@@ -510,7 +497,16 @@ export function StorageTools() {
               disabled={tierBusy}
               onClick={() => void normalizeNames()}
             >
-              规范目录名
+              规范目录
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={checking}
+              onClick={() => void check()}
+            >
+              {checking && <LoaderCircle className="animate-spin" size={14} />}
+              校验存档
             </Button>
           </div>
           <p>
@@ -528,6 +524,39 @@ export function StorageTools() {
               !tier.externalReachable &&
               "（外置盘当前未连接）"}
           </p>
+          <Separator className="settings-tool-divider" />
+          <div className="settings-tool-row">
+            <span className="text-sm">
+              {checking
+                ? "正在校验原始邮件与附件…"
+                : health
+                  ? `校验 ${health.healthy} / ${health.checked} 封通过`
+                  : "校验本地原件及附件的完整性"}
+            </span>
+            {health && (
+              <small className="settings-tool-note">
+                最近校验：
+                {new Date(health.checkedAt).toLocaleString("zh-CN", {
+                  hour12: false,
+                })}
+              </small>
+            )}
+          </div>
+          {isDemo() && <p>演示模式仅展示示例校验结果。</p>}
+          {health && health.problems.length > 0 && (
+            <div className="archive-problems" role="alert">
+              <p>
+                <AlertCircle size={14} /> {health.problems.length}{" "}
+                封需要检查，可从备份恢复
+              </p>
+              {health.problems.map((p) => (
+                <div key={p.mailId}>
+                  <strong>{p.subject || "（无主题）"}</strong>
+                  <span>{p.error}</span>
+                </div>
+              ))}
+            </div>
+          )}
           <Collapsible>
             <CollapsibleTrigger asChild>
               <Button variant="ghost" size="sm" className="tier-log-trigger">

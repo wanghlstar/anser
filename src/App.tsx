@@ -129,6 +129,8 @@ import { Toaster, toast } from "sonner";
 import { AccountDialog } from "./components/account-dialog";
 import { RulesPanel } from "./components/rules-panel";
 import { ComposeDialog } from "./components/compose-dialog";
+import { PendingSend } from "./components/pending-send";
+import { DraftsPanel } from "./components/drafts-panel";
 import { ContactsPanel } from "./components/contacts-panel";
 import { OutboxPanel } from "./components/outbox-panel";
 import { StorageTools } from "./components/storage-tools";
@@ -173,6 +175,7 @@ import type {
   LocalArchiveGroup,
 } from "./lib/types";
 import { mailLink } from "./lib/mail-html";
+import { extractOriginalSignature } from "./lib/compose-format";
 import { invoke } from "@tauri-apps/api/core";
 restoreDemo();
 const viewNames: Record<string, string> = {
@@ -280,6 +283,11 @@ export default function App() {
     [contactSeed, setContactSeed] = useState<Address | null>(null),
     [draft, setDraft] = useState<Compose | null>(null),
     [drafts, setDrafts] = useState<Compose[]>([]),
+    // 发送倒计时：写信窗口收起后仍走完，撤回后邮件回到草稿
+    [pendingSend, setPendingSend] = useState<{
+      draft: Compose;
+      seconds: number;
+    } | null>(null),
     [syncing, setSyncing] = useState(false),
     [syncText, setSyncText] = useState(""),
     [loading, setLoading] = useState(true),
@@ -600,15 +608,26 @@ export default function App() {
     };
   }, [refresh]);
   const compose = useCallback(
-    (mail?: Mail, forward = false, all = false, origin?: Detail) => {
+    (
+      mail?: Mail,
+      forward = false,
+      all = false,
+      origin?: Detail,
+      // 账号内视图（草稿箱/文件夹）新建邮件时默认用该账号发件
+      preferredAccountId = "",
+    ) => {
       if (!data.accounts.some((a) => a.enabled)) {
         setAccountDialog(true);
         return;
       }
       const accountId =
-        mail && data.accounts.some((a) => a.id === mail.accountId && a.enabled)
+        (mail && data.accounts.some((a) => a.id === mail.accountId && a.enabled)
           ? mail.accountId
-          : data.accounts.find((a) => a.enabled)!.id;
+          : undefined) ??
+        (preferredAccountId &&
+        data.accounts.some((a) => a.id === preferredAccountId && a.enabled)
+          ? preferredAccountId
+          : data.accounts.find((a) => a.enabled)!.id);
       const d = newDraft(accountId);
       if (mail) {
         const source =
@@ -1155,13 +1174,16 @@ export default function App() {
     setSearch("");
     void refresh();
   }
-  async function showDrafts() {
-    setPage("drafts");
+  async function loadDrafts() {
     try {
       setDrafts(await call<Compose[]>("list_drafts"));
     } catch (e) {
       toast.error(String(e));
     }
+  }
+  async function showDrafts() {
+    setPage("drafts");
+    await loadDrafts();
   }
   async function queueArchives(ids: string[], conversations = false) {
     if (archiving) return;
@@ -1180,6 +1202,36 @@ export default function App() {
       toast.error(String(e));
     } finally {
       setArchiving(false);
+    }
+  }
+  // 自己账号发出的邮件（含服务器已发送副本与本机 SMTP 存档）
+  const own = (m: Mail) =>
+    parseAddresses(m.sender).some(
+      (a) =>
+        a.email.toLowerCase() === m.accountEmail.toLowerCase() ||
+        data.accounts.some(
+          (account) => account.email.toLowerCase() === a.email.toLowerCase(),
+        ),
+    );
+  // 重新编辑已发送邮件：生成新草稿进写信窗口，原邮件不动
+  async function reeditSent(m: Mail) {
+    if (demo) {
+      toast.info("演示模式不重新编辑已发送邮件");
+      return;
+    }
+    if (!native) {
+      toast.info("请在桌面客户端中重新编辑已发送邮件");
+      return;
+    }
+    try {
+      // 原件的签名单独取出按原格式挂回本封，避免被当正文重排、发送时再重复一次
+      setDraft(
+        extractOriginalSignature(
+          await call<Compose>("reedit_sent_mail", { id: m.id }),
+        ),
+      );
+    } catch (e) {
+      toast.error(String(e));
     }
   }
   async function exportMail(m: Mail) {
@@ -1353,6 +1405,11 @@ export default function App() {
   }
   async function openRemoteFolder(accountId: string, folder: string) {
     navigate("remote", accountId, "", folder);
+    // 草稿只存在本机：账号内草稿文件夹直接列本地草稿，不去同步服务器目录
+    if (folderRoles(accountId, folder).includes("drafts")) {
+      await loadDrafts();
+      return;
+    }
     if (
       demo ||
       serverFolders.find(
@@ -1367,6 +1424,9 @@ export default function App() {
       toast.error(String(e));
     }
   }
+  const folderRoles = (accountId: string, folder: string) =>
+    serverFolders.find((f) => f.accountId === accountId && f.name === folder)
+      ?.roles ?? [];
   const activeAccount = data.accounts.find((a) => a.id === query.accountId),
     title = query.remoteFolder
       ? (() => {
@@ -1377,6 +1437,12 @@ export default function App() {
           return folder ? remoteFolderLabel(folder) : query.remoteFolder;
         })()
       : query.folder || activeAccount?.name || viewNames[query.view];
+  // 账号内「草稿」文件夹：显示该账号的本地草稿（雁信草稿只存本机）
+  const draftsFolderView =
+    page === "mail" &&
+    query.view === "remote" &&
+    !!query.remoteFolder &&
+    folderRoles(query.accountId, query.remoteFolder).includes("drafts");
   const unreadTotal = (data.folderUnread ?? []).filter(
     (f) => !query.accountId || f.accountId === query.accountId,
   );
@@ -1407,6 +1473,17 @@ export default function App() {
     : query.view === "all" || query.view === "unread"
       ? scopedUnread.filter(inInboxScope).reduce((sum, f) => sum + f.count, 0)
       : 0;
+  // 已发送与草稿没有「未读」概念：这三处入口都不显示「未读」标签，
+  // 分别是邮件功能区的「已发送」视图、账号内对应服务器文件夹、本地存档对应文件夹。
+  const sentOrDraftsView =
+    query.view === "sent" ||
+    (!!query.remoteFolder &&
+      serverFolders
+        .find(
+          (f) =>
+            f.accountId === query.accountId && f.name === query.remoteFolder,
+        )
+        ?.roles?.some((role) => role === "sent" || role === "drafts"));
   const totalBadge = query.remoteFolder
     ? (scopedTotals[0]?.count ?? 0)
     : query.view === "all" || query.view === "unread"
@@ -1696,9 +1773,21 @@ export default function App() {
                               name,
                             })
                           }
+                          // 已发送与草稿没有「未读」概念，侧栏不显示未读徽标
                           unreadCounts={Object.fromEntries(
                             (data.folderUnread ?? [])
-                              .filter((u) => u.accountId === a.id)
+                              .filter(
+                                (u) =>
+                                  u.accountId === a.id &&
+                                  !serverFolders.some(
+                                    (f) =>
+                                      f.accountId === a.id &&
+                                      f.name === u.folder &&
+                                      f.roles?.some((role) =>
+                                        ["sent", "drafts"].includes(role),
+                                      ),
+                                  ),
+                              )
                               .map((u) => [u.folder, u.count]),
                           )}
                         />
@@ -2191,63 +2280,26 @@ export default function App() {
                 </Button>
               </div>
             </section>
+          ) : draftsFolderView ? (
+            <DraftsPanel
+              drafts={drafts.filter((d) => d.accountId === query.accountId)}
+              title={`${activeAccount?.name || "账号"}草稿箱`}
+              description="雁信的草稿只存在本机，账号内草稿文件夹显示该账号的本地草稿。"
+              onOpen={setDraft}
+              onDeleted={() => void loadDrafts()}
+              onCompose={() =>
+                compose(undefined, false, false, undefined, query.accountId)
+              }
+            />
           ) : page === "drafts" ? (
-            <section className="workspace-panel">
-              <div className="panel-heading">
-                <div>
-                  <span className="eyebrow">TAKE YOUR TIME</span>
-                  <div className="page-title-row">
-                    <SidebarTrigger
-                      title="切换侧边栏"
-                      aria-label="切换侧边栏"
-                    />
-                    <h1>草稿箱</h1>
-                  </div>
-                  <p>草稿自动保存到本机，随时继续。</p>
-                </div>
-                <Button onClick={() => compose()}>
-                  <SquarePen size={16} />
-                  写邮件
-                </Button>
-              </div>
-              {drafts.length ? (
-                drafts.map((d) => (
-                  <article className="draft-card" key={d.id}>
-                    <Button variant="ghost" onClick={() => setDraft(d)}>
-                      <h3>{d.subject || "（无主题）"}</h3>
-                      <p>收件人：{d.to || "尚未填写"}</p>
-                      <small>{d.body.slice(0, 120) || "空白草稿"}</small>
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      title="删除草稿"
-                      onClick={async () => {
-                        if (
-                          await askConfirmation({
-                            title: "删除草稿？",
-                            description: "这份草稿删除后无法恢复。",
-                            action: "删除草稿",
-                            destructive: true,
-                          })
-                        )
-                          void call("delete_draft", { id: d.id })
-                            .then(showDrafts)
-                            .catch((e) => toast.error(String(e)));
-                      }}
-                    >
-                      <Trash2 size={16} />
-                    </Button>
-                  </article>
-                ))
-              ) : (
-                <div className="panel-empty">
-                  <FileText size={36} />
-                  <h3>暂时没有草稿</h3>
-                  <p>每一封没写完的邮件，都会在这里等你。</p>
-                </div>
-              )}
-            </section>
+            <DraftsPanel
+              drafts={drafts}
+              title="草稿箱"
+              description="草稿自动保存到本机，随时继续。"
+              onOpen={setDraft}
+              onDeleted={() => void showDrafts()}
+              onCompose={() => compose()}
+            />
           ) : (
             <MailLayout
               expanded={readerExpanded}
@@ -2451,12 +2503,14 @@ export default function App() {
                             <em className="tab-count">{totalBadge}</em>
                           )}
                         </TabsTrigger>
-                        <TabsTrigger value="unread">
-                          未读
-                          {!!unreadBadge && (
-                            <em className="tab-count">{unreadBadge}</em>
-                          )}
-                        </TabsTrigger>
+                        {!sentOrDraftsView && (
+                          <TabsTrigger value="unread">
+                            未读
+                            {!!unreadBadge && (
+                              <em className="tab-count">{unreadBadge}</em>
+                            )}
+                          </TabsTrigger>
+                        )}
                       </TabsList>
                     </Tabs>
                     <DropdownMenu>
@@ -2542,7 +2596,11 @@ export default function App() {
                       <Button
                         variant="ghost"
                         size="icon-sm"
-                        title="移到本地废纸篓"
+                        title={
+                          query.view === "trash"
+                            ? "从本地废纸篓恢复"
+                            : "移到本地废纸篓"
+                        }
                         onClick={() =>
                           void mutate(
                             checked,
@@ -2552,7 +2610,11 @@ export default function App() {
                           )
                         }
                       >
-                        <Trash2 size={15} />
+                        {query.view === "trash" ? (
+                          <Undo2 size={15} />
+                        ) : (
+                          <Trash2 size={15} />
+                        )}
                       </Button>
                       <Button
                         variant="ghost"
@@ -3029,6 +3091,18 @@ export default function App() {
                               <ArrowRight size={15} />
                               <span className="action-label">转发</span>
                             </Button>
+                            {own(detail.mail) && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                aria-label="重新编辑"
+                                title="修改这封已发送邮件的内容，作为新邮件再次发送"
+                                onClick={() => void reeditSent(detail.mail)}
+                              >
+                                <SquarePen size={15} />
+                                <span className="action-label">重新编辑</span>
+                              </Button>
+                            )}
                             {(["copy", "move"] as const).map((kind) => (
                               <ServerDirectoryMenu
                                 key={kind}
@@ -3269,7 +3343,27 @@ export default function App() {
         onClose={() => setDraft(null)}
         accounts={data.accounts}
         onSent={() => void refresh()}
+        onBackground={(queued, seconds) => {
+          setDraft(null);
+          setPendingSend({ draft: queued, seconds });
+        }}
       />
+      {pendingSend && (
+        <PendingSend
+          draft={pendingSend.draft}
+          seconds={pendingSend.seconds}
+          onDone={() => {
+            setPendingSend(null);
+            void refresh();
+            if (page === "drafts") void showDrafts();
+          }}
+          onCancel={() => {
+            // 撤回只放弃这次发送；邮件已在点发送时存为草稿，从草稿箱继续
+            setPendingSend(null);
+            setDraft(pendingSend.draft);
+          }}
+        />
+      )}
       <Dialog
         open={moveIds.length > 0}
         onOpenChange={(v) => {

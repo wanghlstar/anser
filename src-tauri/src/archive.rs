@@ -308,6 +308,131 @@ pub fn reply_addresses(raw: &[u8]) -> Result<(Vec<Address>, Vec<Address>, Vec<Ad
     }
     Ok((reply, get("To"), get("Cc")))
 }
+/// 直接按原始头部解析地址。`get_value()` 会把 RFC 2047 编码词解码、同时把显示名的
+/// 引号去掉，显示名里带逗号/分号时再按分隔符拆就会拆错；这里只解码编码词、保留引号。
+pub fn header_addresses(raw: &[u8], name: &str) -> Result<Vec<Address>> {
+    let parsed = mailparse::parse_mail(raw).map_err(err)?;
+    let Some(header) = parsed.headers.get_first_header(name) else {
+        return Ok(Vec::new());
+    };
+    let value = String::from_utf8_lossy(header.get_value_raw());
+    // 未加引号的显示名里出现逗号/分号/冒号时，按 MIME 规范补上引号再解析，
+    // 否则会被当成地址分隔符拆成多段（例如「Doe, Alex <a@b.com>」）。
+    // 编码词（=?utf-8?B?…?=）先解码，否则引号补在编码词外面仍解析不出地址。
+    addresses(&quote_bare_display_names(&decode_header_words(&value)))
+}
+/// 给「裸」显示名补引号：只处理 `token <addr>` 这种形态，已加引号或纯地址不动。
+fn quote_bare_display_names(value: &str) -> String {
+    let mut out = String::with_capacity(value.len() + 8);
+    let mut rest = value.trim();
+    let mut first = true;
+    while !rest.is_empty() {
+        if !first {
+            out.push_str(", ");
+        }
+        first = false;
+        // 地址段以 < 收尾；逗号/分号只在 < > 之外才算分隔符
+        let Some(end) = rest.rfind('>') else {
+            out.push_str(rest);
+            break;
+        };
+        let (segment, tail) = rest.split_at(end + 1);
+        out.push_str(&quote_segment(segment.trim()));
+        let trimmed = tail.trim_start();
+        let trimmed = trimmed
+            .strip_prefix(',')
+            .or_else(|| trimmed.strip_prefix(';'))
+            .unwrap_or(trimmed)
+            .trim_start();
+        rest = trimmed;
+    }
+    out
+}
+fn quote_segment(segment: &str) -> String {
+    let Some(open) = segment.find('<') else {
+        return segment.to_string();
+    };
+    let name = segment[..open].trim();
+    if name.is_empty() || name.starts_with('"') {
+        return segment.to_string();
+    }
+    // 显示名里出现地址分隔符或结构字符时才需要引号
+    if !name.chars().any(|c| {
+        matches!(c, ',' | ';' | ':' | '"' | '(' | ')' | '<' | '>' | '@') || c.is_whitespace()
+    }) {
+        return segment.to_string();
+    }
+    format!(
+        "\"{}\" {}",
+        name.replace('\\', "\\\\").replace('"', "\\\""),
+        &segment[open..]
+    )
+}
+/// 只替换 RFC 2047 编码词（=?charset?B/Q?…?=），不动引号与分隔符，
+/// 让 mailparse::addrparse 仍按 MIME quoted-string 规则识别显示名边界。
+fn decode_header_words(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    let mut rest = value;
+    while let Some(start) = rest.find("=?") {
+        let (before, tail) = rest.split_at(start);
+        out.push_str(before);
+        let Some(end) = tail[2..].find("?=") else {
+            out.push_str(tail);
+            return out;
+        };
+        let word = &tail[..end + 4];
+        let mut fields = word[2..word.len() - 2].splitn(3, '?');
+        let decoded = match (fields.next(), fields.next(), fields.next()) {
+            (Some(charset), Some(encoding), Some(payload)) => {
+                match encoding.to_ascii_uppercase().as_str() {
+                    "B" => base64::engine::general_purpose::STANDARD
+                        .decode(payload)
+                        .ok()
+                        .and_then(|bytes| decode_charset(&bytes, charset)),
+                    "Q" => decode_quoted_word(payload, charset),
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
+        match decoded {
+            Some(text) => out.push_str(&text),
+            None => out.push_str(word),
+        }
+        rest = &tail[end + 4..];
+    }
+    out.push_str(rest);
+    out
+}
+fn decode_charset(bytes: &[u8], charset: &str) -> Option<String> {
+    let encoding = encoding_rs::Encoding::for_label(charset.as_bytes())?;
+    Some(
+        encoding
+            .decode_without_bom_handling_and_without_replacement(bytes)?
+            .into_owned(),
+    )
+}
+fn decode_quoted_word(payload: &str, charset: &str) -> Option<String> {
+    let mut bytes = Vec::with_capacity(payload.len());
+    let mut chars = payload.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '_' => bytes.push(b' '),
+            '=' => {
+                let hex: String = chars.clone().take(2).collect();
+                if hex.len() == 2 && hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+                    bytes.push(u8::from_str_radix(&hex, 16).ok()?);
+                    chars.next();
+                    chars.next();
+                } else {
+                    bytes.push(b'=');
+                }
+            }
+            other => bytes.extend(other.to_string().as_bytes()),
+        }
+    }
+    decode_charset(&bytes, charset)
+}
 
 // Use only bracketed, printable IDs; never turn malformed header text into
 // an outgoing header or a subject-based conversation key.

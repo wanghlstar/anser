@@ -243,6 +243,8 @@ export interface Preferences {
   sendResultNotifications?: boolean;
   sidebarScale?: number;
   dockVisible?: boolean;
+  /** 写信「发送邮件」的撤销倒计时秒数；0 = 立即发送 */
+  sendCountdownSeconds?: number;
 }
 export interface TierInfo {
   externalDir: string;

@@ -2,6 +2,25 @@ use crate::{archive, models::*, store::Store};
 use rusqlite::params;
 use std::collections::BTreeMap;
 
+/// 「重新编辑」草稿的收件人回显：带显示名时按 MIME 规范加引号
+fn format_mailbox(address: &Address) -> String {
+    if address.name.is_empty() {
+        address.email.clone()
+    } else {
+        format!("{} <{}>", quote_display_name(&address.name), address.email)
+    }
+}
+fn quote_display_name(name: &str) -> String {
+    let special = |c: char| {
+        c.is_whitespace() || matches!(c, ',' | ':' | ';' | '"' | '(' | ')' | '<' | '>' | '@')
+    };
+    if name.chars().any(special) {
+        format!("\"{}\"", name.replace('\\', "\\\\").replace('"', "\\\""))
+    } else {
+        name.to_string()
+    }
+}
+
 #[derive(Default)]
 pub struct SyncSchedule {
     last_sync: Option<i64>,
@@ -42,6 +61,9 @@ impl Store {
     pub fn save_preferences(&self, p: &Preferences) -> Result<()> {
         if ![1, 5, 10, 15, 30, 60].contains(&p.sync_interval_minutes) {
             return Err("请选择有效的后台检查间隔".into());
+        }
+        if ![0, 3, 5, 10].contains(&p.send_countdown_seconds) {
+            return Err("请选择有效的发送倒计时".into());
         }
         self.db()?.execute("INSERT INTO preferences(key,data) VALUES('sync',?1) ON CONFLICT(key) DO UPDATE SET data=excluded.data",[serde_json::to_string(p).map_err(err)?]).map_err(err)?;
         Ok(())
@@ -209,6 +231,63 @@ impl Store {
             });
         }
         Ok(out)
+    }
+    /// 重新编辑已发送邮件：用存档原件生成新草稿，保留收件人/抄送/主题与附件。
+    /// 重新发送会创建一封新邮件，不会改动原来的已发送记录。
+    pub fn reedit_sent_mail(&self, id: &str) -> Result<Compose> {
+        let mail = self.mail(id)?;
+        let raw = self.message_raw(&mail)?;
+        // 复用 recover_outbox_draft 的附件落盘逻辑（draft-assets/<新草稿 id>/…）
+        let seed = Compose {
+            signature: None,
+            id: uuid::Uuid::new_v4().to_string(),
+            account_id: mail.account_id.clone(),
+            to: String::new(),
+            cc: String::new(),
+            bcc: String::new(),
+            subject: String::new(),
+            body: String::new(),
+            html: String::new(),
+            format: String::new(),
+            source: String::new(),
+            attachments: Vec::new(),
+            in_reply_to: String::new(),
+            reply_anchor_id: String::new(),
+            references: Vec::new(),
+            quote: None,
+            delivery_body: None,
+            delivery_html: None,
+        };
+        let mut draft =
+            self.recover_outbox_draft(&serde_json::to_string(&seed).map_err(err)?, &raw)?;
+        // 正文/HTML 从存档原件重新解析：seed 只有账号，正文必须来自邮件本身
+        let account = self.account_for_mail(&mail);
+        let (parsed, html, _) = archive::parse(&raw, &account, &mail.source_folder)?;
+        draft.body = parsed.body;
+        draft.format = if html.is_empty() {
+            "plain".into()
+        } else {
+            "rich".into()
+        };
+        draft.html = html;
+        draft.subject = mail.subject.clone();
+        // 收件人/抄送取原件头部；密送不存头部，重新发送时按需再填。
+        // 显示名里的逗号/分号必须保留引号，否则会被当成地址分隔符拆错。
+        draft.to = archive::header_addresses(&raw, "To")?
+            .iter()
+            .map(format_mailbox)
+            .collect::<Vec<_>>()
+            .join(", ");
+        draft.cc = archive::header_addresses(&raw, "Cc")?
+            .iter()
+            .map(format_mailbox)
+            .collect::<Vec<_>>()
+            .join(", ");
+        draft.bcc = String::new();
+        // 签名块的拆分交给前端：原件的签名要单独取出、按原格式作为本封签名，
+        // 不能留在正文里被富文本编辑器重排，也不能发送时再追加一次。
+        self.save_draft(&draft)?;
+        Ok(draft)
     }
     pub fn outbox_draft(&self, id: &str, confirm_duplicate: bool) -> Result<Compose> {
         let db = self.db()?;

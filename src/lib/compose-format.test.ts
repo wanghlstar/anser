@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   compileSource,
   composeFormat,
+  extractOriginalSignature,
   hasDraftContent,
   prepareCompose,
   prepareEditorCompose,
@@ -180,6 +181,59 @@ describe("account signatures", () => {
     expect(
       prepareCompose({ ...draft, html: "<p>Authored</p>" }).deliveryHtml,
     ).toContain("&lt;Name&gt;");
+  });
+  it("moves the archived signature out of the body so re-editing keeps it once", () => {
+    const archived =
+      '<html><head></head><body><div style="font-family: 仿宋"><p data-yanxin-greeting="true">您好：</p><p>正文</p><div data-yanxin-signature="true" style="margin-top: 24px"><div style="font-family: 楷体">祝您工作顺利<br>签名</div></div></div></body></html>';
+    const draft = {
+      ...newDraft("a"),
+      body: "您好：\n\n正文\n\n祝您工作顺利\n签名",
+      html: archived,
+      format: "rich" as const,
+    };
+    const split = extractOriginalSignature(draft);
+    // 正文里不再有签名块，签名按原格式单独挂回本封
+    expect(split.html).not.toContain("data-yanxin-signature");
+    expect(split.html).toContain("正文");
+    expect(split.signature?.included).toBe(true);
+    expect(split.signature?.html).toContain("楷体");
+    expect(split.signature?.body).toContain("祝您工作顺利");
+    const result = prepareCompose(split);
+    expect(result.deliveryHtml!.match(/祝您工作顺利/g)).toHaveLength(1);
+    expect(result.deliveryBody!.match(/祝您工作顺利/g)).toHaveLength(1);
+    // 问候语留在正文里，不重复
+    expect(result.deliveryHtml!.match(/您好：/g)).toHaveLength(1);
+  });
+  it("falls back to no signature when the archived mail has none", () => {
+    const split = extractOriginalSignature({
+      ...newDraft("a"),
+      body: "正文",
+      html: "<p>正文</p>",
+      format: "rich" as const,
+    });
+    expect(split.signature?.included).toBe(false);
+    expect(prepareCompose(split).deliveryBody).toBe("正文");
+  });
+  it("does not append a second signature when re-editing a sent mail", () => {
+    // 重新编辑冻结的草稿：正文 HTML 里已含当时发出的签名，快照标记「不使用签名」，
+    // 发送时只能保留原件里的那一次，不能再追加。
+    const draft = {
+      ...newDraft("a"),
+      body: "正文\n\n祝您工作顺利",
+      html: '<p>正文</p><div data-yanxin-signature="true">祝您工作顺利</div>',
+      format: "rich" as const,
+      signature: {
+        accountId: "a",
+        included: false,
+        greeting: "",
+        greetingHtml: "",
+        body: "祝您工作顺利",
+        html: "<div>祝您工作顺利</div>",
+      },
+    };
+    const result = prepareCompose(draft);
+    expect(result.deliveryHtml!.match(/祝您工作顺利/g)).toHaveLength(1);
+    expect(result.deliveryBody!.match(/祝您工作顺利/g)).toHaveLength(1);
   });
   it("sends the greeting before the body and the signature after it", () => {
     const editor = {

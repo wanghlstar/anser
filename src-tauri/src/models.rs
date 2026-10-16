@@ -160,6 +160,7 @@ pub struct Rule {
     pub source_folder: String,
     pub stop: bool,
 }
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Query {
@@ -333,6 +334,12 @@ pub struct Preferences {
     /// 是否在 Dock 显示图标；false 时仅保留菜单栏图标
     #[serde(default = "default_true")]
     pub dock_visible: bool,
+    /// 写信「发送邮件」的撤销倒计时秒数；0 = 立即发送，无倒计时
+    #[serde(default = "default_send_countdown_seconds")]
+    pub send_countdown_seconds: u32,
+}
+fn default_send_countdown_seconds() -> u32 {
+    5
 }
 fn default_retention_days() -> u32 {
     30
@@ -395,6 +402,7 @@ impl Default for Preferences {
             archive_retention_days: 30,
             archive_index_enabled: true,
             dock_visible: true,
+            send_countdown_seconds: 5,
         }
     }
 }
