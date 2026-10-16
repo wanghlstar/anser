@@ -74,6 +74,7 @@ import {
   List,
   Paperclip,
   Plus,
+  Printer,
   RefreshCw,
   Reply,
   ReplyAll,
@@ -193,6 +194,7 @@ import type {
   LocalArchiveGroup,
 } from "./lib/types";
 import { mailLink } from "./lib/mail-html";
+import { printMail } from "./lib/mail-print";
 import { extractOriginalSignature } from "./lib/compose-format";
 import { invoke } from "@tauri-apps/api/core";
 restoreDemo();
@@ -3442,6 +3444,19 @@ export default function App() {
                                 />
                               </Button>
                             </MailActionTooltip>
+                            <Button
+                              variant="ghost"
+                              size="icon-sm"
+                              title="打印这封邮件"
+                              aria-label="打印这封邮件"
+                              onClick={() =>
+                                void printMail(detail).catch((error) =>
+                                  toast.error(`打印失败：${String(error)}`),
+                                )
+                              }
+                            >
+                              <Printer size={17} />
+                            </Button>
                             <Button
                               variant="ghost"
                               size="icon-sm"
