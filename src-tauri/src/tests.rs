@@ -3053,7 +3053,8 @@ fn local_archive_tree_groups_saved_mail_by_account_and_folder() {
     assert_eq!(tree[0].account_email, a.email);
     let folders: Vec<&str> = tree[0].folders.iter().map(|f| f.name.as_str()).collect();
     assert!(folders.contains(&"INBOX"));
-    assert!(folders.contains(&"Sent"));
+    // 本地存档不含已发送副本
+    assert!(!folders.contains(&"Sent"));
     let inbox = tree[0].folders.iter().find(|f| f.name == "INBOX").unwrap();
     assert_eq!(inbox.count, 2);
 }
@@ -3954,4 +3955,43 @@ fn outbox_records_delete_only_terminated_ones_and_clear_keeps_retryable_ones() {
     assert_eq!(s.clear_sent_outbox().unwrap(), 1);
     assert_eq!(s.outbox().unwrap().len(), 1);
     assert_eq!(s.outbox().unwrap()[0].status, "failed");
+}
+
+#[test]
+fn local_archive_excludes_sent_copies_but_keeps_received_copies() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = Store::new(dir.path().into()).unwrap();
+    let a = account();
+    s.save_account(&a).unwrap();
+    s.save_remote_folders(
+        &a.id,
+        &[
+            mapping_folder(&a, "INBOX", vec![FolderRole::Inbox]),
+            mapping_folder(&a, "已发送", vec![FolderRole::Sent]),
+        ],
+    )
+    .unwrap();
+    for (subject, folder) in [
+        ("received-one", "INBOX"),
+        ("sent-one", "已发送"),
+        ("sent-legacy", "Sent"),
+    ] {
+        let raw = format!("From: test@example.com\r\nSubject: {subject}\r\n\r\nbody");
+        s.ingest(&a, folder, subject, raw.as_bytes(), false).unwrap();
+    }
+    let mut q = query();
+    q.view = "archive".into();
+    q.list_mode = ListMode::Messages;
+    let mut subjects: Vec<_> = s
+        .snapshot(&q)
+        .unwrap()
+        .messages
+        .into_iter()
+        .map(|m| m.subject)
+        .collect();
+    subjects.sort_unstable();
+    assert_eq!(subjects, vec!["received-one".to_string()]);
+    let tree = s.local_archive_tree().unwrap();
+    let folders: Vec<&str> = tree[0].folders.iter().map(|f| f.name.as_str()).collect();
+    assert_eq!(folders, vec!["INBOX"]);
 }

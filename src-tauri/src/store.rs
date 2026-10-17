@@ -766,6 +766,7 @@ impl Store {
                  WHERE s.folder<>'' AND COALESCE(json_extract(m.data,'$.savedLocally'),1)=1
                        AND COALESCE(json_extract(m.data,'$.trashed'),0)=0
                        AND (s.active=1 OR NOT EXISTS(SELECT 1 FROM trusted_sources x WHERE x.mail_id=m.id AND x.active=1))
+                       AND NOT (EXISTS(SELECT 1 FROM remote_folders fx WHERE fx.account_id=m.account_id AND fx.name=s.folder AND EXISTS(SELECT 1 FROM json_each(fx.data,'$.roles') WHERE value='sent')) OR (s.folder='Sent' AND NOT EXISTS(SELECT 1 FROM remote_folders fy WHERE fy.account_id=m.account_id AND fy.name='Sent')))
                  GROUP BY m.account_id, s.folder",
             )
             .map_err(err)?;

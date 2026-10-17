@@ -205,6 +205,7 @@ const viewNames: Record<string, string> = {
   sent: "已发送",
   trash: "本地废纸篓",
   local: "本地存档",
+  archive: "本地存档",
 };
 function time(s: string) {
   const d = new Date(s);
@@ -2173,14 +2174,14 @@ export default function App() {
                   variant="ghost"
                   className={`nav-item ${
                     page === "mail" &&
-                    query.view === "local" &&
+                    query.view === "archive" &&
                     !query.accountId &&
                     !query.folder
                       ? "active"
                       : ""
                   }`}
                   onClick={() => {
-                    navigate("local");
+                    navigate("archive");
                     // 整体隐藏/显示账号组；各账号内文件夹的展开状态保持不变
                     setArchiveTreeHidden((v) => !v);
                   }}
@@ -2250,7 +2251,7 @@ export default function App() {
                               ? query.view === "remote" &&
                                 query.accountId === group.accountId &&
                                 query.remoteFolder === f.name
-                              : query.view === "local" &&
+                              : query.view === "archive" &&
                                 query.accountId === group.accountId &&
                                 query.remoteFolder === f.name;
                             return (
@@ -2265,7 +2266,7 @@ export default function App() {
                                         f.name,
                                       )
                                     : navigate(
-                                        "local",
+                                        "archive",
                                         group.accountId,
                                         "",
                                         f.name,
@@ -2291,7 +2292,7 @@ export default function App() {
                     <Button
                       variant="ghost"
                       className={`nav-item folder-item ${query.folder === f && page === "mail" ? "active" : ""}`}
-                      onClick={() => navigate("local", "", f)}
+                      onClick={() => navigate("archive", "", f)}
                     >
                       <Folder size={16} />
                       <span>{f}</span>
