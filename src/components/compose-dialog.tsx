@@ -2,7 +2,7 @@ import { useConfirmation } from "@/hooks/use-confirmation";
 import { MailContent } from "./mail-content";
 import { Switch } from "./ui/switch";
 import { Label } from "./ui/label";
-import { Alert, AlertDescription } from "./ui/alert";
+import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
 import { Checkbox } from "./ui/checkbox";
 import {
   FieldSet,
@@ -33,6 +33,7 @@ import {
   Eye,
   Code2,
   FileUp,
+  AlertCircle,
 } from "lucide-react";
 import {
   Dialog,
@@ -947,12 +948,27 @@ export function ComposeDialog({
                 </section>
               )}
               {value.forwardSource && (
-                <Alert className="mx-4 w-auto">
-                  <FileUp />
+                <Alert
+                  variant={forwardError ? "destructive" : "default"}
+                  className="mx-4 w-auto"
+                >
+                  {forwardError ? (
+                    <AlertCircle />
+                  ) : (
+                    <FileUp className="animate-pulse" />
+                  )}
+                  <AlertTitle>
+                    {forwardLoading
+                      ? "正在准备原邮件附件，暂时不能发送"
+                      : forwardError
+                        ? "原附件准备失败，暂时不能发送"
+                        : "等待准备原邮件附件，暂时不能发送"}
+                  </AlertTitle>
                   <AlertDescription>
                     {forwardLoading
-                      ? "正在准备原邮件附件，原件保持不变…"
-                      : forwardError || "等待准备原邮件附件"}
+                      ? "附件副本正在后台读取，原件保持不变。准备完成后会自动继续。"
+                      : forwardError ||
+                        "可以重试准备，或选择不携带原附件直接发送。"}
                     <div className="flex flex-wrap gap-2">
                       {!forwardLoading && (
                         <Button
