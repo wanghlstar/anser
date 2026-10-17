@@ -97,9 +97,28 @@ f883e9e fix: 自寄邮件菜单/通知、废纸篓隐藏、重新编辑原状、
 8785852 feat: 打印面板中文化、通知横幅、写信拖拽/粘贴附件、阅读器图片复制保存
 222ab9e fix: 废纸篓/彻底删除按当前文件夹独立，不再牵连同 Message-ID 的其他副本
 8f8e94b fix: 待确认删除的邮件标记按视图作用域清理，废纸篓不再闪回
+---- 上游 v0.1.19 附件体系 + 富文本编辑器 ----
+ff76ee4 feat: 移植上游草稿自有附件体系（后端）
+        compose_files.rs + Compose.forwardSource/forwardFiles + Detail.originalHash；
+        clear_drafts / open|close_compose_session / prepare_forward_files / read_body_images；
+        发送与定时发送走 build_prepared_message；定时取消/重新编辑恢复附件选择。
+c8b3b38 feat: 移植上游富文本写信编辑器（前端）
+        rich-extensions/rich-body/rich-image-size + rich-toolbar/rich-search/
+        rich-image-controls/rich-editor-boundary；保留 GreetingParagraph/BodyIndent、
+        fonts.ts 仿宋 14pt 默认；转发改走 forwardSource，extract_attachments 已删除。
 ```
 
 门禁基线（`8f8e94b`）：Rust 325 passed / 1 ignored、Vitest 385 passed (50 files)、tsc、prettier、check:ui、test:desktop 18、build 全绿。装机 PID `66677`（2026-10-17 夜）。
+
+门禁基线（`c8b3b38`）：Rust 338 passed / 1 ignored、Vitest 378 passed (49 files)、tsc、prettier、check:ui、test:desktop 18、build 全绿。
+
+手动验证（`c8b3b38`，`npm run desktop` 开发预览）：问候语顶格 + 首行缩进真实全角空格、签名预览、字体下拉默认「仿宋」/字号默认「14pt」、草稿关闭重开后问候语与正文原样载入、回车新段落自动补缩进、字体下拉可选中楷体等。
+
+## 下一步（第③④步，用户已授权实收发）
+
+1. 装机到 `/Applications/雁信.app`，用户用腾讯企业邮箱 ↔ QQ 邮箱互发，主题「雁信联调」。
+2. 验证项：SMTP 接受、实际收取、正文图片内联（cid）、转发带原附件副本（`forwardFiles` 勾选/取消）、重新编辑已发送邮件的附件恢复。
+3. 全量门禁 + 装机 + 更新本文件与开发记录。
 
 ## 遗留 / 待办（非本轮）
 

@@ -1,5 +1,5 @@
 use crate::{archive, models::*, store::Store};
-use rusqlite::params;
+use rusqlite::{params, OptionalExtension};
 use std::collections::BTreeMap;
 
 /// 「重新编辑」草稿的收件人回显：带显示名时按 MIME 规范加引号
@@ -344,5 +344,56 @@ impl Store {
             .execute("DELETE FROM drafts WHERE id=?1", [id])
             .map_err(err)?;
         Ok(())
+    }
+    /// 删除单条发送记录：仅限已终结的记录（发送中/待发送仍要保留，可取消或重发）。
+    /// 已归档到本地存档的邮件不受影响，删的只是回执。
+    pub fn delete_outbox(&self, id: &str) -> Result<()> {
+        let mut db = self.db()?;
+        let tx = db
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(err)?;
+        let status: Option<String> = tx
+            .query_row("SELECT status FROM outbox WHERE id=?1", [id], |r| {
+                r.get(0)
+            })
+            .optional()
+            .map_err(err)?;
+        let Some(status) = status else {
+            return Err("发送记录不存在或已删除，请刷新后重试".into());
+        };
+        if matches!(
+            status.as_str(),
+            "sending" | "scheduled" | "overdue" | "paused"
+        ) {
+            return Err("这封邮件还在发送流程中，请先取消计划或等待结果".into());
+        }
+        tx.execute("DELETE FROM outbox WHERE id=?1", [id])
+            .map_err(err)?;
+        tx.execute("DELETE FROM sent_uploads WHERE id=?1", [id])
+            .map_err(err)?;
+        tx.commit().map_err(err)
+    }
+    /// 清空「发送成功」记录：失败/未确认/进行中的保留，仍可编辑重发。
+    /// 已归档的本地邮件副本不受影响。
+    pub fn clear_sent_outbox(&self) -> Result<usize> {
+        let mut db = self.db()?;
+        let tx = db
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(err)?;
+        let ids = tx
+            .prepare("SELECT id FROM outbox WHERE status='sent'")
+            .map_err(err)?
+            .query_map([], |r| r.get::<_, String>(0))
+            .map_err(err)?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(err)?;
+        for id in &ids {
+            tx.execute("DELETE FROM sent_uploads WHERE id=?1", [id])
+                .map_err(err)?;
+        }
+        tx.execute("DELETE FROM outbox WHERE status='sent'", [])
+            .map_err(err)?;
+        tx.commit().map_err(err)?;
+        Ok(ids.len())
     }
 }

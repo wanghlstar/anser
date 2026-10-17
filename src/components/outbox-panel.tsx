@@ -7,6 +7,7 @@ import {
   CheckCircle2,
   LoaderCircle,
   Clock3,
+  Trash2,
 } from "lucide-react";
 import type { Compose, OutboxRecord } from "@/lib/types";
 import { call } from "@/lib/api";
@@ -153,6 +154,54 @@ export function OutboxPanel({
       setBusy("");
     }
   }
+  // 已发送记录可以删：本地邮件副本、服务器已发送邮件都不受影响，删的只是这条回执。
+  async function remove(record: OutboxRecord) {
+    if (
+      !(await askConfirmation({
+        title: "删除这条发送记录？",
+        description: `「${record.draft.subject || "（无主题）"}」的发送回执会从记录中移除，本地和服务器上已保存的邮件副本不受影响。`,
+        action: "删除记录",
+        destructive: true,
+      }))
+    )
+      return;
+    setBusy(record.id);
+    try {
+      await call("delete_outbox", { id: record.id });
+      await refresh();
+      toast.success("发送记录已删除");
+    } catch (e) {
+      toast.error(String(e));
+    } finally {
+      setBusy("");
+    }
+  }
+  async function clearSent() {
+    const sent = records.filter((r) => r.status === "sent");
+    if (!sent.length) {
+      toast.info("没有发送成功的记录可清空");
+      return;
+    }
+    if (
+      !(await askConfirmation({
+        title: "清空发送成功的记录？",
+        description: `将移除 ${sent.length} 条「发送成功」的回执，本地和服务器上已保存的邮件副本不受影响；失败与结果未确认的记录会保留，仍可编辑重发。`,
+        action: "清空",
+        destructive: true,
+      }))
+    )
+      return;
+    setBusy("all");
+    try {
+      const deleted = await call<number>("clear_sent_outbox");
+      await refresh();
+      toast.success(`已清空 ${deleted} 条发送记录`);
+    } catch (e) {
+      toast.error(String(e));
+    } finally {
+      setBusy("");
+    }
+  }
   return (
     <section className="workspace-panel">
       <div className="panel-heading">
@@ -163,10 +212,20 @@ export function OutboxPanel({
           </div>
           <p>查看发送成功、失败和结果未确认的回执</p>
         </div>
-        <Button variant="outline" onClick={() => void refresh()}>
-          <RefreshCw size={15} />
-          刷新
-        </Button>
+        <div className="panel-heading-actions">
+          <Button
+            variant="outline"
+            disabled={!!busy}
+            onClick={() => void clearSent()}
+          >
+            <Trash2 size={15} />
+            清空
+          </Button>
+          <Button variant="outline" onClick={() => void refresh()}>
+            <RefreshCw size={15} />
+            刷新
+          </Button>
+        </div>
       </div>
       <div className="outbox-list">
         {records.map((r) => (
@@ -351,6 +410,19 @@ export function OutboxPanel({
                     onClick={() => void archive(r)}
                   >
                     恢复本地副本
+                  </Button>
+                )}
+                {["sent", "failed", "uncertain", "cancelled"].includes(
+                  r.status,
+                ) && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={!!busy}
+                    onClick={() => void remove(r)}
+                  >
+                    <Trash2 size={13} />
+                    删除记录
                   </Button>
                 )}
               </div>

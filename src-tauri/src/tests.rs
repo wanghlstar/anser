@@ -1,4 +1,5 @@
 use crate::{archive, models::*, rules, store::Store};
+use chrono::Utc;
 
 #[test]
 fn activity_displays_decoded_folders_in_existing_and_new_logs_without_changing_wire_names() {
@@ -3888,4 +3889,69 @@ fn clearing_a_local_folder_returns_its_mail_to_the_default_bucket() {
     assert_eq!(s.clear_local_folder("深港日检").unwrap(), 0);
     // 默认桶本身不可被清空
     assert_eq!(s.clear_local_folder("全部存档").unwrap(), 0);
+}
+
+#[test]
+fn outbox_records_delete_only_terminated_ones_and_clear_keeps_retryable_ones() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = Store::new(dir.path().into()).unwrap();
+    let a = account();
+    s.save_account(&a).unwrap();
+    let now = Utc::now() + chrono::Duration::hours(2);
+    let at = (now + chrono::Duration::minutes(1)).to_rfc3339();
+    let mut d = draft();
+    let raw = crate::network::build_message(&a, &d).unwrap().formatted();
+    d.id = "sent-one".into();
+    s.schedule_mail(&d, &raw, &at, now).unwrap();
+    s.db()
+        .unwrap()
+        .execute("UPDATE outbox SET status='sending' WHERE id=?1", [&d.id])
+        .unwrap();
+    s.finish_send(&d.id, "sent", "").unwrap();
+    let mut failed = draft();
+    failed.id = "failed-one".into();
+    failed.subject = "Failed".into();
+    let raw = crate::network::build_message(&a, &failed).unwrap().formatted();
+    s.schedule_mail(&failed, &raw, &at, now).unwrap();
+    s.db()
+        .unwrap()
+        .execute("UPDATE outbox SET status='sending' WHERE id=?1", [&failed.id])
+        .unwrap();
+    s.finish_send(&failed.id, "failed", "smtp rejected").unwrap();
+    s.db()
+        .unwrap()
+        .execute(
+            "INSERT INTO sent_uploads(id,account_id,identity,content_hash,message_id,target,validity,uid,status,error,next_attempt,origin) VALUES(?1,?2,?3,?4,'','',0,NULL,'queued','',0,'')",
+            rusqlite::params![d.id, a.id, crate::operations::identity(&a), "hash"],
+        )
+        .unwrap();
+    assert!(s.delete_outbox(&d.id).is_ok());
+    assert!(s.delete_outbox(&d.id).is_err());
+    assert_eq!(s.outbox().unwrap().len(), 1);
+    assert!(s.sent_upload(&d.id).unwrap().is_none());
+    let mut scheduled = draft();
+    scheduled.id = "scheduled-one".into();
+    let raw = crate::network::build_message(&a, &scheduled).unwrap().formatted();
+    s.schedule_mail(&scheduled, &raw, &at, now).unwrap();
+    assert!(s.delete_outbox("scheduled-one").is_err());
+    assert_eq!(s.clear_sent_outbox().unwrap(), 0);
+    assert_eq!(s.outbox().unwrap().len(), 2);
+    s.db()
+        .unwrap()
+        .execute(
+            "UPDATE outbox SET status='sending' WHERE id IN ('scheduled-one','failed-one')",
+            [],
+        )
+        .unwrap();
+    s.finish_send("scheduled-one", "sent", "").unwrap();
+    s.finish_send("failed-one", "failed", "").unwrap();
+    let statuses = s.outbox().unwrap();
+    assert_eq!(
+        statuses.iter().map(|r| r.status.clone()).collect::<Vec<_>>(),
+        vec!["sent".to_string(), "failed".to_string()],
+        "一条发送成功、一条仍失败"
+    );
+    assert_eq!(s.clear_sent_outbox().unwrap(), 1);
+    assert_eq!(s.outbox().unwrap().len(), 1);
+    assert_eq!(s.outbox().unwrap()[0].status, "failed");
 }

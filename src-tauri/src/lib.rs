@@ -555,6 +555,22 @@ async fn archive_outbox(state: tauri::State<'_, AppState>, id: String) -> Result
         .await
         .map_err(err)?
 }
+/// 删除单条发送记录：仅限已终结记录；本地已发送邮件副本不受影响。
+#[tauri::command]
+async fn delete_outbox(state: tauri::State<'_, AppState>, id: String) -> Result<()> {
+    let store = state.store.clone();
+    tauri::async_runtime::spawn_blocking(move || store.delete_outbox(&id))
+        .await
+        .map_err(err)?
+}
+/// 清空「发送成功」记录；失败/未确认/进行中的记录保留。
+#[tauri::command]
+async fn clear_sent_outbox(state: tauri::State<'_, AppState>) -> Result<usize> {
+    let store = state.store.clone();
+    tauri::async_runtime::spawn_blocking(move || store.clear_sent_outbox())
+        .await
+        .map_err(err)?
+}
 #[tauri::command]
 fn get_preferences(state: tauri::State<AppState>) -> Result<Preferences> {
     state.store.preferences()
@@ -2212,6 +2228,8 @@ pub fn run() {
             retry_outbox,
             reedit_sent_mail,
             archive_outbox,
+            delete_outbox,
+            clear_sent_outbox,
             get_preferences,
             save_preferences,
             toggle_do_not_disturb,

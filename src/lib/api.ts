@@ -537,6 +537,35 @@ export async function call<T = void>(
       case "list_outbox":
         result = JSON.parse(localStorage.getItem(key + "-outbox") || "[]");
         break;
+      case "delete_outbox": {
+        const records = JSON.parse(
+          localStorage.getItem(key + "-outbox") || "[]",
+        ) as OutboxRecord[];
+        const target = records.find((r) => r.id === args.id);
+        if (!target) throw new Error("发送记录不存在或已删除，请刷新后重试");
+        if (
+          ["sending", "scheduled", "overdue", "paused"].includes(target.status)
+        )
+          throw new Error("这封邮件还在发送流程中，请先取消计划或等待结果");
+        localStorage.setItem(
+          key + "-outbox",
+          JSON.stringify(records.filter((r) => r.id !== args.id)),
+        );
+        break;
+      }
+      case "clear_sent_outbox": {
+        const records = JSON.parse(
+          localStorage.getItem(key + "-outbox") || "[]",
+        ) as OutboxRecord[];
+        let deleted = 0;
+        for (const record of records) if (record.status === "sent") deleted++;
+        localStorage.setItem(
+          key + "-outbox",
+          JSON.stringify(records.filter((r) => r.status !== "sent")),
+        );
+        result = deleted;
+        break;
+      }
       case "schedule_mail": {
         const draft = args.draft as Compose;
         if (
@@ -849,6 +878,8 @@ export async function call<T = void>(
         "list_contacts",
         "get_preferences",
         "list_outbox",
+        "delete_outbox",
+        "clear_sent_outbox",
         "server_operations",
         "folder_health",
         "directory_operations",

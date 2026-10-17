@@ -113,7 +113,9 @@ it("queues legacy accepted records explicitly and retries only pre-submission fa
     id: "blocked",
     action: "retry",
   });
-  expect(card("preparing").querySelectorAll("button")).toHaveLength(0);
+  // 已发送记录可删除：不再有服务器副本操作，只剩删除记录
+  const buttons = [...card("preparing").querySelectorAll("button")];
+  expect(buttons.map((b) => b.textContent?.trim())).toEqual(["删除记录"]);
 });
 it("offers read-only verification for a rejected bound copy and never resends SMTP", async () => {
   records.push({
@@ -148,4 +150,42 @@ it("offers read-only verification for a rejected bound copy and never resends SM
         ([cmd]) => cmd === "send_mail" || cmd === "retry_outbox",
       ),
   ).toBe(false);
+});
+it("clears only successful records and deletes one record after confirmation", async () => {
+  await render();
+  const calls = vi.spyOn(api, "call");
+  await act(async () => {
+    (
+      [...document.querySelectorAll(".panel-heading-actions button")].find(
+        (b) => b.textContent?.trim() === "清空",
+      ) as HTMLElement
+    ).click();
+  });
+  const confirm = [
+    ...document.querySelectorAll('[role="alertdialog"] button'),
+  ].find((b) => b.textContent === "清空");
+  expect(confirm).toBeTruthy();
+  await act(async () => (confirm as HTMLElement).click());
+  expect(calls).toHaveBeenCalledWith("clear_sent_outbox");
+  // 单条删除：失败记录同样给删除入口（已终结），并走 delete_outbox
+  await act(async () => {
+    (
+      [
+        ...document
+          .querySelectorAll(".outbox-card")[0]
+          .querySelectorAll("button"),
+      ].find((b) => b.textContent?.trim() === "删除记录") as HTMLElement
+    ).click();
+  });
+  const again = [
+    ...document.querySelectorAll('[role="alertdialog"] button'),
+  ].find((b) => b.textContent === "删除记录");
+  expect(again).toBeTruthy();
+  await act(async () => (again as HTMLElement).click());
+  expect(
+    calls.mock.calls.some(([command]) => command === "delete_outbox"),
+  ).toBe(true);
+  expect(calls.mock.calls.some(([command]) => command === "send_mail")).toBe(
+    false,
+  );
 });
