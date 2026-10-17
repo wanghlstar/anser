@@ -21,7 +21,8 @@ import type { Editor } from "@tiptap/core";
 import { richExtensions } from "@/lib/rich-extensions";
 import { RichToolbar } from "./rich-toolbar";
 import { RichImageControls } from "./rich-image-controls";
-import type { Transaction } from "@tiptap/pm/state";
+import { RichImageZoom } from "./rich-image-zoom";
+import { NodeSelection, type Transaction } from "@tiptap/pm/state";
 import DOMPurify from "dompurify";
 import { Button } from "./ui/button";
 import { textToHtml } from "@/lib/compose-format";
@@ -123,6 +124,16 @@ export function RichEditor({
         return false;
       },
       transformPastedHTML: (html) => DOMPurify.sanitize(html),
+      // 点图片即选中（Foxmail 同款）：随后出现 − % + 缩放浮条。
+      handleClickOn: (view, _pos, node, nodePos) => {
+        if (node.type.name !== "image") return false;
+        view.dispatch(
+          view.state.tr.setSelection(
+            NodeSelection.create(view.state.doc, nodePos),
+          ),
+        );
+        return true;
+      },
       handlePaste: (_view, event) => {
         const files = [...(event.clipboardData?.files || [])].filter((file) =>
           file.type.startsWith("image/"),
@@ -341,6 +352,7 @@ export function RichEditor({
           extras={toolbarExtras}
         />
         <RichImageControls editor={editor} disabled={disabled || imageBusy} />
+        <RichImageZoom editor={editor} disabled={disabled || imageBusy} />
         <Dialog
           open={!!linkDialog}
           onOpenChange={(open) => {

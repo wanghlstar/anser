@@ -4,10 +4,24 @@ import { act } from "react";
 import { beforeEach, afterEach, it, expect, vi } from "vitest";
 import { RichEditor } from "./rich-editor";
 import { FONT_OPTIONS } from "@/lib/fonts";
+import type { Editor } from "@tiptap/core";
 import { toast } from "sonner";
 const mode = vi.hoisted(() => ({ demo: false }));
 vi.mock("@/lib/api", () => ({ native: true, isDemo: () => mode.demo }));
 vi.mock("sonner", () => ({ toast: { error: vi.fn(), info: vi.fn() } }));
+// 暴露 editor 实例，用于断言图片缩放浮条的节点操作。
+const captured = vi.hoisted(() => ({ editor: null as unknown }));
+vi.mock("@tiptap/react", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@tiptap/react")>();
+  return {
+    ...actual,
+    useEditor: (options: Parameters<typeof actual.useEditor>[0]) => {
+      const editor = actual.useEditor(options);
+      captured.editor = editor;
+      return editor;
+    },
+  };
+});
 const picker = vi.hoisted(() => ({ open: vi.fn() }));
 vi.mock("@tauri-apps/plugin-dialog", () => picker);
 const png =
@@ -419,4 +433,53 @@ it("registers copied files as attachments instead of inserting them into the bod
   expect(attach).toHaveBeenCalledWith(["/tmp/contract.pdf"]);
   expect(change).not.toHaveBeenCalled();
   expect(document.querySelector(".rich-body img[src]")).toBeNull();
+});
+
+it("shows a − % + zoom bar for the selected image and resizes in 25% steps", async () => {
+  Object.defineProperty(HTMLImageElement.prototype, "naturalWidth", {
+    configurable: true,
+    get: () => 800,
+  });
+  Object.defineProperty(HTMLImageElement.prototype, "naturalHeight", {
+    configurable: true,
+    get: () => 400,
+  });
+  Object.defineProperty(HTMLImageElement.prototype, "clientWidth", {
+    configurable: true,
+    get: () => 400,
+  });
+  await act(async () =>
+    root.render(
+      <RichEditor
+        body=""
+        html={`<p><img src="data:image/png;base64,${png}" width="400" height="200"></p>`}
+        disabled={false}
+        onChange={vi.fn()}
+        onBusy={vi.fn()}
+        readImages={vi.fn()}
+      />,
+    ),
+  );
+  await vi.waitFor(() =>
+    expect(document.querySelector(".rich-body img[src]")).toBeTruthy(),
+  );
+  const editor = captured.editor as Editor;
+  await act(async () => {
+    editor.commands.setNodeSelection(1);
+  });
+  await vi.waitFor(() =>
+    expect(document.querySelector('[aria-label="图片缩放"]')).toBeTruthy(),
+  );
+  expect(document.querySelector(".rich-image-zoom-percent")?.textContent).toBe(
+    "50%",
+  );
+  await act(async () => {
+    (document.querySelector('[aria-label="放大图片"]') as HTMLElement).click();
+  });
+  const image = document.querySelector(".rich-body img[src]")!;
+  expect(image.getAttribute("width")).toBe("600");
+  expect(image.getAttribute("height")).toBe("300");
+  expect(document.querySelector(".rich-image-zoom-percent")?.textContent).toBe(
+    "75%",
+  );
 });

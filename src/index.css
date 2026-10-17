@@ -4005,3 +4005,23 @@ button.nav-collapse .collapse-chevron {
   align-items: center;
   gap: 8px;
 }
+/* 图片缩放浮条（参考 Foxmail）：点选正文图片后出现，− % + */
+.rich-image-zoom {
+  position: fixed;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--popover);
+  color: var(--popover-foreground);
+  box-shadow: 0 6px 18px oklch(0 0 0 / 16%);
+}
+.rich-image-zoom-percent {
+  min-width: 44px;
+  text-align: center;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
