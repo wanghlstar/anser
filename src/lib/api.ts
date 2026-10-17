@@ -435,6 +435,20 @@ export async function call<T = void>(
         );
         break;
       }
+      case "clear_drafts": {
+        const list = JSON.parse(
+          localStorage.getItem(key + "-drafts") || "[]",
+        ) as Compose[];
+        const ids = new Set(
+          (args.drafts as Compose[]).map((draft) => draft.id),
+        );
+        localStorage.setItem(
+          key + "-drafts",
+          JSON.stringify(list.filter((draft) => !ids.has(draft.id))),
+        );
+        result = { deleted: ids.size, cleanupPending: 0 };
+        break;
+      }
       case "account_action":
         if (args.remove) {
           demo.accounts = demo.accounts.filter((a) => a.id !== args.id);
@@ -831,6 +845,7 @@ export async function call<T = void>(
         "account_folders",
         "sync_remote_folder",
         "list_drafts",
+        "clear_drafts",
         "list_contacts",
         "get_preferences",
         "list_outbox",

@@ -2079,8 +2079,8 @@ describe("bulk clearing", () => {
     expect(confirm).toBeTruthy();
     await click(confirm!);
     expect(
-      calls.mock.calls.filter(([command]) => command === "delete_draft"),
-    ).toHaveLength(2);
+      calls.mock.calls.filter(([command]) => command === "clear_drafts"),
+    ).toHaveLength(1);
     expect(host.querySelectorAll(".draft-row")).toHaveLength(0);
   });
   it("empties the local trash with permanent deletion after confirmation", async () => {

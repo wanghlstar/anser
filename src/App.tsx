@@ -758,24 +758,11 @@ export default function App() {
           body: mail.body,
           html: source.html,
         };
-        // 转发时把原邮件附件导出到临时文件并预填（未落盘的邮件按需从服务器取）
         if (forward && native && !isDemo() && source.attachments.length) {
-          void call<string[]>("extract_attachments", { id: mail.id })
-            .then((paths) => {
-              if (!paths.length) return;
-              setDraft((prev) =>
-                prev && prev.id === d.id
-                  ? {
-                      ...prev,
-                      attachments: [
-                        ...prev.attachments,
-                        ...paths.filter((p) => !prev.attachments.includes(p)),
-                      ],
-                    }
-                  : prev,
-              );
-            })
-            .catch((e) => toast.error(`无法附加原邮件附件：${String(e)}`));
+          d.forwardSource = {
+            id: source.mail.id,
+            hash: source.originalHash || "",
+          };
         }
       }
       setDraft(d);
@@ -1381,20 +1368,20 @@ export default function App() {
     });
     if (!ok) return;
     setClearingDrafts(true);
-    let done = 0;
-    let failed = 0;
-    for (const d of removable) {
-      try {
-        await call("delete_draft", { id: d.id });
-        done++;
-      } catch {
-        failed++;
-      }
+    try {
+      const result = await call<{ deleted: number; cleanupPending: number }>(
+        "clear_drafts",
+        { drafts: removable },
+      );
+      toast.success(`已清空 ${result.deleted} 份草稿`);
+      if (result.cleanupPending)
+        toast.warning("草稿已清空，部分临时附件待后续清理");
+    } catch (e) {
+      toast.error(String(e));
+    } finally {
+      setClearingDrafts(false);
+      await loadDrafts();
     }
-    setClearingDrafts(false);
-    await loadDrafts();
-    if (done) toast.success(`已清空 ${done} 份草稿`);
-    if (failed) toast.error(`${failed} 份草稿删除失败`);
   }
   // 清空本地废纸篓：彻底删除其中的邮件（含服务器副本）
   async function clearTrash() {

@@ -2044,21 +2044,6 @@ fn trash_and_delete_only_touch_the_current_copy_not_same_message_id() {
 }
 
 #[test]
-fn extract_attachments_writes_original_files_for_forwarding() {
-    let dir = tempfile::tempdir().unwrap();
-    let store = Store::new(dir.path().into()).unwrap();
-    let a = account();
-    store.save_account(&a).unwrap();
-    store.ingest(&a, "INBOX", "1:1", &raw(), false).unwrap();
-    let id = store.snapshot(&query()).unwrap().messages[0].id.clone();
-    let paths = store.extract_attachments(&id).unwrap();
-    assert_eq!(paths.len(), 1);
-    assert!(paths[0].ends_with("invoice.txt"), "{}", paths[0]);
-    assert_eq!(std::fs::read(&paths[0]).unwrap(), b"invoice content");
-    let _ = std::fs::remove_file(&paths[0]);
-}
-
-#[test]
 fn online_metadata_is_removed_when_server_mail_disappears_but_archives_remain() {
     let dir = tempfile::tempdir().unwrap();
     let store = Store::new(dir.path().into()).unwrap();

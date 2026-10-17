@@ -3,6 +3,15 @@ import { MailContent } from "./mail-content";
 import { Switch } from "./ui/switch";
 import { Label } from "./ui/label";
 import { Alert, AlertDescription } from "./ui/alert";
+import { Checkbox } from "./ui/checkbox";
+import {
+  FieldSet,
+  FieldLegend,
+  FieldGroup,
+  Field,
+  FieldContent,
+  FieldLabel,
+} from "./ui/field";
 import { signatureContent, greetingSpec } from "@/lib/signatures";
 import type { MailSignature } from "@/lib/types";
 import { disableFrameContextMenu } from "@/lib/context-menu";
@@ -36,7 +45,13 @@ import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Textarea } from "./ui/textarea";
 import { call, native, isDemo } from "@/lib/api";
-import type { Account, Address, Compose, Preferences } from "@/lib/types";
+import type {
+  Account,
+  Address,
+  Compose,
+  ForwardFile,
+  Preferences,
+} from "@/lib/types";
 import {
   textToHtml,
   sanitizeComposeHtml,
@@ -56,6 +71,9 @@ const RichEditor = lazy(() =>
 import { RecipientInput } from "./recipient-input";
 import { addressTokens, parseAddresses } from "@/lib/addresses";
 import { toast } from "sonner";
+import { isImagePath, type BodyImage } from "@/lib/rich-body";
+import type { RichEditorHandle } from "./rich-editor";
+import { RichEditorBoundary } from "./rich-editor-boundary";
 export function ComposeDialog({
   draft,
   onClose,
@@ -99,7 +117,87 @@ export function ComposeDialog({
   const sourceFile = useRef<HTMLInputElement>(null);
   const previewFrame = useRef<HTMLIFrameElement>(null);
   const dialogElement = useRef<HTMLDivElement>(null);
-  // 从 Finder 拖拽文件到写信窗口 → 登记为附件（Tauri 原生拖放，DOM drop 收不到）
+  const [forwardError, setForwardError] = useState("");
+  const [forwardLoading, setForwardLoading] = useState(false);
+  const [imageLoading, setImageLoading] = useState(false);
+  const imageBusy = useRef(false);
+  const richEditor = useRef<RichEditorHandle>(null);
+  const [forwardReload, setForwardReload] = useState(0);
+  const [sessionReload, setSessionReload] = useState(0);
+  const sessionChain = useRef<Promise<void>>(Promise.resolve());
+  const session = useRef<{ id: string; promise: Promise<string> } | null>(null);
+  const interactionLocked = useRef(false);
+  interactionLocked.current = sending || closing;
+  // 写信窗口打开期间持有编辑会话 token：正文图片读取与原附件准备都以它为准。
+  useEffect(() => {
+    if (!draft?.id || !native || isDemo()) {
+      session.current = null;
+      return;
+    }
+    const id = draft.id;
+    const promise = sessionChain.current.then(() =>
+      call<string>("open_compose_session", { id }),
+    );
+    session.current = { id, promise };
+    sessionChain.current = promise.then(
+      () => {},
+      () => {},
+    );
+    return () => {
+      const close = promise.then((token) =>
+        call<void>("close_compose_session", { id, token }),
+      );
+      sessionChain.current = close.catch(() => {});
+    };
+  }, [draft?.id, sessionReload]);
+  // 转发打开后准备原附件副本：失败可重试，也可以选择不携带原附件。
+  useEffect(() => {
+    if (!value?.forwardSource || value.id !== draft?.id || !native || isDemo())
+      return;
+    const source = value.forwardSource,
+      id = value.id,
+      lease = session.current;
+    if (!lease || lease.id !== id) return;
+    let live = true;
+    setForwardLoading(true);
+    setForwardError("");
+    void lease.promise
+      .then((token) =>
+        call<ForwardFile[]>("prepare_forward_files", { id, token, source }),
+      )
+      .then((files) => {
+        if (!live || closingNow.current || latest.current?.id !== id) return;
+        setForwardLoading(false);
+        setValue((current) =>
+          current?.id === id &&
+          current.forwardSource?.hash === source.hash &&
+          current.forwardSource.id === source.id
+            ? {
+                ...current,
+                forwardSource: undefined,
+                forwardFiles: [...(current.forwardFiles || []), ...files],
+              }
+            : current,
+        );
+      })
+      .catch((error) => {
+        if (live && latest.current?.id === id) {
+          setForwardLoading(false);
+          setForwardError(String(error));
+        }
+      });
+    return () => {
+      live = false;
+    };
+  }, [
+    value?.id,
+    value?.forwardSource?.id,
+    value?.forwardSource?.hash,
+    forwardReload,
+    sessionReload,
+    draft?.id,
+  ]);
+  // 从 Finder 拖拽文件到写信窗口：图片插入正文，其余登记为附件（Tauri 原生拖放，DOM drop 收不到）
   useEffect(() => {
     if (!draft?.id || !native || isDemo()) return;
     const id = draft.id;
@@ -108,7 +206,15 @@ export function ComposeDialog({
     void import("@tauri-apps/api/webview")
       .then(({ getCurrentWebview }) =>
         getCurrentWebview().onDragDropEvent((event) => {
-          if (!live || event.payload.type !== "drop") return;
+          if (
+            !live ||
+            event.payload.type !== "drop" ||
+            latest.current?.id !== id ||
+            closingNow.current ||
+            interactionLocked.current ||
+            isDemo()
+          )
+            return;
           const rect = dialogElement.current?.getBoundingClientRect();
           if (
             !rect ||
@@ -119,22 +225,33 @@ export function ComposeDialog({
             )
           )
             return;
-          try {
-            const paths = event.payload.paths;
-            setValue((current) =>
-              current?.id === id
-                ? {
-                    ...current,
-                    attachments: mergeAttachmentPaths(
-                      current.attachments,
-                      paths,
-                    ),
-                  }
-                : current,
-            );
-          } catch (error) {
-            toast.error(String(error));
+          const paths = event.payload.paths;
+          if (paths.some((path) => !path || path.includes("\0"))) {
+            toast.error("附件路径无效，未添加文件");
+            return;
           }
+          const images = paths.filter(isImagePath);
+          const embedded =
+            images.length > 0 &&
+            !!richEditor.current?.insertPaths(images, {
+              x: event.payload.position.x / window.devicePixelRatio,
+              y: event.payload.position.y / window.devicePixelRatio,
+            });
+          const attached = embedded
+            ? paths.filter((path) => !isImagePath(path))
+            : paths;
+          if (!attached.length) return;
+          setValue((current) =>
+            current?.id === id
+              ? {
+                  ...current,
+                  attachments: mergeAttachmentPaths(
+                    current.attachments,
+                    attached,
+                  ),
+                }
+              : current,
+          );
         }),
       )
       .then((stop) => {
@@ -161,6 +278,10 @@ export function ComposeDialog({
     setValue(draft);
     setSaved(false);
     setSignatureError("");
+    setForwardError("");
+    setForwardLoading(false);
+    imageBusy.current = false;
+    setImageLoading(false);
     setExtra(!!draft?.cc || !!draft?.bcc);
     setExpanded(false);
     setPlanning(false);
@@ -263,6 +384,10 @@ export function ComposeDialog({
   }
   async function close() {
     if (sending || closingNow.current) return;
+    if (imageBusy.current) {
+      toast.info("正文图片正在读取，请稍后关闭");
+      return;
+    }
     const current = latest.current;
     closingNow.current = true;
     setClosing(true);
@@ -274,6 +399,11 @@ export function ComposeDialog({
             await call("save_draft", { draft: current });
           else await call("delete_draft", { id: current.id });
         });
+      const lease = session.current;
+      if (native && !isDemo() && lease && current && lease.id === current.id) {
+        const token = await lease.promise;
+        await call("close_compose_session", { id: lease.id, token });
+      }
       onClose();
     } catch (e) {
       toast.error(
@@ -303,6 +433,14 @@ export function ComposeDialog({
     }
   }
   async function valid() {
+    if (imageBusy.current) {
+      toast.error("正文图片正在读取，请稍后发送");
+      return false;
+    }
+    if (forwardLoading || value?.forwardSource) {
+      toast.error("原附件尚未准备完成，请重试或选择不携带原附件");
+      return false;
+    }
     if (!value?.accountId || !value.to.trim()) {
       toast.error("请选择发件账号并填写收件人");
       return false;
@@ -639,32 +777,65 @@ export function ComposeDialog({
                 className={`compose-editor ${(format === "markdown" || format === "html") && preview ? "source-with-preview" : ""} ${signaturePreview ? "with-signature" : ""}`}
               >
                 {format === "rich" ? (
-                  <Suspense
-                    fallback={
-                      <div className="editor-loading">
-                        <LoaderCircle className="animate-spin" size={18} />
-                        正在加载编辑器…
-                      </div>
-                    }
-                  >
-                    <RichEditor
-                      key={`${value.id}-${format}`}
-                      body={value.body}
-                      html={value.html || textToHtml(value.body)}
-                      disabled={sending || closing}
-                      onChange={(body, html) => update({ body, html })}
-                      toolbarExtras={formatControls}
-                      greeting={greeting}
-                      onAttachFiles={(paths) =>
-                        update({
-                          attachments: mergeAttachmentPaths(
-                            value.attachments,
-                            paths,
-                          ),
-                        })
+                  <RichEditorBoundary key={value.id}>
+                    <Suspense
+                      fallback={
+                        <div className="editor-loading">
+                          <LoaderCircle className="animate-spin" size={18} />
+                          正在加载编辑器…
+                        </div>
                       }
-                    />
-                  </Suspense>
+                    >
+                      <RichEditor
+                        ref={richEditor}
+                        key={`${value.id}-${format}`}
+                        body={value.body}
+                        html={value.html || textToHtml(value.body)}
+                        disabled={sending || closing}
+                        onChange={(body, html) => update({ body, html })}
+                        onBusy={(busy) => {
+                          imageBusy.current = busy;
+                          setImageLoading(busy);
+                        }}
+                        readImages={async (paths) => {
+                          const id = value.id;
+                          const lease = session.current;
+                          if (
+                            !native ||
+                            isDemo() ||
+                            !lease ||
+                            lease.id !== id ||
+                            interactionLocked.current
+                          )
+                            throw new Error(
+                              "正文图片只能在当前桌面写信窗口读取",
+                            );
+                          const token = await lease.promise;
+                          if (
+                            latest.current?.id !== id ||
+                            closingNow.current ||
+                            interactionLocked.current
+                          )
+                            throw new Error("写信窗口已关闭或提交");
+                          return call<BodyImage[]>("read_body_images", {
+                            id,
+                            token,
+                            paths,
+                          });
+                        }}
+                        toolbarExtras={formatControls}
+                        greeting={greeting}
+                        onAttachFiles={(paths) =>
+                          update({
+                            attachments: mergeAttachmentPaths(
+                              value.attachments,
+                              paths,
+                            ),
+                          })
+                        }
+                      />
+                    </Suspense>
+                  </RichEditorBoundary>
                 ) : format === "markdown" || format === "html" ? (
                   <>
                     <Textarea
@@ -775,6 +946,75 @@ export function ComposeDialog({
                   />
                 </section>
               )}
+              {value.forwardSource && (
+                <Alert className="mx-4 w-auto">
+                  <FileUp />
+                  <AlertDescription>
+                    {forwardLoading
+                      ? "正在准备原邮件附件，原件保持不变…"
+                      : forwardError || "等待准备原邮件附件"}
+                    <div className="flex flex-wrap gap-2">
+                      {!forwardLoading && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            setSessionReload((n) => n + 1);
+                            setForwardReload((n) => n + 1);
+                          }}
+                        >
+                          重试准备
+                        </Button>
+                      )}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        disabled={sending || closing}
+                        onClick={() => {
+                          update({ forwardSource: undefined });
+                          setForwardError("");
+                          setForwardLoading(false);
+                        }}
+                      >
+                        不携带原附件
+                      </Button>
+                    </div>
+                  </AlertDescription>
+                </Alert>
+              )}
+              {!!value.forwardFiles?.length && (
+                <FieldSet className="min-w-0 shrink-0 px-7 py-3">
+                  <FieldLegend>原邮件附件</FieldLegend>
+                  <FieldGroup>
+                    {value.forwardFiles.map((file) => (
+                      <Field key={file.id} orientation="horizontal">
+                        <Checkbox
+                          id={`forward-file-${file.id}`}
+                          checked={file.included}
+                          disabled={sending || closing}
+                          onCheckedChange={(included) =>
+                            update({
+                              forwardFiles: value.forwardFiles!.map((item) =>
+                                item.id === file.id
+                                  ? { ...item, included: included === true }
+                                  : item,
+                              ),
+                            })
+                          }
+                        />
+                        <FieldContent className="min-w-0">
+                          <FieldLabel
+                            className="max-w-full break-words"
+                            htmlFor={`forward-file-${file.id}`}
+                          >
+                            {file.name} · {file.size} 字节
+                          </FieldLabel>
+                        </FieldContent>
+                      </Field>
+                    ))}
+                  </FieldGroup>
+                </FieldSet>
+              )}
               {value.attachments.length > 0 && (
                 <div className="compose-attachments">
                   {value.attachments.map((p, i) => (
@@ -810,7 +1050,15 @@ export function ComposeDialog({
             )}
             <div className="compose-footer">
               <Button
-                disabled={sending || closing || isDemo() || !native}
+                disabled={
+                  sending ||
+                  closing ||
+                  forwardLoading ||
+                  imageLoading ||
+                  !!value.forwardSource ||
+                  isDemo() ||
+                  !native
+                }
                 onClick={() => void queue()}
               >
                 {sending ? (
@@ -826,7 +1074,14 @@ export function ComposeDialog({
               </Button>
               <Button
                 variant="outline"
-                disabled={sending || closing || (!native && !isDemo())}
+                disabled={
+                  sending ||
+                  closing ||
+                  forwardLoading ||
+                  imageLoading ||
+                  !!value.forwardSource ||
+                  (!native && !isDemo())
+                }
                 onClick={() => setPlanning(!planning)}
               >
                 <Clock3 size={16} />

@@ -2228,8 +2228,15 @@ button.nav-collapse .collapse-chevron {
 .format-toolbar {
   display: flex;
   gap: 2px;
-  padding: 4px 23px;
+  padding: 6px 23px;
   border-bottom: 1px solid var(--border);
+  align-items: center;
+  flex-wrap: wrap;
+  min-height: 45px;
+  flex-shrink: 0;
+}
+.format-toolbar > * {
+  flex-shrink: 0;
 }
 /* 合并后的工具条：外部控件（格式/预览/导入）靠右 */
 .format-toolbar .toolbar-extras {
@@ -2241,6 +2248,37 @@ button.nav-collapse .collapse-chevron {
 .format-toolbar button[aria-pressed="true"] {
   background: var(--secondary);
   color: var(--foreground);
+}
+/* Compact compose menus without changing the density of other app menus. */
+.rich-format-menu[data-slot="dropdown-menu-content"] {
+  min-width: 136px;
+  max-height: min(320px, var(--radix-dropdown-menu-content-available-height));
+  padding: 4px;
+}
+.rich-format-menu[data-format-menu="正文字体"] {
+  min-width: 176px;
+}
+.rich-format-menu[data-format-menu="正文字号"] {
+  min-width: 104px;
+}
+.rich-format-menu [data-slot="dropdown-menu-radio-item"],
+.rich-format-menu [data-slot="dropdown-menu-item"] {
+  min-height: 26px;
+  padding-top: 3px;
+  padding-bottom: 3px;
+  font-size: 12px;
+}
+.rich-search-panel [data-slot="input"] {
+  height: 30px;
+  padding: 4px 8px;
+  font-size: 12px;
+}
+.rich-search-panel [data-slot="field-label"] {
+  font-size: 12px;
+}
+.rich-search-panel [data-slot="button"] {
+  height: 28px;
+  font-size: 12px;
 }
 /* 工具条内的字体/字号下拉：贴齐图标按钮高度，弱化成纯文字 + 箭头 */
 .format-toolbar .font-select {
@@ -2279,6 +2317,15 @@ button.nav-collapse .collapse-chevron {
   font-family: 仿宋, FangSong, STFangsong, serif;
   font-size: 14pt;
   line-height: 1.8;
+}
+.rich-body img {
+  max-width: 100%;
+  height: auto;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.rich-body img.ProseMirror-selectednode {
+  outline: 2px solid var(--ring);
 }
 /* 首行缩进用真实全角空格（见 indented-paragraph.ts），不用 text-indent：
    CSS 缩进只影响本地渲染，不会随邮件发出，收件人看到的是顶格。 */

@@ -133,6 +133,7 @@ export interface Snapshot {
   folderTotals?: FolderUnread[];
 }
 export interface Detail {
+  originalHash?: string;
   mail: Mail;
   html: string;
   attachments: {
@@ -184,6 +185,8 @@ export interface ComposeSignature {
   greetingHtml: string;
 }
 export interface Compose {
+  forwardSource?: { id: string; hash: string };
+  forwardFiles?: ForwardFile[];
   signature?: ComposeSignature | null;
   id: string;
   accountId: string;
@@ -202,6 +205,13 @@ export interface Compose {
   references?: string[];
   deliveryBody?: string;
   deliveryHtml?: string;
+}
+export interface ForwardFile {
+  id: string;
+  name: string;
+  mime: string;
+  size: number;
+  included: boolean;
 }
 export interface Address {
   name: string;
