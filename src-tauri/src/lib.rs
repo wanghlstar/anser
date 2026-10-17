@@ -3,6 +3,7 @@ mod archive_deletion;
 mod archive_jobs;
 mod attachment_preview;
 mod auth;
+mod compose_files;
 mod conversation;
 mod directory_operations;
 mod eml_files;
@@ -833,12 +834,40 @@ fn list_drafts(state: tauri::State<AppState>) -> Result<Vec<Compose>> {
 }
 #[tauri::command]
 fn delete_draft(state: tauri::State<AppState>, id: String) -> Result<()> {
-    state
-        .store
-        .db()?
-        .execute("DELETE FROM drafts WHERE id=?1", [id])
-        .map_err(err)?;
-    Ok(())
+    state.store.delete_compose_draft(&id)
+}
+#[tauri::command]
+fn clear_drafts(
+    state: tauri::State<AppState>,
+    drafts: Vec<Compose>,
+) -> Result<compose_files::ClearDraftsResult> {
+    state.store.clear_compose_drafts(&drafts)
+}
+#[tauri::command]
+fn open_compose_session(state: tauri::State<AppState>, id: String) -> Result<String> {
+    state.store.open_compose_session(&id)
+}
+#[tauri::command]
+fn close_compose_session(state: tauri::State<AppState>, id: String, token: String) -> Result<()> {
+    state.store.close_compose_session(&id, &token)
+}
+#[tauri::command]
+fn prepare_forward_files(
+    state: tauri::State<AppState>,
+    id: String,
+    token: String,
+    source: ForwardSource,
+) -> Result<Vec<ForwardFile>> {
+    state.store.prepare_forward_files(&id, &token, &source)
+}
+#[tauri::command]
+fn read_body_images(
+    state: tauri::State<AppState>,
+    id: String,
+    token: String,
+    paths: Vec<String>,
+) -> Result<Vec<compose_files::BodyImage>> {
+    state.store.read_body_images(&id, &token, &paths)
 }
 // SMTP work has its own guard. Long IMAP downloads must never occupy it.
 fn with_send_gate<T>(gate: &Mutex<()>, send: impl FnOnce() -> Result<T>) -> Result<T> {
@@ -2202,6 +2231,11 @@ pub fn run() {
             save_draft,
             list_drafts,
             delete_draft,
+            clear_drafts,
+            open_compose_session,
+            close_compose_session,
+            prepare_forward_files,
+            read_body_images,
             send_mail,
             schedule_mail,
             cancel_schedule,

@@ -239,6 +239,8 @@ impl Store {
         let raw = self.message_raw(&mail)?;
         // 复用 recover_outbox_draft 的附件落盘逻辑（draft-assets/<新草稿 id>/…）
         let seed = Compose {
+            forward_source: None,
+            forward_files: Vec::new(),
             signature: None,
             id: uuid::Uuid::new_v4().to_string(),
             account_id: mail.account_id.clone(),

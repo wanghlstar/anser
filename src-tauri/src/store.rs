@@ -106,11 +106,15 @@ impl Store {
         crate::archive_jobs::initialize(&db)?;
         crate::search::initialize(&db)?;
         crate::paging::initialize(&db)?;
+        crate::compose_files::initialize(&db)?;
         crate::notification_open::initialize(&db)?;
         s.migrate_folder_roles()?;
         s.recover_archive_deletion()?;
         s.refresh_archive_roots()?; // 必须先于元数据刷新：读取存档依赖根列表
         s.refresh_archive_metadata()?;
+        if let Err(error) = s.cleanup_old_compose_files() {
+            s.log(&format!("写信附件清理待处理：{error}"))?;
+        }
         Ok(s)
     }
     /// 按当前偏好重算存档读取根：内部根优先，其后是外置存档根。
@@ -1812,6 +1816,7 @@ impl Store {
         mail.has_attachments = parsed.has_attachments;
         let (reply_to, to, cc) = archive::reply_addresses(&raw)?;
         Ok(Detail {
+            original_hash: archive::digest(&raw),
             mail,
             html,
             attachments,
@@ -1934,6 +1939,9 @@ impl Store {
             .collect()
     }
     pub fn save_draft(&self, d: &Compose) -> Result<()> {
+        self.save_draft_with_files(d)
+    }
+    pub(crate) fn save_draft_record(&self, d: &Compose) -> Result<()> {
         let db = self.db()?;
         let locked: bool = db.query_row("SELECT EXISTS(SELECT 1 FROM outbox WHERE id=?1 AND status IN ('scheduled','overdue','paused','sending','sent'))", [&d.id], |r| r.get(0)).map_err(err)?;
         if locked {
@@ -1980,7 +1988,7 @@ impl Store {
             )?;
         }
         drop(stmt);
-        snap.execute_batch("DELETE FROM accounts; DELETE FROM folder_retention; DELETE FROM archive_jobs; DELETE FROM drafts; DELETE FROM outbox; DELETE FROM sent_uploads; DELETE FROM logs; DELETE FROM server_operations; DELETE FROM folder_health; DELETE FROM directory_operations; DELETE FROM rule_executions; VACUUM;").map_err(err)?;
+        snap.execute_batch("DELETE FROM accounts; DELETE FROM folder_retention; DELETE FROM archive_jobs; DELETE FROM drafts; DELETE FROM compose_files; DELETE FROM compose_sessions; DELETE FROM outbox; DELETE FROM sent_uploads; DELETE FROM logs; DELETE FROM server_operations; DELETE FROM folder_health; DELETE FROM directory_operations; DELETE FROM rule_executions; VACUUM;").map_err(err)?;
         archive::atomic_write(
             &folder.join("manifest.json"),
             br#"{"format":"mail-desktop-archive","version":1}"#,

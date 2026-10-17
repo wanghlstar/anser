@@ -133,6 +133,7 @@ impl EmlFiles {
         mail.saved_locally = false;
         let (reply_to, to, cc) = archive::reply_addresses(&raw)?;
         let token = uuid::Uuid::new_v4().to_string();
+        let original_hash = archive::digest(&raw);
         let source = path.canonicalize().map_err(err)?;
         let mut docs = self.0.lock().map_err(err)?;
         docs.current = Some((token.clone(), Arc::new(raw)));
@@ -146,6 +147,7 @@ impl EmlFiles {
                 .to_string_lossy()
                 .into_owned(),
             detail: Detail {
+                original_hash,
                 mail,
                 html,
                 attachments,
