@@ -101,6 +101,7 @@ export function RichImageZoom({
       className="rich-image-zoom"
       role="toolbar"
       aria-label="图片缩放"
+      onMouseDown={(event) => event.preventDefault()}
       style={{
         left: Math.max(8, rect.left),
         top: Math.max(8, rect.top - 42),

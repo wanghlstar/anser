@@ -39,6 +39,7 @@ import { coalesceRefresh } from "./lib/refresh-queue";
 import { ConversationReader } from "./components/conversation-reader";
 import { ScrollPane } from "./components/scroll-pane";
 import { replyHeaders } from "./lib/conversations";
+import { signatureContent } from "./lib/signatures";
 import { Tabs, TabsList, TabsTrigger } from "./components/ui/tabs";
 import { disableNativeContextMenu } from "./lib/context-menu";
 import { NavigationLayout, MailLayout } from "./components/resizable-layout";
@@ -193,6 +194,7 @@ import type {
   DataDirCheck,
   Preferences,
   LocalArchiveGroup,
+  MailSignature,
 } from "./lib/types";
 import { mailLink } from "./lib/mail-html";
 import { printMail } from "./lib/mail-print";
@@ -1574,7 +1576,23 @@ export default function App() {
     try {
       // 原样载入已发送邮件的正文（含问候语/落款/引用），保持原状态；
       // 不再单独抽签名再追加，否则签名会被挪到引用之后、正文顺序错乱。
-      setDraft(await call<Compose>("reedit_sent_mail", { id: m.id }));
+      const draft = await call<Compose>("reedit_sent_mail", { id: m.id });
+      // 原件正文已经带签名：给本封一个「不含签名」的快照，避免写信窗口
+      // 重新读取账号签名后又追加一次（重编辑出现双签名）。
+      const config = await call<MailSignature>("mail_signature", {
+        accountId: m.accountId,
+      }).catch(() => null);
+      const signature = config
+        ? { ...signatureContent(m.accountId, config), included: false }
+        : {
+            accountId: m.accountId,
+            included: false,
+            greeting: "",
+            greetingHtml: "",
+            body: "",
+            html: "",
+          };
+      setDraft({ ...draft, signature });
     } catch (e) {
       toast.error(String(e));
     }

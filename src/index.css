@@ -4009,6 +4009,8 @@ button.nav-collapse .collapse-chevron {
 .rich-image-zoom {
   position: fixed;
   z-index: 60;
+  /* Radix 弹层会给 body 设 pointer-events:none，浮条必须自己恢复点击 */
+  pointer-events: auto;
   display: flex;
   align-items: center;
   gap: 2px;
