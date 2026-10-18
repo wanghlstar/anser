@@ -51,9 +51,9 @@ export function safeMailHtml(
     style.textContent = secureResources(style.textContent || "");
   }
   normalizeMailSpacers(doc);
-  // WebKit suppresses frame event listeners in a scripts-disabled sandbox.
-  // Native links use a route the navigation delegate cancels and emits to the
-  // app; browser links are neutralized before their listeners attach.
+  // 正文帧现在带 allow-scripts（只为让 WebKit 派发帧内监听器），帧内点击会
+  // 拦下导航并把原始 URL 交回应用；原生路由留给导航代理兜底，浏览器端则先把
+  // href 换成占位符，免得监听器接管之前就跳走。
   for (const anchor of doc.querySelectorAll("a")) {
     const href = anchor.getAttribute("href") || "";
     anchor.removeAttribute("target");
@@ -116,6 +116,17 @@ export function isMailDocument(
   );
 }
 
+/// iframe 里的元素来自另一个 realm：`instanceof Element` / `instanceof
+/// HTMLImageElement` 对它们一律是 false（跨 realm 原型不同）。只能用
+/// nodeType/tagName 这类跨 realm 安全的判断，否则帧内所有图片交互都会静默失效。
+export function frameImageTarget(
+  node: EventTarget | null,
+): HTMLImageElement | null {
+  const element = node as Node | null;
+  if (!element || element.nodeType !== 1) return null;
+  const image = (element as Element).closest("img");
+  return image && image.tagName === "IMG" ? (image as HTMLImageElement) : null;
+}
 export function interceptMailLinks(
   doc: Document,
   onOpen: (href: string) => void,

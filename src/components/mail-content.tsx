@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { isTauri } from "@tauri-apps/api/core";
-import { Copy, Download, ExternalLink } from "lucide-react";
+import { Copy, Download } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { MailBodySkeleton } from "./mail-skeleton";
@@ -16,6 +16,7 @@ import { call } from "../lib/api";
 import { disableNativeContextMenu } from "../lib/context-menu";
 import { watchMailImages, type MailImageStatus } from "../lib/mail-images";
 import {
+  frameImageTarget,
   interceptMailLinks,
   isMailDocument,
   safeMailHtml,
@@ -36,12 +37,14 @@ function previewTheme(): PreviewTheme | undefined {
 export function MailContent({
   html,
   onOpenLink,
+  onInteract,
   title = "邮件正文",
   flush,
   themed = false,
 }: {
   html: string;
   onOpenLink: (href: string) => void;
+  onInteract?: () => void;
   title?: string;
   flush?: boolean;
   themed?: boolean;
@@ -49,6 +52,8 @@ export function MailContent({
   const frame = useRef<HTMLIFrameElement>(null);
   const cleanup = useRef<() => void>(() => {});
   const initialized = useRef<Document | null>(null);
+  const interact = useRef(onInteract);
+  interact.current = onInteract;
   const flushPreview = useRef(flush);
   flushPreview.current = flush;
   const [ready, setReady] = useState(false);
@@ -60,23 +65,28 @@ export function MailContent({
   const retryImages = useRef(() => {});
   const [imageMenu, setImageMenu] = useState<string | null>(null);
   const imageMenuAnchor = useRef({ x: -1, y: -1 });
-  const selectedImage = useRef<{ el: HTMLElement; outline: string } | null>(
-    null,
-  );
+  const selectedImage = useRef<{
+    el: HTMLElement;
+    outline: string;
+    outlineOffset: string;
+  } | null>(null);
   function clearImageSelection() {
     const current = selectedImage.current;
     if (!current) return;
     current.el.style.outline = current.outline;
-    current.el.style.outlineOffset = "";
+    current.el.style.outlineOffset = current.outlineOffset;
     selectedImage.current = null;
   }
   function selectImage(el: HTMLElement) {
     if (selectedImage.current?.el === el) return;
     clearImageSelection();
     const outline = el.style.outline;
+    const outlineOffset = el.style.outlineOffset;
     el.style.outline = "2px solid #3b82f6";
-    el.style.outlineOffset = "1px";
-    selectedImage.current = { el, outline };
+    // 往内画：outline 默认画在边框盒外，图片贴着 iframe 左边时左侧那条会被
+    // 帧边界裁掉，用户只看到三面框。
+    el.style.outlineOffset = "-2px";
+    selectedImage.current = { el, outline, outlineOffset };
   }
   function imageName(src: string) {
     if (src.startsWith("data:")) return "图片.png";
@@ -95,15 +105,9 @@ export function MailContent({
       return;
     }
     try {
-      const { mime, data } = await call<{ mime: string; data: string }>(
-        "mail_image_data",
-        { url: src },
-      );
-      const bytes = Uint8Array.from(atob(data), (c) => c.charCodeAt(0));
-      const blob = new Blob([bytes], { type: mime || "image/png" });
-      await navigator.clipboard.write([
-        new ClipboardItem({ [blob.type]: blob }),
-      ]);
+      // WKWebView 里 navigator.clipboard.write 会抛 NotAllowedError（用户实测），
+      // 复制图片统一走原生 NSPasteboard。
+      await call("copy_mail_image", { url: src });
       toast.success("图片已复制");
     } catch (e) {
       toast.error(`复制图片失败：${String(e)}`);
@@ -243,18 +247,19 @@ export function MailContent({
     });
     const restoreContextMenu = disableNativeContextMenu(doc);
     const restoreLinks = interceptMailLinks(doc, (href) => open.current(href));
-    // 图片交互：右键弹自定义菜单（复制/保存/用系统应用打开），左键选中带框，⌘C 复制。
+    // 图片交互：右键弹自定义菜单（复制/保存），左键选中带框，⌘C 复制，双击交系统应用打开。
     const onPointer = (event: MouseEvent) => {
-      const target = event.target instanceof Element ? event.target : null;
-      const img = target?.closest("img");
+      const img = frameImageTarget(event.target);
+      // 点正文就把邮件列表的勾选放开：iframe 里的按键/点击传不到外层，
+      // 只能从这里转出去。
+      interact.current?.();
       setImageMenu(null);
-      if (img instanceof HTMLElement) selectImage(img);
+      if (img) selectImage(img);
       else clearImageSelection();
     };
     const onContext = (event: MouseEvent) => {
-      const target = event.target instanceof Element ? event.target : null;
-      const img = target?.closest("img");
-      if (!(img instanceof HTMLImageElement)) return;
+      const img = frameImageTarget(event.target);
+      if (!img) return;
       event.preventDefault();
       selectImage(img);
       const rect = iframe.getBoundingClientRect();
@@ -264,7 +269,20 @@ export function MailContent({
       };
       setImageMenu(img.getAttribute("src") || img.src);
     };
+    const onDoubleClick = (event: MouseEvent) => {
+      const img = frameImageTarget(event.target);
+      if (!img) return;
+      // 和 Foxmail 一致：双击正文图片直接交给系统应用打开。
+      event.preventDefault();
+      selectImage(img);
+      void openImage(img.currentSrc || img.src);
+    };
     const onKey = (event: KeyboardEvent) => {
+      // 焦点在正文里时 Esc 传不到外层，这里代为取消列表勾选。
+      if (event.key === "Escape") {
+        interact.current?.();
+        return;
+      }
       const current = selectedImage.current;
       if (
         !current ||
@@ -277,6 +295,7 @@ export function MailContent({
       void copyImage(image.currentSrc || image.src);
     };
     doc.addEventListener("mousedown", onPointer, true);
+    doc.addEventListener("dblclick", onDoubleClick, true);
     doc.addEventListener("contextmenu", onContext, true);
     doc.addEventListener("keydown", onKey, true);
     if (!nativeFrame) {
@@ -294,6 +313,7 @@ export function MailContent({
       retryImages.current = () => {};
       restoreLinks();
       doc.removeEventListener("mousedown", onPointer, true);
+      doc.removeEventListener("dblclick", onDoubleClick, true);
       doc.removeEventListener("contextmenu", onContext, true);
       doc.removeEventListener("keydown", onKey, true);
       clearImageSelection();
@@ -335,7 +355,12 @@ export function MailContent({
         ref={frame}
         className={cn("mail-html", themed && "mail-html-themed")}
         title={title}
-        sandbox="allow-same-origin"
+        // allow-scripts 只为了让 WebKit 把 frame 内的事件派发出来：没有它，
+        // 沙箱帧里的点击/双击/右键/按键监听器一律静默失效（图片选中、双击
+        // 打开、自定义右键菜单全部失灵）。正文已经过 DOMPurify 去掉 script
+        // 与 on* 事件属性，再加上注入的 CSP（default-src 'none'）兜底，
+        // 帧内没有可执行的脚本。
+        sandbox="allow-same-origin allow-scripts"
         referrerPolicy="no-referrer"
         srcDoc={srcDoc}
         onLoad={loaded}
@@ -375,12 +400,6 @@ export function MailContent({
           >
             <Download />
             保存图片…
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            onSelect={() => imageMenu && void openImage(imageMenu)}
-          >
-            <ExternalLink />
-            用系统应用打开
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>

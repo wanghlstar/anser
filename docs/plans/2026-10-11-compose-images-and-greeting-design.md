@@ -68,19 +68,19 @@
 
 ## 三、涉及文件
 
-| 文件 | 改动 |
-|---|---|
-| package.json / package-lock.json | +@tiptap/extension-image |
-| src/lib/inline-image.ts | 新增：压缩/编码/校验管线与可测决策函数 |
-| src/components/rich-editor.tsx | Image 扩展、handlePaste/handleDrop、插入图片按钮 |
-| src/components/compose-dialog.tsx | 格式选择移除纯文本、旧 plain 草稿转富文本、问候语预览 |
-| src/lib/compose-format.ts | withSignature 前置问候语 |
-| src/lib/types.ts / src/lib/signatures.ts | 问候语字段与快照 |
-| src/components/mail-signatures.tsx | 问候语编辑区 |
-| src-tauri/src/signatures.rs | 问候语字段 + serde default + 测试 |
-| src-tauri/src/network.rs | multipart/alternative 纯文本备用 part |
-| src/index.css | 问候语预览样式 |
-| 测试 | compose-format 三态、inline-image 决策函数、剪贴板/拖拽提取、compose-dialog 预览、Rust 存取往返+旧数据兼容、MIME 结构 |
+| 文件                                     | 改动                                                                                                                  |
+| ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| package.json / package-lock.json         | +@tiptap/extension-image                                                                                              |
+| src/lib/inline-image.ts                  | 新增：压缩/编码/校验管线与可测决策函数                                                                                |
+| src/components/rich-editor.tsx           | Image 扩展、handlePaste/handleDrop、插入图片按钮                                                                      |
+| src/components/compose-dialog.tsx        | 格式选择移除纯文本、旧 plain 草稿转富文本、问候语预览                                                                 |
+| src/lib/compose-format.ts                | withSignature 前置问候语                                                                                              |
+| src/lib/types.ts / src/lib/signatures.ts | 问候语字段与快照                                                                                                      |
+| src/components/mail-signatures.tsx       | 问候语编辑区                                                                                                          |
+| src-tauri/src/signatures.rs              | 问候语字段 + serde default + 测试                                                                                     |
+| src-tauri/src/network.rs                 | multipart/alternative 纯文本备用 part                                                                                 |
+| src/index.css                            | 问候语预览样式                                                                                                        |
+| 测试                                     | compose-format 三态、inline-image 决策函数、剪贴板/拖拽提取、compose-dialog 预览、Rust 存取往返+旧数据兼容、MIME 结构 |
 
 ## 四、验收
 

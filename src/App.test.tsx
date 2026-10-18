@@ -376,6 +376,68 @@ describe("message and conversation display modes", () => {
     await chooseListMode("按对话分组");
     expect(host.querySelectorAll(".conversation-turn")).toHaveLength(2);
   });
+  it("toggles rows with the command key and clears the selection with Escape", async () => {
+    await click(nav("本地存档"));
+    await chooseListMode("逐封邮件");
+    const rows = [...host.querySelectorAll("button.mail-row-main")];
+    expect(rows.length).toBeGreaterThan(1);
+    // ⌘+点击：不连续多选，且不打开邮件
+    await act(async () => {
+      rows[0].dispatchEvent(
+        new MouseEvent("click", { metaKey: true, bubbles: true }),
+      );
+    });
+    expect(host.querySelector(".batch-toolbar")?.textContent).toContain(
+      "已选 1 封邮件",
+    );
+    expect(host.querySelectorAll(".mail-row.selected")).toHaveLength(0);
+    await act(async () => {
+      rows[2].dispatchEvent(
+        new MouseEvent("click", { metaKey: true, bubbles: true }),
+      );
+    });
+    expect(host.querySelector(".batch-toolbar")?.textContent).toContain(
+      "已选 2 封邮件",
+    );
+    // 再 ⌘+点一次取消
+    await act(async () => {
+      rows[0].dispatchEvent(
+        new MouseEvent("click", { metaKey: true, bubbles: true }),
+      );
+    });
+    expect(host.querySelector(".batch-toolbar")?.textContent).toContain(
+      "已选 1 封邮件",
+    );
+    // Esc 取消勾选
+    await act(async () => {
+      document.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+      );
+    });
+    expect(host.querySelector(".batch-toolbar")).toBeNull();
+  });
+  it("seeds the command-key selection with the mail already open and clears it by clicking the reader", async () => {
+    await click(nav("本地存档"));
+    await chooseListMode("逐封邮件");
+    const rows = [...host.querySelectorAll("button.mail-row-main")];
+    // 先普通点击打开第一封（此时没有勾选）
+    await click(rows[0]);
+    expect(host.querySelector(".batch-toolbar")).toBeNull();
+    // ⌘+点击第二封：当前打开的 + 新点的，一起进选区
+    await act(async () => {
+      rows[1].dispatchEvent(
+        new MouseEvent("click", { metaKey: true, bubbles: true }),
+      );
+    });
+    expect(host.querySelector(".batch-toolbar")?.textContent).toContain(
+      "已选 2 封邮件",
+    );
+    // 点正文就取消勾选，不必切文件夹
+    await act(async () => {
+      host.querySelector<HTMLElement>(".reader")!.click();
+    });
+    expect(host.querySelector(".batch-toolbar")).toBeNull();
+  });
   it("applies a selected single-mail batch action without trashing its reply", async () => {
     await seedReplyThread();
     await click(nav("本地存档"));
@@ -768,6 +830,19 @@ describe("reading unread mail within its current category", () => {
     expect(host.querySelector(".message-heading h1")?.textContent).toBe(
       seed.messages[0].subject,
     );
+  });
+  it("keeps a second compose window instead of overwriting the first draft", async () => {
+    const writeButton = () =>
+      [...host.querySelectorAll("button")].find((b) =>
+        b.textContent?.startsWith("写邮件"),
+      )!;
+    await click(writeButton());
+    expect(document.querySelectorAll(".compose-dialog")).toHaveLength(1);
+    await click(writeButton());
+    expect(document.querySelectorAll(".compose-dialog")).toHaveLength(2);
+    // 关掉其中一封，另一封还在
+    await click(document.querySelector('[aria-label="舍弃空白邮件"]'));
+    expect(document.querySelectorAll(".compose-dialog")).toHaveLength(1);
   });
   it.each(["回复", "转发"])(
     "%s retains the selected original HTML and sets the expected quoting default",

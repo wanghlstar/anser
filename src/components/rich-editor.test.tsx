@@ -483,3 +483,35 @@ it("shows a − % + zoom bar for the selected image and resizes in 25% steps", a
     "75%",
   );
 });
+
+// 用户实测：点「写邮件」时经常直接弹「富文本编辑器暂时无法加载 / null is not
+// an object (evaluating 'this.commandManager.commands')」。Tiptap v3 的 useEditor
+// 可能在提交与副作用之间销毁刚建的实例，此时 editor.commands 取的是已被置空的
+// commandManager，只要有人碰它就会抛错。
+it("survives the greeting insert when the editor was destroyed before the effect ran", async () => {
+  const greeting = {
+    text: "尊敬的客户：",
+    fontFamily: "SimSun",
+    fontSize: "18pt",
+  };
+  const props = {
+    body: "",
+    html: "",
+    disabled: false,
+    onChange: vi.fn(),
+    onBusy: vi.fn(),
+    readImages: vi.fn(),
+  };
+  // 第一轮还没有问候语 → 插入的副作用还没真正跑过，问候语仍待插入。
+  await act(async () => root.render(<RichEditor {...props} greeting={null} />));
+  const editor = captured.editor as Editor;
+  await act(async () => {
+    editor.destroy();
+  });
+  // 问候语到位时实例已被销毁：以前这里会抛错并冒泡到错误边界。
+  await act(async () =>
+    root.render(<RichEditor {...props} greeting={greeting} />),
+  );
+  expect(editor.isDestroyed).toBe(true);
+  expect(vi.mocked(toast.error).mock.calls).toEqual([]);
+});

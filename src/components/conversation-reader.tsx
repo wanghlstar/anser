@@ -68,6 +68,7 @@ function Turn({
   onAttachment,
   onAction,
   onLink,
+  onInteract,
   onLoaded,
 }: {
   mail: Mail;
@@ -79,6 +80,7 @@ function Turn({
   onAttachment: (mail: Mail, index: number, name: string) => Promise<void>;
   onAction: (mail: Mail, action: string, value: string) => void;
   onLink: (href: string) => void;
+  onInteract?: () => void;
   onLoaded: (detail: Detail) => void;
 }) {
   const [detail, setDetail] = useState<Detail | null>(selected);
@@ -215,6 +217,7 @@ function Turn({
             html={detail.html}
             title={`邮件正文：${mail.id}`}
             onOpenLink={onLink}
+            onInteract={onInteract}
           />
         ) : (
           <div className="message-body">{detail.mail.body}</div>
@@ -495,6 +498,7 @@ export function ConversationReader({
   onAttachment,
   onAction,
   onLink,
+  onInteract,
 }: {
   selected: Detail;
   singleMessage?: boolean;
@@ -510,6 +514,7 @@ export function ConversationReader({
   onAttachment: (mail: Mail, index: number, name: string) => Promise<void>;
   onAction: (mail: Mail, action: string, value: string) => void;
   onLink: (href: string) => void;
+  onInteract?: () => void;
 }) {
   const [messages, setMessages] = useState<Mail[]>([selected.mail]);
   const [details, setDetails] = useState<Record<string, Detail>>({
@@ -614,7 +619,11 @@ export function ConversationReader({
         >
           <ParseWarnings mail={selected.mail} />
           {selected.html ? (
-            <MailContent html={selected.html} onOpenLink={onLink} />
+            <MailContent
+              html={selected.html}
+              onOpenLink={onLink}
+              onInteract={onInteract}
+            />
           ) : (
             <div className="message-body">{selected.mail.body}</div>
           )}
@@ -667,6 +676,7 @@ export function ConversationReader({
                 onAttachment={onAttachment}
                 onAction={onAction}
                 onLink={onLink}
+                onInteract={onInteract}
                 onLoaded={loaded}
               />
             ))}

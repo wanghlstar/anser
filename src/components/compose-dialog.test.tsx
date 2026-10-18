@@ -262,6 +262,18 @@ describe("compose formats and scheduling", () => {
       formatBar!.querySelector('button[aria-label="正文格式"]'),
     ).toBeTruthy();
   });
+  it("expands 密送 on click and folds it back with 收起密送", async () => {
+    // 抄送常显，密送默认收起；展开后必须能再收回去（哪怕已经填了地址）。
+    const bccRow = () =>
+      document.querySelector("#bcc")?.closest(".compose-row");
+    expect(document.querySelector("#cc")?.closest(".compose-row")).toBeTruthy();
+    expect(bccRow()).toBeFalsy();
+    await click("密送");
+    expect(bccRow()).toBeTruthy();
+    await input("#bcc", "hidden@example.com");
+    await click("收起密送");
+    expect(bccRow()).toBeFalsy();
+  });
   it("creates a frozen demo plan and cancellation returns a new editable draft", async () => {
     seed = {
       ...seed,
@@ -329,6 +341,28 @@ describe("compose formats and scheduling", () => {
   });
 });
 
+it("names an empty subject after the pasted attachment file", async () => {
+  seed = { ...seed, id: "paste-attachment", subject: "" };
+  await renderHarness();
+  const subject = document.querySelector<HTMLInputElement>("#subject")!;
+  await act(async () => {
+    const event = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "clipboardData", {
+      value: {
+        files: [],
+        getData: (type: string) =>
+          type === "text/uri-list"
+            ? "file:///Users/me/%E5%90%88%E5%90%8C.pdf"
+            : "",
+      },
+    });
+    subject.dispatchEvent(event);
+  });
+  expect(document.querySelector(".compose-attachments")?.textContent).toContain(
+    "合同.pdf",
+  );
+  expect(subject.value).toBe("合同");
+});
 it("uses a shadcn confirmation for an empty subject and cancellation keeps the draft", async () => {
   seed = { ...seed, id: "empty-subject", subject: "" };
   await renderHarness();
@@ -644,5 +678,229 @@ describe("empty drafts", () => {
     expect(error).toHaveBeenCalledWith(
       "空白邮件舍弃失败：Error: database unavailable",
     );
+  });
+});
+
+describe("compose window management", () => {
+  const dialog = () =>
+    document.querySelector(".compose-dialog") as unknown as HTMLElement;
+  const header = () =>
+    dialog().querySelector('[data-slot="dialog-header"]') as unknown as Element;
+  // jsdom 没有 PointerEvent：React 按事件名匹配，用 MouseEvent 触发即可。
+  async function pointer(element: Element, type: string, x: number, y: number) {
+    await act(async () => {
+      element.dispatchEvent(
+        new MouseEvent(type, {
+          bubbles: true,
+          cancelable: true,
+          button: 0,
+          buttons: type === "pointerup" ? 0 : 1,
+          clientX: x,
+          clientY: y,
+        }),
+      );
+    });
+  }
+  async function doubleClickHeader() {
+    await act(async () => {
+      header().dispatchEvent(
+        new MouseEvent("dblclick", { bubbles: true, cancelable: true }),
+      );
+    });
+  }
+  const style = (name: string) => dialog().style.getPropertyValue(name);
+
+  it("非模态打开：没有遮罩层，打字区仍在版面上", () => {
+    expect(dialog()).toBeTruthy();
+    expect(document.querySelector('[data-slot="dialog-overlay"]')).toBeNull();
+    expect(dialog().className).not.toContain("compose-expanded");
+    expect(document.querySelectorAll(".compose-resize-handle")).toHaveLength(8);
+  });
+
+  it("拖动标题区切到浮动定位，位置按视口收敛", async () => {
+    await pointer(header(), "pointerdown", 100, 60);
+    expect(dialog().className).toContain("compose-floating");
+    await pointer(header(), "pointermove", 140, 90);
+    await pointer(header(), "pointerup", 140, 90);
+    // 基准取 clampGeometry(jsdom 里 rect 全 0 → 8,8,640,420)，再位移 (+40,+30)
+    expect(style("--compose-left")).toBe("48px");
+    expect(style("--compose-top")).toBe("38px");
+    expect(style("--compose-width")).toBe("640px");
+    expect(style("--compose-height")).toBe("420px");
+  });
+
+  it("双击标题区最大化，再双击还原，最大化时收掉缩放手柄", async () => {
+    await doubleClickHeader();
+    expect(dialog().className).toContain("compose-expanded");
+    expect(document.querySelectorAll(".compose-resize-handle")).toHaveLength(0);
+    await doubleClickHeader();
+    expect(dialog().className).not.toContain("compose-expanded");
+    expect(document.querySelectorAll(".compose-resize-handle")).toHaveLength(8);
+  });
+
+  it("右下角热区缩放，并在最小尺寸处停住", async () => {
+    const se = dialog().querySelector(
+      '.compose-resize-handle[data-dir="se"]',
+    ) as unknown as Element;
+    await pointer(se, "pointerdown", 200, 200);
+    await pointer(se, "pointermove", 300, 280);
+    expect(style("--compose-width")).toBe("740px");
+    expect(style("--compose-height")).toBe("500px");
+    await pointer(se, "pointermove", 0, 0);
+    expect(style("--compose-width")).toBe("640px");
+    expect(style("--compose-height")).toBe("420px");
+  });
+
+  it("最小化收起正文、显示底部还原条，点还原条回来", async () => {
+    await click("最小化写信窗口");
+    expect(dialog().className).toContain("compose-minimized");
+    const bar = document.querySelector(".compose-restore-bar");
+    expect(bar).toBeTruthy();
+    expect(bar!.textContent).toContain("写邮件");
+    await click("继续写信");
+    expect(dialog().className).not.toContain("compose-minimized");
+    expect(document.querySelector(".compose-restore-bar")).toBeNull();
+    expect(document.querySelector('[aria-label="邮件正文"]')).toBeTruthy();
+  });
+
+  it("点击窗口之外自动收成细条，且不会关闭正在写的草稿", async () => {
+    await pointer(document.body, "pointerdown", 4, 4);
+    await pointer(document.body, "pointerup", 4, 4);
+    expect(document.querySelector(".compose-dialog")).toBeTruthy();
+    expect(dialog().className).toContain("compose-minimized");
+    expect(document.querySelector(".compose-restore-bar")).toBeTruthy();
+    expect(document.querySelector('[aria-label="邮件正文"]')).toBeTruthy();
+  });
+
+  it("点写信窗口自己的弹层不会把窗口收起来", async () => {
+    // 字体/字号下拉这些弹层在 DOM 上挂在 .compose-dialog 之外，点它们不算离开写信窗口
+    const listbox = document.createElement("div");
+    listbox.setAttribute("role", "listbox");
+    document.body.append(listbox);
+    await pointer(listbox, "pointerdown", 10, 10);
+    await pointer(listbox, "pointerup", 10, 10);
+    listbox.remove();
+    expect(dialog().className).not.toContain("compose-minimized");
+    expect(document.querySelector(".compose-restore-bar")).toBeNull();
+  });
+
+  it("点写信窗派生出来的浮层（图片缩放浮条 / 通知 / 提示气泡）不会把窗口收起来", async () => {
+    // 用户反馈的误触：图片缩放 − % + 浮条（.rich-image-zoom，portal 到 body）、
+    // sonner 通知、富文本工具条的提示气泡，以前都不在白名单里，点一下正在写的信就被收起来。
+    const zoomBar = document.createElement("div");
+    zoomBar.className = "rich-image-zoom";
+    const notice = document.createElement("div");
+    notice.setAttribute("data-sonner-toast", "");
+    const tip = document.createElement("div");
+    tip.setAttribute("role", "tooltip");
+    // 别的写信窗收成细条后的「继续写信」条
+    const otherBar = document.createElement("div");
+    otherBar.className = "compose-restore-bar";
+    document.body.append(zoomBar, notice, tip, otherBar);
+    for (const element of [zoomBar, notice, tip, otherBar]) {
+      await pointer(element, "pointerdown", 10, 10);
+      await pointer(element, "pointerup", 10, 10);
+    }
+    zoomBar.remove();
+    notice.remove();
+    tip.remove();
+    otherBar.remove();
+    expect(dialog().className).not.toContain("compose-minimized");
+    expect(document.querySelector(".compose-restore-bar")).toBeNull();
+  });
+
+  it("拖动基准取实际盒子，居中不再依赖会被生产构建吃掉的 translate", async () => {
+    // 居中改成 left/right + margin:auto：DialogContent 自带的 translate-x/y-[-50%] 必须被顶掉，
+    // 否则一旦设了 left/top，窗口会整体偏半个身位；而生产 CSS 压缩器会把 translate 覆盖折进
+    // transform 一起丢掉（dev 下看不出来），所以覆盖手段不能是 CSS。
+    const classes = dialog().className;
+    expect(classes).toContain("translate-x-0");
+    expect(classes).toContain("translate-y-0");
+    expect(classes).not.toContain("translate-x-[-50%]");
+    expect(classes).not.toContain("translate-y-[-50%]");
+    // 基准直接取 rect：窗口用 transform:none 关掉了入场缩放，rect 就是真实盒子，不用再折半。
+    const element = dialog();
+    element.getBoundingClientRect = () =>
+      ({
+        left: 60,
+        top: 50,
+        width: 640,
+        height: 420,
+        right: 700,
+        bottom: 470,
+        x: 60,
+        y: 50,
+        toJSON: () => ({}),
+      }) as DOMRect;
+    await pointer(header(), "pointerdown", 300, 200);
+    // 按下本身不移动窗口
+    expect(style("--compose-left")).toBe("60px");
+    expect(style("--compose-top")).toBe("50px");
+    await pointer(header(), "pointermove", 340, 230);
+    expect(style("--compose-left")).toBe("100px");
+    expect(style("--compose-top")).toBe("80px");
+    expect(style("--compose-width")).toBe("640px");
+    expect(style("--compose-height")).toBe("420px");
+  });
+
+  it("在窗口外松开后再滑回标题区，不会带着旧基准把窗口拽走", async () => {
+    await pointer(header(), "pointerdown", 100, 60);
+    await pointer(header(), "pointermove", 140, 90);
+    expect(style("--compose-left")).toBe("48px");
+    // 松手发生在窗口之外（收不到元素上的 pointerup），再滑回标题区时不得继续拖动
+    await pointer(document.body, "pointerup", 9, 9);
+    await pointer(header(), "pointermove", 900, 600);
+    expect(style("--compose-left")).toBe("48px");
+    expect(style("--compose-top")).toBe("38px");
+  });
+
+  it("窗口控制是标题左侧的三灯：关闭 / 最小化 / 最大化", () => {
+    const heading = dialog().querySelector(".compose-heading")!;
+    const lights = heading.firstElementChild as HTMLElement;
+    expect(lights.className).toContain("compose-lights");
+    const buttons = [...lights.querySelectorAll(".compose-light")];
+    expect(buttons).toHaveLength(3);
+    expect(buttons.map((b) => b.getAttribute("aria-label"))).toEqual([
+      expect.stringMatching(/^(保存草稿并关闭|舍弃空白邮件)$/),
+      "最小化写信窗口",
+      "最大化写信窗口",
+    ]);
+    expect(buttons.map((b) => b.className)).toEqual([
+      expect.stringContaining("compose-light-close"),
+      expect.stringContaining("compose-light-min"),
+      expect.stringContaining("compose-light-zoom"),
+    ]);
+    // 标题紧跟三灯之后
+    expect(heading.lastElementChild?.tagName).toBe("H2");
+  });
+
+  it("WKWebView 里移动事件报 buttons=0 时依然能拖动窗口", async () => {
+    // 真机实测：WKWebView 的 pointermove/mousemove 的 buttons 恒为 0（131 次移动全是 0），
+    // 手势绝不能靠 buttons 判断「鼠标还按着」，否则第一次 move 就取消，表现为拖不动。
+    await pointer(header(), "pointerdown", 100, 60);
+    await act(async () => {
+      header().dispatchEvent(
+        new MouseEvent("pointermove", {
+          bubbles: true,
+          cancelable: true,
+          button: 0,
+          buttons: 0,
+          clientX: 140,
+          clientY: 90,
+        }),
+      );
+    });
+    expect(style("--compose-left")).toBe("48px");
+    expect(style("--compose-top")).toBe("38px");
+  });
+
+  it("最大化后最小化，点「继续写信」仍回到最大化", async () => {
+    await doubleClickHeader();
+    expect(dialog().className).toContain("compose-expanded");
+    await click("最小化写信窗口");
+    expect(dialog().className).toContain("compose-minimized");
+    await click("继续写信");
+    expect(dialog().className).not.toContain("compose-minimized");
+    expect(dialog().className).toContain("compose-expanded");
   });
 });

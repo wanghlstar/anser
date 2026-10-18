@@ -26,7 +26,7 @@ import { NodeSelection, type Transaction } from "@tiptap/pm/state";
 import DOMPurify from "dompurify";
 import { Button } from "./ui/button";
 import { textToHtml } from "@/lib/compose-format";
-import { native, isDemo } from "@/lib/api";
+import { call, native, isDemo } from "@/lib/api";
 import { toast } from "sonner";
 import { TooltipProvider } from "./ui/tooltip";
 import { attachmentPathsFromClipboard } from "@/lib/compose-attachments";
@@ -140,13 +140,25 @@ export function RichEditor({
         );
         if (!files.length) {
           // 粘贴的是复制的文件（非图片）时登记为附件，而不是插入正文。
-          const paths = attachmentPathsFromClipboard(
-            event.clipboardData ?? null,
-          );
+          const paths = attachmentPathsFromClipboard(event.clipboardData);
           if (paths.length && latest.current.onAttachFiles) {
             event.preventDefault();
             latest.current.onAttachFiles(paths);
             return true;
+          }
+          // WKWebView 的 DataTransfer 读不到 Finder ⌘C 的文件。只有当这次
+          // 粘贴既不是图片也没有任何可插入的文本/HTML 时，才去查系统剪贴板，
+          // 避免把普通文本粘贴也变成附件。
+          const clipboard = event.clipboardData;
+          const plain = clipboard?.getData("text/plain") ?? "";
+          const markup = clipboard?.getData("text/html") ?? "";
+          const hasPasteableText = !!plain.trim() || !!markup.trim();
+          if (native && !isDemo() && !hasPasteableText) {
+            void call<string[]>("pasteboard_file_paths")
+              .then((found) => {
+                if (found.length) latest.current.onAttachFiles?.(found);
+              })
+              .catch(() => {});
           }
           return false;
         }
@@ -190,7 +202,12 @@ export function RichEditor({
   const greetingInserted = useRef("");
   // 问候语作为正文第一行插入：空文档才插，插过一次或草稿里已有正文都不再动。
   useEffect(() => {
-    if (!editor || !greeting?.text) return;
+    // Tiptap v3 的 useEditor 会在「已提交但副作用还没跑」的窗口里销毁刚创建的
+    // 实例（scheduleDestroy 的 1ms 定时器），此时 editor.commands 取的是已被
+    // destroy 置空的 this.commandManager，直接抛
+    // 「null is not an object (evaluating 'this.commandManager.commands')」。
+    // 所以先确认实例还活着；新实例建好后本副作用会因 editor 变化重跑，问候语不会丢。
+    if (!editor || editor.isDestroyed || !greeting?.text) return;
     if (greetingInserted.current === greeting.text || !blankBody(editor))
       return;
     const attrs: Record<string, string> = {};
@@ -217,7 +234,10 @@ export function RichEditor({
         },
       ])
       .run();
-    editor.commands.setTextSelection(editor.state.doc.content.size - 1);
+    editor
+      .chain()
+      .setTextSelection(editor.state.doc.content.size - 1)
+      .run();
     greetingInserted.current = greeting.text;
   }, [editor, greeting]);
   async function insertImages(load: () => Promise<BodyImage[]>, pos?: number) {
@@ -284,7 +304,8 @@ export function RichEditor({
   }
   useImperativeHandle(ref, () => ({
     insertPaths(paths, point) {
-      const rect = editor?.view.dom.getBoundingClientRect();
+      if (!editor || editor.isDestroyed) return false;
+      const rect = editor.view.dom.getBoundingClientRect();
       if (
         !rect ||
         point.x < rect.left ||
@@ -311,7 +332,7 @@ export function RichEditor({
   useEffect(() => {
     editor?.setEditable(!disabled, false);
   }, [editor, disabled]);
-  if (!editor) return null;
+  if (!editor || editor.isDestroyed) return null;
   return (
     <TooltipProvider>
       <div className="rich-editor">
@@ -362,7 +383,7 @@ export function RichEditor({
           <DialogContent
             onCloseAutoFocus={(e) => {
               e.preventDefault();
-              editor.commands.focus();
+              if (!editor.isDestroyed) editor.commands.focus();
             }}
           >
             <DialogHeader>

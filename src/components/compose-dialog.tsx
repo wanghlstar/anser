@@ -17,18 +17,27 @@ import type { MailSignature } from "@/lib/types";
 import { disableFrameContextMenu } from "@/lib/context-menu";
 import {
   mergeAttachmentPaths,
+  attachmentPathsFromClipboard,
+  attachmentSubject,
   insideComposeDrop,
 } from "@/lib/compose-attachments";
+import { ComposeAttachments } from "./compose-attachments";
 import { SelectField, SelectOption } from "@/components/ui/select-field";
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  lazy,
+  Suspense,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   Paperclip,
   Send,
   Check,
-  X,
   LoaderCircle,
-  Maximize2,
-  Minimize2,
+  ChevronUp,
   Clock3,
   Eye,
   Code2,
@@ -75,12 +84,72 @@ import { toast } from "sonner";
 import { isImagePath, type BodyImage } from "@/lib/rich-body";
 import type { RichEditorHandle } from "./rich-editor";
 import { RichEditorBoundary } from "./rich-editor-boundary";
+
+/** 写信窗口（浮动面板）的位置与尺寸，单位 px，相对视口左上角。 */
+type ComposeGeometry = {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+};
+const COMPOSE_MIN_WIDTH = 640;
+const COMPOSE_MIN_HEIGHT = 420;
+/** 写信窗口窄于此宽度时，工具条只留图标（媒体查询在窄视口下的兜底）。
+ *  默认写信窗口 1100px 宽：实测工具条各控件在 1100px 与 1316px 下宽度完全一致、仍是单行，
+ *  所以阈值放在默认宽度之下，保住「发送预览 / 导入文件」的文字标签。 */
+const COMPOSE_NARROW_WIDTH = 1080;
+
+/** 抓住指针：拖到窗口外再松手也能收到 pointerup 正常收尾。
+ *  jsdom 等环境没有指针捕获，失败就退回 window 上的监听。 */
+function capturePointer(event: React.PointerEvent<HTMLElement>) {
+  try {
+    event.currentTarget.setPointerCapture(event.pointerId);
+  } catch {
+    /* 环境不支持指针捕获 */
+  }
+}
+
+/** 把窗口收敛到「不小于最小尺寸、且完整留在视口内」，避免拖到屏幕外找不回来。 */
+function clampGeometry(next: ComposeGeometry): ComposeGeometry {
+  const viewportWidth = window.innerWidth;
+  const viewportHeight = window.innerHeight;
+  const width = Math.min(
+    Math.max(next.width, COMPOSE_MIN_WIDTH),
+    viewportWidth - 16,
+  );
+  const height = Math.min(
+    Math.max(next.height, COMPOSE_MIN_HEIGHT),
+    viewportHeight - 16,
+  );
+  return {
+    width,
+    height,
+    left: Math.min(
+      Math.max(next.left, 8),
+      Math.max(8, viewportWidth - width - 8),
+    ),
+    top: Math.min(
+      Math.max(next.top, 8),
+      Math.max(8, viewportHeight - height - 8),
+    ),
+  };
+}
+
+/** 点到这些控件上时视为普通点击，不触发拖动/双击最大化。 */
+function isComposeControl(target: EventTarget | null) {
+  const element = target as HTMLElement | null;
+  return !!element?.closest?.(
+    "button, input, textarea, select, a, [role=button], [data-no-drag]",
+  );
+}
+
 export function ComposeDialog({
   draft,
   onClose,
   accounts,
   onSent,
   onBackground,
+  stackIndex = 0,
 }: {
   draft: Compose | null;
   onClose: () => void;
@@ -88,6 +157,8 @@ export function ComposeDialog({
   onSent: () => void;
   /** 收起写信窗口，倒计时期间在后台继续，撤回时回到草稿 */
   onBackground?: (draft: Compose, seconds: number) => void;
+  /** 同屏第几个写信窗口：多个「继续写信」还原条错开，避免叠在一起 */
+  stackIndex?: number;
 }) {
   const { askConfirmation, cancelConfirmation, confirmationDialog } =
     useConfirmation();
@@ -95,10 +166,13 @@ export function ComposeDialog({
     [saved, setSaved] = useState(false),
     [sending, setSending] = useState(false),
     [closing, setClosing] = useState(false),
-    [extra, setExtra] = useState(false);
+    [bccOpen, setBccOpen] = useState<boolean | null>(null);
   const [signatureError, setSignatureError] = useState("");
   const [signatureReload, setSignatureReload] = useState(0);
   const [suggestions, setSuggestions] = useState<Address[]>([]);
+  // 抄送默认就在版面上，密送点「密送」展开、再点「收起密送」收回去；
+  // 初始为 null 表示跟随草稿（草稿本来有密送就直接显示）。
+  const showBcc = bccOpen ?? !!value?.bcc.trim();
   const [deliveryPreview, setDeliveryPreview] = useState(false);
   // 发送倒计时秒数来自设置；未读到偏好时按 8 秒（历史默认值）
   const [countdownSeconds, setCountdownSeconds] = useState(5);
@@ -118,6 +192,190 @@ export function ComposeDialog({
   const sourceFile = useRef<HTMLInputElement>(null);
   const previewFrame = useRef<HTMLIFrameElement>(null);
   const dialogElement = useRef<HTMLDivElement>(null);
+  // 浮动写信窗口：geometry 为 null 时保持默认居中布局，一旦拖动/缩放就切到显式定位。
+  const [geometry, setGeometry] = useState<ComposeGeometry | null>(null);
+  const [minimized, setMinimized] = useState(false);
+  const [narrowToolbar, setNarrowToolbar] = useState(false);
+  const geometryRef = useRef<ComposeGeometry | null>(null);
+  // 进行中的拖动/缩放。move/up 挂在 window 上（见下面的 effect），所以状态不放在触发元素上。
+  const [gesture, setGesture] = useState<{
+    kind: "drag" | "resize";
+    dir?: string;
+    x: number;
+    y: number;
+    base: ComposeGeometry;
+  } | null>(null);
+  const commitGeometry = useCallback((next: ComposeGeometry | null) => {
+    geometryRef.current = next;
+    setGeometry(next);
+  }, []);
+  // 居中布局下没有显式几何，拖动/缩放前先取一次基准。
+  // 取 getBoundingClientRect()：居中已经不用 translate（见 index.css 里的居中方式），
+  // 且写信窗口用 transform:none 关掉了入场缩放，所以 rect 就是真实的布局盒，
+  // 不会像 computed style 那样把居中 margin 漏掉（left 恒为 0）。
+  const measureGeometry = (): ComposeGeometry | null => {
+    const element = dialogElement.current;
+    if (!element) return null;
+    const rect = element.getBoundingClientRect();
+    return {
+      left: rect.left,
+      top: rect.top,
+      width: rect.width,
+      height: rect.height,
+    };
+  };
+  const beginDrag = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0 || expanded || minimized || gesture) return;
+    if (isComposeControl(event.target)) return;
+    const base = geometryRef.current ?? measureGeometry();
+    if (!base) return;
+    const next = clampGeometry(base);
+    commitGeometry(next);
+    capturePointer(event);
+    setGesture({
+      kind: "drag",
+      x: event.clientX,
+      y: event.clientY,
+      base: next,
+    });
+    event.preventDefault();
+  };
+  const beginResize =
+    (dir: string) => (event: React.PointerEvent<HTMLDivElement>) => {
+      if (event.button !== 0 || expanded || minimized || gesture) return;
+      const base = geometryRef.current ?? measureGeometry();
+      if (!base) return;
+      const next = clampGeometry(base);
+      commitGeometry(next);
+      capturePointer(event);
+      setGesture({
+        kind: "resize",
+        dir,
+        x: event.clientX,
+        y: event.clientY,
+        base: next,
+      });
+      event.preventDefault();
+    };
+  // move/up 挂在 window 上：只挂元素上时指针一离开就断，手势收不了尾，
+  // 之后再滑回标题区还会带着旧基准把窗口拽飞。
+  // 注意：这里绝不能靠 event.buttons 判断「鼠标已松开」——WKWebView 里
+  // pointermove/mousemove 的 buttons 恒为 0（实测 131 次移动全是 0），
+  // 用它做守卫会把每一次拖动都在第一次 move 时取消，表现为「拖不动」。
+  useEffect(() => {
+    if (!gesture) return;
+    const handleMove = (event: PointerEvent) => {
+      const { base } = gesture;
+      const dx = event.clientX - gesture.x;
+      const dy = event.clientY - gesture.y;
+      if (gesture.kind === "drag") {
+        commitGeometry(
+          clampGeometry({
+            left: base.left + dx,
+            top: base.top + dy,
+            width: base.width,
+            height: base.height,
+          }),
+        );
+        return;
+      }
+      const dir = gesture.dir ?? "";
+      let { left, top, width, height } = base;
+      if (dir.includes("e")) width = base.width + dx;
+      if (dir.includes("w")) {
+        width = base.width - dx;
+        left = base.left + dx;
+      }
+      if (dir.includes("s")) height = base.height + dy;
+      if (dir.includes("n")) {
+        height = base.height - dy;
+        top = base.top + dy;
+      }
+      // 顶到最小尺寸时，向「西/北」缩放要反向补偿，避免窗口被推着跑。
+      if (width < COMPOSE_MIN_WIDTH) {
+        if (dir.includes("w"))
+          left = base.left + base.width - COMPOSE_MIN_WIDTH;
+        width = COMPOSE_MIN_WIDTH;
+      }
+      if (height < COMPOSE_MIN_HEIGHT) {
+        if (dir.includes("n"))
+          top = base.top + base.height - COMPOSE_MIN_HEIGHT;
+        height = COMPOSE_MIN_HEIGHT;
+      }
+      commitGeometry(clampGeometry({ left, top, width, height }));
+    };
+    const finishGesture = () => setGesture(null);
+    window.addEventListener("pointermove", handleMove);
+    window.addEventListener("pointerup", finishGesture);
+    window.addEventListener("pointercancel", finishGesture);
+    // pointerup 丢失时（指针在窗口外松开）mouseup 兜底收尾。
+    window.addEventListener("mouseup", finishGesture);
+    window.addEventListener("blur", finishGesture);
+    return () => {
+      window.removeEventListener("pointermove", handleMove);
+      window.removeEventListener("pointerup", finishGesture);
+      window.removeEventListener("pointercancel", finishGesture);
+      window.removeEventListener("mouseup", finishGesture);
+      window.removeEventListener("blur", finishGesture);
+    };
+  }, [gesture, commitGeometry]);
+  // 最小化只收起窗口，不改最大化状态：从「继续写信」恢复要回到上一次的尺寸。
+  const minimizeCompose = useCallback(() => {
+    setMinimized(true);
+  }, []);
+  const toggleExpanded = () => {
+    setMinimized(false);
+    setExpanded((current) => !current);
+  };
+  const handleHeaderDoubleClick = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (isComposeControl(event.target)) return;
+    toggleExpanded();
+  };
+  // 点写信框以外的区域自动把窗口收成底部细条（用户要求：写信时要能腾出手看别的邮件）。
+  // 这里自己挂 document 监听，不用 Radix 的 onInteractOutside——那个只负责「别关闭草稿」，
+  // 而且在 jsdom 里不触发，单测覆盖不到。注册时机在打开它的那次 pointerdown 之后，不会自伤。
+  useEffect(() => {
+    if (!draft || minimized || sending || closing) return;
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as Element | null;
+      if (!target?.closest) return;
+      // 写信窗派生出来的 UI 不算「离开写信窗口」：
+      // 窗口自己的字体/字号下拉、发送预览、右键菜单（role 判定），
+      // 富文本工具条的提示气泡（tooltip），
+      // 图片缩放 − % + 浮条（.rich-image-zoom，portal 到 body），
+      // sonner 通知横幅，别的写信窗的「继续写信」还原条。
+      // 后三样以前没进白名单：点一下缩放、点一下通知或还原条，正在写的信就被收起来。
+      if (
+        target.closest(
+          '.rich-image-zoom, [data-sonner-toast], .compose-restore-bar, [role="dialog"], [role="alertdialog"], [role="listbox"], [role="menu"], [role="tooltip"]',
+        )
+      )
+        return;
+      minimizeCompose();
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => document.removeEventListener("pointerdown", handlePointerDown);
+  }, [draft, minimized, sending, closing, minimizeCompose]);
+  // 视口变化后把浮动窗口拉回可见范围。
+  useEffect(() => {
+    const handleViewportResize = () => {
+      if (geometryRef.current)
+        commitGeometry(clampGeometry(geometryRef.current));
+    };
+    window.addEventListener("resize", handleViewportResize);
+    return () => window.removeEventListener("resize", handleViewportResize);
+  }, [commitGeometry]);
+  // 工具条按「写信窗口自身宽度」而非视口决定是否只留图标，缩放后也能正确降级。
+  useEffect(() => {
+    const element = dialogElement.current;
+    if (!element || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry)
+        setNarrowToolbar(entry.contentRect.width < COMPOSE_NARROW_WIDTH);
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [draft?.id]);
   const [forwardError, setForwardError] = useState("");
   const [forwardLoading, setForwardLoading] = useState(false);
   const [imageLoading, setImageLoading] = useState(false);
@@ -242,17 +500,18 @@ export function ComposeDialog({
             ? paths.filter((path) => !isImagePath(path))
             : paths;
           if (!attached.length) return;
-          setValue((current) =>
-            current?.id === id
-              ? {
-                  ...current,
-                  attachments: mergeAttachmentPaths(
-                    current.attachments,
-                    attached,
-                  ),
-                }
-              : current,
-          );
+          setValue((current) => {
+            if (current?.id !== id) return current;
+            const attachments = mergeAttachmentPaths(
+              current.attachments,
+              attached,
+            );
+            return {
+              ...current,
+              attachments,
+              subject: attachmentSubject(current.subject, attachments),
+            };
+          });
         }),
       )
       .then((stop) => {
@@ -283,8 +542,12 @@ export function ComposeDialog({
     setForwardLoading(false);
     imageBusy.current = false;
     setImageLoading(false);
-    setExtra(!!draft?.cc || !!draft?.bcc);
+    setBccOpen(null);
     setExpanded(false);
+    setGeometry(null);
+    geometryRef.current = null;
+    setMinimized(false);
+    setNarrowToolbar(false);
     setPlanning(false);
     setDeliveryPreview(false);
     setPlanTime(localDateTime());
@@ -557,6 +820,11 @@ export function ComposeDialog({
   }
   const format = value ? composeFormat(value) : "rich";
   const hasContent = !!value && hasDraftContent(value);
+  const composeLabel = draft?.subject.startsWith("Re:")
+    ? "回复邮件"
+    : draft?.subject.startsWith("Fwd:")
+      ? "转发邮件"
+      : "写邮件";
   async function attach() {
     if (!native || isDemo()) {
       toast.info("请在桌面客户端中添加真实附件");
@@ -564,13 +832,16 @@ export function ComposeDialog({
     }
     const { open } = await import("@tauri-apps/plugin-dialog");
     const paths = await open({ multiple: true, directory: false });
-    if (paths)
+    if (paths) {
+      const attachments = mergeAttachmentPaths(
+        value?.attachments || [],
+        Array.isArray(paths) ? paths : [paths],
+      );
       update({
-        attachments: [
-          ...(value?.attachments || []),
-          ...(Array.isArray(paths) ? paths : [paths]),
-        ],
+        attachments,
+        subject: attachmentSubject(value?.subject || "", attachments),
       });
+    }
   }
   // 富文本模式下并入编辑器工具条；Markdown/HTML 模式下回到正文上方的格式栏
   const formatControls = value ? (
@@ -604,10 +875,11 @@ export function ComposeDialog({
         type="button"
         variant="ghost"
         size="sm"
+        title="发送预览"
         onClick={() => setDeliveryPreview(true)}
       >
         <Eye size={14} />
-        发送预览
+        <span className="extras-label">发送预览</span>
       </Button>
       {(format === "markdown" || format === "html") && (
         <Button
@@ -624,10 +896,11 @@ export function ComposeDialog({
         type="button"
         variant="ghost"
         size="sm"
+        title="导入文件"
         onClick={() => sourceFile.current?.click()}
       >
         <FileUp size={14} />
-        导入文件
+        <span className="extras-label">导入文件</span>
       </Button>
       <Input
         ref={sourceFile}
@@ -645,54 +918,135 @@ export function ComposeDialog({
   ) : null;
   return (
     <Dialog
+      modal={false}
       open={!!draft}
       onOpenChange={(v) => {
         if (!v) void close();
       }}
     >
+      {/* DialogContent 自带 translate-x/y-[-50%] 居中；写信窗口改成 left/right + margin:auto
+          居中（见 index.css），这两个类必须一起顶掉，否则窗口会整体偏半个身位。 */}
       <DialogContent
         ref={dialogElement}
-        className={`compose-dialog ${expanded ? "compose-expanded" : ""}`}
+        overlay={false}
+        className={`compose-dialog translate-x-0 translate-y-0${
+          expanded ? " compose-expanded" : ""
+        }${!expanded && geometry ? " compose-floating" : ""}${
+          minimized ? " compose-minimized" : ""
+        }${narrowToolbar ? " compose-narrow" : ""}`}
+        style={
+          !expanded && geometry
+            ? ({
+                "--compose-left": `${geometry.left}px`,
+                "--compose-top": `${geometry.top}px`,
+                "--compose-width": `${geometry.width}px`,
+                "--compose-height": `${geometry.height}px`,
+              } as React.CSSProperties)
+            : undefined
+        }
         showCloseButton={false}
         onInteractOutside={(e) => e.preventDefault()}
+        onFocusOutside={(e) => e.preventDefault()}
         onEscapeKeyDown={(e) => {
-          if (sending || closing) e.preventDefault();
+          // 最小化时窗口已经让开，Esc 不该把别处的操作误当成关闭草稿。
+          if (sending || closing || minimized) e.preventDefault();
           else if (expanded) {
             e.preventDefault();
             setExpanded(false);
           }
         }}
       >
-        <DialogHeader>
+        {!expanded &&
+          (["n", "s", "e", "w", "ne", "nw", "se", "sw"] as const).map((dir) => (
+            <div
+              key={dir}
+              className="compose-resize-handle"
+              data-dir={dir}
+              onPointerDown={beginResize(dir)}
+            />
+          ))}
+        <DialogHeader
+          onPointerDown={beginDrag}
+          onDoubleClick={handleHeaderDoubleClick}
+        >
           <div className="compose-heading">
-            <DialogTitle>
-              {draft?.subject.startsWith("Re:")
-                ? "回复邮件"
-                : draft?.subject.startsWith("Fwd:")
-                  ? "转发邮件"
-                  : "写邮件"}
-            </DialogTitle>
-            <div>
+            <div className="compose-lights">
               <Button
                 type="button"
                 variant="ghost"
                 size="icon-sm"
-                aria-label={expanded ? "还原写信窗口" : "最大化写信窗口"}
-                onClick={() => setExpanded(!expanded)}
-              >
-                {expanded ? <Minimize2 size={17} /> : <Maximize2 size={17} />}
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
+                className="compose-light compose-light-close"
                 aria-label={hasContent ? "保存草稿并关闭" : "舍弃空白邮件"}
                 disabled={sending || closing}
                 onClick={() => void close()}
               >
-                <X size={18} />
+                <svg
+                  viewBox="0 0 12 12"
+                  width={12}
+                  height={12}
+                  aria-hidden="true"
+                >
+                  <path
+                    d="M4.2 4.2 7.8 7.8M7.8 4.2 4.2 7.8"
+                    stroke="currentColor"
+                    strokeWidth={1.15}
+                    strokeLinecap="round"
+                  />
+                </svg>
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                className="compose-light compose-light-min"
+                aria-label="最小化写信窗口"
+                onClick={minimizeCompose}
+              >
+                <svg
+                  viewBox="0 0 12 12"
+                  width={12}
+                  height={12}
+                  aria-hidden="true"
+                >
+                  <path
+                    d="M3.4 6H8.6"
+                    stroke="currentColor"
+                    strokeWidth={1.15}
+                    strokeLinecap="round"
+                  />
+                </svg>
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                className="compose-light compose-light-zoom"
+                aria-label={expanded ? "还原写信窗口" : "最大化写信窗口"}
+                onClick={toggleExpanded}
+              >
+                {/* 主窗口（原生 macOS 三灯）的素材：绿灯是两块对角三角，
+                    最大化时朝外、还原时朝内。 */}
+                <svg
+                  viewBox="0 0 12 12"
+                  width={12}
+                  height={12}
+                  aria-hidden="true"
+                >
+                  {expanded ? (
+                    <path
+                      d="M3.3 3.3V7L7 3.3ZM8.7 8.7V5L5 8.7Z"
+                      fill="currentColor"
+                    />
+                  ) : (
+                    <path
+                      d="M8.7 3.3V7L5 3.3ZM3.3 8.7V5L7 8.7Z"
+                      fill="currentColor"
+                    />
+                  )}
+                </svg>
               </Button>
             </div>
+            <DialogTitle>{composeLabel}</DialogTitle>
           </div>
           <DialogDescription className="sr-only">
             有内容的邮件会自动保存草稿，空白邮件关闭时直接舍弃。
@@ -728,36 +1082,45 @@ export function ComposeDialog({
                   onChange={(to) => update({ to })}
                   suggestions={suggestions}
                 />
-                <Button
-                  variant="ghost"
-                  type="button"
-                  className="text-link"
-                  onClick={() => setExtra(!extra)}
-                >
-                  抄送 / 密送
-                </Button>
               </div>
-              {extra && (
-                <>
-                  <div className="compose-row">
-                    <Label htmlFor="cc">抄送</Label>
-                    <RecipientInput
-                      id="cc"
-                      value={value.cc}
-                      onChange={(cc) => update({ cc })}
-                      suggestions={suggestions}
-                    />
-                  </div>
-                  <div className="compose-row">
-                    <Label htmlFor="bcc">密送</Label>
-                    <RecipientInput
-                      id="bcc"
-                      value={value.bcc}
-                      onChange={(bcc) => update({ bcc })}
-                      suggestions={suggestions}
-                    />
-                  </div>
-                </>
+              <div className="compose-row">
+                <Label htmlFor="cc">抄送</Label>
+                <RecipientInput
+                  id="cc"
+                  value={value.cc}
+                  onChange={(cc) => update({ cc })}
+                  suggestions={suggestions}
+                />
+                {showBcc ? (
+                  <Button
+                    variant="ghost"
+                    type="button"
+                    className="text-link"
+                    onClick={() => setBccOpen(false)}
+                  >
+                    收起密送
+                  </Button>
+                ) : (
+                  <Button
+                    variant="ghost"
+                    type="button"
+                    className="text-link"
+                    onClick={() => setBccOpen(true)}
+                  >
+                    密送
+                  </Button>
+                )}
+              </div>
+              {showBcc && (
+                <div className="compose-row">
+                  <Label htmlFor="bcc">密送</Label>
+                  <RecipientInput
+                    id="bcc"
+                    value={value.bcc}
+                    onChange={(bcc) => update({ bcc })}
+                    suggestions={suggestions}
+                  />
+                </div>
               )}
               <div className="compose-row">
                 <Label htmlFor="subject">主题</Label>
@@ -766,6 +1129,53 @@ export function ComposeDialog({
                   value={value.subject}
                   onChange={(e) => update({ subject: e.target.value })}
                   placeholder="给这封邮件一个主题"
+                  onPaste={(event) => {
+                    // 在主题栏 ⌘V 复制的文件：登记成附件，主题栏保持空白
+                    // （主题为空时用附件名兜底）。剪贴板里没有可粘贴的文本时
+                    // 才走系统剪贴板，免得把普通文本粘贴也吞掉。
+                    const paths = attachmentPathsFromClipboard(
+                      event.clipboardData,
+                    );
+                    if (paths.length) {
+                      event.preventDefault();
+                      const attachments = mergeAttachmentPaths(
+                        value.attachments,
+                        paths,
+                      );
+                      update({
+                        attachments,
+                        subject: attachmentSubject(value.subject, attachments),
+                      });
+                      return;
+                    }
+                    const clipboard = event.clipboardData;
+                    const plain = clipboard?.getData("text/plain") ?? "";
+                    const markup = clipboard?.getData("text/html") ?? "";
+                    if (
+                      native &&
+                      !isDemo() &&
+                      !plain.trim() &&
+                      !markup.trim()
+                    ) {
+                      event.preventDefault();
+                      void call<string[]>("pasteboard_file_paths")
+                        .then((found) => {
+                          if (!found.length) return;
+                          const attachments = mergeAttachmentPaths(
+                            latest.current?.attachments || value.attachments,
+                            found,
+                          );
+                          update({
+                            attachments,
+                            subject: attachmentSubject(
+                              latest.current?.subject ?? value.subject,
+                              attachments,
+                            ),
+                          });
+                        })
+                        .catch(() => {});
+                    }
+                  }}
                 />
               </div>
               {format !== "rich" && (
@@ -826,14 +1236,19 @@ export function ComposeDialog({
                         }}
                         toolbarExtras={formatControls}
                         greeting={greeting}
-                        onAttachFiles={(paths) =>
+                        onAttachFiles={(paths) => {
+                          const attachments = mergeAttachmentPaths(
+                            latest.current?.attachments || value.attachments,
+                            paths,
+                          );
                           update({
-                            attachments: mergeAttachmentPaths(
-                              value.attachments,
-                              paths,
+                            attachments,
+                            subject: attachmentSubject(
+                              latest.current?.subject ?? value.subject,
+                              attachments,
                             ),
-                          })
-                        }
+                          });
+                        }}
                       />
                     </Suspense>
                   </RichEditorBoundary>
@@ -1032,27 +1447,16 @@ export function ComposeDialog({
                 </FieldSet>
               )}
               {value.attachments.length > 0 && (
-                <div className="compose-attachments">
-                  {value.attachments.map((p, i) => (
-                    <span key={p + i}>
-                      <Paperclip size={13} />
-                      {p.split("/").pop()}
-                      <Button
-                        variant="ghost"
-                        title="移除附件"
-                        onClick={() =>
-                          update({
-                            attachments: value.attachments.filter(
-                              (_, j) => i !== j,
-                            ),
-                          })
-                        }
-                      >
-                        <X size={13} />
-                      </Button>
-                    </span>
-                  ))}
-                </div>
+                <ComposeAttachments
+                  paths={value.attachments}
+                  onRemove={(index) =>
+                    update({
+                      attachments: value.attachments.filter(
+                        (_, i) => i !== index,
+                      ),
+                    })
+                  }
+                />
               )}
             </fieldset>
             {planning && (
@@ -1147,6 +1551,30 @@ export function ComposeDialog({
           </>
         )}
       </DialogContent>
+      {minimized && value && (
+        <div
+          className="compose-restore-bar"
+          style={
+            {
+              "--compose-bar-lift": `${stackIndex * 52}px`,
+            } as React.CSSProperties
+          }
+        >
+          <span className="compose-restore-label">
+            {composeLabel}
+            {value.subject.trim() ? ` · ${value.subject.trim()}` : ""}
+          </span>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => setMinimized(false)}
+          >
+            <ChevronUp size={14} />
+            继续写信
+          </Button>
+        </div>
+      )}
       <Dialog
         open={deliveryPreview && !!value}
         onOpenChange={setDeliveryPreview}

@@ -304,7 +304,8 @@ export default function App() {
     [retentionIntro, setRetentionIntro] = useState(false),
     [archiving, setArchiving] = useState(false),
     [contactSeed, setContactSeed] = useState<Address | null>(null),
-    [draft, setDraft] = useState<Compose | null>(null),
+    // 允许多个写信窗口并存：数组里每封一个窗口，各自保留自己的位置与最大化状态
+    [composes, setComposes] = useState<Compose[]>([]),
     [drafts, setDrafts] = useState<Compose[]>([]),
     // 发送倒计时：写信窗口收起后仍走完，撤回后邮件回到草稿
     [pendingSend, setPendingSend] = useState<{
@@ -317,6 +318,17 @@ export default function App() {
     [demo, setDemo] = useState(isDemo()),
     [clearingDrafts, setClearingDrafts] = useState(false),
     [dark, setDark] = useState(localStorage.getItem("mail-theme") === "dark");
+  // 「当前写信」= 最后打开的那封：键盘守卫、更新弹窗等仍按「有没有写信窗口」判断。
+  const draft = composes.length ? composes[composes.length - 1] : null;
+  // 每封邮件都是新开一个写信窗口（同 Foxmail）：互不覆盖，可各自最小化/最大化。
+  const openCompose = useCallback(
+    (next: Compose) => setComposes((list) => [...list, next]),
+    [],
+  );
+  const closeCompose = useCallback(
+    (id: string) => setComposes((list) => list.filter((d) => d.id !== id)),
+    [],
+  );
   const searchRef = useRef<HTMLInputElement>(null),
     request = useRef(0),
     queryRef = useRef(query),
@@ -458,6 +470,11 @@ export default function App() {
   const [archiveTree, setArchiveTree] = useState<LocalArchiveGroup[]>([]);
   // Shift 范围选择锚点
   const lastRowIndex = useRef(-1);
+  // 取消列表勾选：Esc、点空白、点正文都用它，已空时不触发重渲染。
+  const clearChecked = useCallback(
+    () => setChecked((ids) => (ids.length ? [] : ids)),
+    [],
+  );
   // 服务器文件夹新建/删除对话框
   const [folderDialog, setFolderDialog] = useState<{
     accountId: string;
@@ -523,7 +540,7 @@ export default function App() {
       next.bcc = url.searchParams.get("bcc") ?? "";
       next.subject = url.searchParams.get("subject") ?? "";
       next.body = url.searchParams.get("body") ?? "";
-      setDraft(next);
+      openCompose(next);
     } else if (native) {
       await invoke("open_mail_link", { url: url.href });
     } else {
@@ -768,9 +785,9 @@ export default function App() {
           };
         }
       }
-      setDraft(d);
+      openCompose(d);
     },
-    [data.accounts, detail],
+    [data.accounts, detail, openCompose],
   );
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -789,6 +806,12 @@ export default function App() {
         )
       )
         return;
+      // Esc 取消列表勾选（多选后想退出时不必切文件夹）
+      if (e.key === "Escape" && checked.length) {
+        e.preventDefault();
+        clearChecked();
+        return;
+      }
       if (
         e.altKey &&
         !e.metaKey &&
@@ -857,7 +880,18 @@ export default function App() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [compose, page, draft, selected, data, detail, query, loading, checked]);
+  }, [
+    compose,
+    page,
+    draft,
+    selected,
+    data,
+    detail,
+    query,
+    loading,
+    checked,
+    clearChecked,
+  ]);
   function navigate(
     view: string,
     accountId = "",
@@ -1358,7 +1392,9 @@ export default function App() {
   // 清空草稿：删除列出的草稿，正在编辑的那份保留
   async function clearDrafts(list: Compose[]) {
     if (clearingDrafts) return;
-    const removable = list.filter((d) => d.id !== draft?.id);
+    const removable = list.filter(
+      (d) => !composes.some((open) => open.id === d.id),
+    );
     if (!removable.length) {
       toast.info("没有可清空的草稿");
       return;
@@ -1592,7 +1628,7 @@ export default function App() {
             body: "",
             html: "",
           };
-      setDraft({ ...draft, signature });
+      openCompose({ ...draft, signature });
     } catch (e) {
       toast.error(String(e));
     }
@@ -2377,14 +2413,14 @@ export default function App() {
                   setAccountDialog(true);
                   return;
                 }
-                setDraft({
+                openCompose({
                   ...newDraft(account.id),
                   to: formatAddress(address),
                 });
               }}
             />
           ) : page === "outbox" ? (
-            <OutboxPanel onDraft={setDraft} />
+            <OutboxPanel onDraft={openCompose} />
           ) : page === "rules" ? (
             <RulesPanel
               data={data}
@@ -2656,7 +2692,7 @@ export default function App() {
               drafts={drafts.filter((d) => d.accountId === query.accountId)}
               title={`${activeAccount?.name || "账号"}草稿箱`}
               description="雁信的草稿只存在本机，账号内草稿文件夹显示该账号的本地草稿。"
-              onOpen={setDraft}
+              onOpen={openCompose}
               onDeleted={() => void loadDrafts()}
               onCompose={() =>
                 compose(undefined, false, false, undefined, query.accountId)
@@ -2673,7 +2709,7 @@ export default function App() {
               drafts={drafts}
               title="草稿箱"
               description="草稿自动保存到本机，随时继续。"
-              onOpen={setDraft}
+              onOpen={openCompose}
               onDeleted={() => void showDrafts()}
               onCompose={() => compose()}
               onClearAll={() => void clearDrafts(drafts)}
@@ -3062,7 +3098,16 @@ export default function App() {
                       )}
                     </div>
                   )}
-                  <div className="mail-rows sb-host">
+                  <div
+                    className="mail-rows sb-host"
+                    onClick={(event) => {
+                      // 点列表空白处取消勾选；点行内的选择由行自己处理。
+                      if (!checked.length) return;
+                      if ((event.target as HTMLElement).closest(".mail-row"))
+                        return;
+                      clearChecked();
+                    }}
+                  >
                     <ScrollPane>
                       {loading ? (
                         <MailListSkeleton />
@@ -3118,7 +3163,7 @@ export default function App() {
                                             : ids.filter((id) => id !== m.id),
                                         );
                                       }}
-                                    />
+                                    />{" "}
                                     <Button
                                       variant="ghost"
                                       size="icon-xs"
@@ -3165,6 +3210,28 @@ export default function App() {
                                     variant="ghost"
                                     className="mail-row-main"
                                     onClick={(event) => {
+                                      // ⌘/Ctrl+点击：单独切换这一行的勾选，
+                                      // 像 Foxmail 附件栏那样做不连续多选。
+                                      if (event.metaKey || event.ctrlKey) {
+                                        lastRowIndex.current = rowIndex;
+                                        setChecked((ids) => {
+                                          // 还没勾选任何行时，把当前正在阅读的
+                                          // 那封也算进选区，免得只剩新点的一封。
+                                          const base = ids.length
+                                            ? ids
+                                            : selected &&
+                                                visibleMessages.some(
+                                                  (item) =>
+                                                    item.id === selected,
+                                                )
+                                              ? [selected]
+                                              : [];
+                                          return base.includes(m.id)
+                                            ? base.filter((id) => id !== m.id)
+                                            : [...base, m.id];
+                                        });
+                                        return;
+                                      }
                                       // Shift+点击：从上次行到本行范围勾选
                                       if (
                                         event.shiftKey &&
@@ -3476,7 +3543,7 @@ export default function App() {
                 </section>
               }
             >
-              <section className="reader">
+              <section className="reader" onClick={clearChecked}>
                 {detail ? (
                   <>
                     <div className="message-heading">
@@ -3847,8 +3914,9 @@ export default function App() {
                       onReply={(source, forward = false, all = false) =>
                         compose(source.mail, forward, all, source)
                       }
-                      onEdit={setDraft}
+                      onEdit={openCompose}
                       onSent={() => void refresh()}
+                      onInteract={clearChecked}
                       onExport={(mail) => void exportMail(mail)}
                       onAttachment={(mail, index, name) =>
                         attachment(index, name, mail)
@@ -3989,16 +4057,20 @@ export default function App() {
           }
         }}
       />
-      <ComposeDialog
-        draft={draft}
-        onClose={() => setDraft(null)}
-        accounts={data.accounts}
-        onSent={() => void refresh()}
-        onBackground={(queued, seconds) => {
-          setDraft(null);
-          setPendingSend({ draft: queued, seconds });
-        }}
-      />
+      {composes.map((item, index) => (
+        <ComposeDialog
+          key={item.id}
+          draft={item}
+          stackIndex={index}
+          onClose={() => closeCompose(item.id)}
+          accounts={data.accounts}
+          onSent={() => void refresh()}
+          onBackground={(queued, seconds) => {
+            closeCompose(item.id);
+            setPendingSend({ draft: queued, seconds });
+          }}
+        />
+      ))}
       {pendingSend && (
         <PendingSend
           draft={pendingSend.draft}
@@ -4011,7 +4083,7 @@ export default function App() {
           onCancel={() => {
             // 撤回只放弃这次发送；邮件已在点发送时存为草稿，从草稿箱继续
             setPendingSend(null);
-            setDraft(pendingSend.draft);
+            openCompose(pendingSend.draft);
           }}
         />
       )}

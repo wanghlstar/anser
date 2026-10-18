@@ -5,6 +5,7 @@ import {
   mailLink,
   isMailDocument,
   interceptMailLinks,
+  frameImageTarget,
 } from "./mail-html";
 describe("untrusted email rendering", () => {
   it("preserves authored table sizing without making every letter a min-content break", () => {
@@ -253,5 +254,44 @@ describe("preview theming", () => {
     expect(preview).toContain("background:oklch(0.145 0 0)");
     expect(preview).not.toContain("color:#242424");
     expect(preview).not.toContain("var(--");
+  });
+});
+
+// 正文 iframe 里的元素来自另一个 realm，instanceof Element/HTMLImageElement
+// 全部为 false（浏览器实测），只能用 nodeType/tagName 判断。
+describe("frame image target", () => {
+  // 普通对象冒充跨 realm 的 <img> 与它的祖先节点：closest 命中自己/祖先。
+  const fake = (tag: string, hits?: () => unknown) => {
+    const node = {
+      nodeType: 1,
+      tagName: tag,
+      closest: (selector: string) =>
+        selector === "img" ? (hits ? hits() : node) : null,
+    };
+    return node;
+  };
+  it("accepts a cross-realm element that is not an Element instance", () => {
+    const image = fake("IMG", () => undefined);
+    Object.assign(image, { closest: () => image });
+    expect(image instanceof Element).toBe(false);
+    expect(frameImageTarget(image as unknown as EventTarget)).toBe(image);
+  });
+  it("follows closest() so a span inside a linked image still counts", () => {
+    const image = fake("IMG", () => undefined);
+    Object.assign(image, { closest: () => image });
+    expect(
+      frameImageTarget(fake("SPAN", () => image) as unknown as EventTarget),
+    ).toBe(image);
+  });
+  it("ignores text nodes and elements outside an image", () => {
+    expect(frameImageTarget({ nodeType: 3 } as unknown as EventTarget)).toBe(
+      null,
+    );
+    // closest 命中了一个非 img 的元素（例如 <video>）时不当成图片。
+    expect(
+      frameImageTarget(
+        fake("SPAN", () => fake("VIDEO")) as unknown as EventTarget,
+      ),
+    ).toBe(null);
   });
 });

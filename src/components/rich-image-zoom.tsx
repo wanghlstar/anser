@@ -70,6 +70,8 @@ export function RichImageZoom({
   const rect = target.image.getBoundingClientRect();
   const naturalWidth = target.image.naturalWidth || 0;
   const naturalHeight = target.image.naturalHeight || 0;
+  // 以当前渲染宽度为基准：没写过 width 的图（新插入/带 max-width 的图）
+  // 用 clientWidth 才准，只读 attrs 会把 CSS 压缩后的宽度当成原始比例。
   const shownWidth =
     imageDimension(target.node.attrs.width) || target.image.clientWidth || 0;
   const percent = naturalWidth
@@ -78,8 +80,14 @@ export function RichImageZoom({
   const step = percent >= 25 ? 25 : 5;
   function zoom(delta: number) {
     if (!target || disabled) return;
-    const next = Math.max(5, Math.min(200, percent + delta));
-    if (next === percent || !naturalWidth || !naturalHeight) return;
+    if (!naturalWidth || !naturalHeight) return;
+    // 每次都重新读渲染宽度，连点时不会用到上一次的过期百分比。
+    const current = target.image.clientWidth || shownWidth;
+    const from = naturalWidth
+      ? Math.max(5, Math.min(200, Math.round((current / naturalWidth) * 100)))
+      : 100;
+    const next = Math.max(5, Math.min(200, from + delta));
+    if (next === from) return;
     const width = Math.round((naturalWidth * next) / 100);
     const height = Math.round((naturalHeight * next) / 100);
     editor

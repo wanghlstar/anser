@@ -17,17 +17,21 @@
 ### Task 1: Rust 签名问候语字段
 
 **Files:**
+
 - Modify: `src-tauri/src/signatures.rs`（MailSignature 加 greeting；ComposeSignature 加 greeting/greetingHtml；现有测试补字段）
 - Test: `src-tauri/src/signatures.rs` 内 `mod tests`
 
 **Step 1: 改结构体**
 
 `MailSignature` 在 `use_html` 后加：
+
 ```rust
     #[serde(default)]
     pub greeting: String,
 ```
+
 `ComposeSignature` 在 `included` 后加：
+
 ```rust
     #[serde(default)]
     pub greeting: String,
@@ -92,6 +96,7 @@ git commit -m "feat: 签名增加问候语字段（serde default 兼容旧数据
 ### Task 2: 前端签名类型与快照
 
 **Files:**
+
 - Modify: `src/lib/types.ts`（MailSignature 加 `greeting: string`；ComposeSignature 加 `greeting: string; greetingHtml: string`）
 - Modify: `src/lib/signatures.ts`（emptySignature 加 greeting:""；signatureContent 带出问候语）
 - Test: `src/lib/signatures.test.ts`
@@ -106,20 +111,30 @@ it("带出每账号问候语快照：纯文本转 html、HTML 模式保留、空
     greetingHtml: "",
   });
   expect(
-    signatureContent("a", { ...base, useHtml: true, greeting: "<b>您好</b>：" }),
-  ).toMatchObject({ greeting: "您好：", greetingHtml: expect.stringContaining("<b>您好</b>") });
+    signatureContent("a", {
+      ...base,
+      useHtml: true,
+      greeting: "<b>您好</b>：",
+    }),
+  ).toMatchObject({
+    greeting: "您好：",
+    greetingHtml: expect.stringContaining("<b>您好</b>"),
+  });
   expect(signatureContent("a", { ...base, text: "落款" })).toMatchObject({
     greeting: "",
     greetingHtml: "",
   });
   // 只配问候语也应启用
-  expect(signatureContent("a", { ...base, greeting: "您好：" }).included).toBe(true);
+  expect(signatureContent("a", { ...base, greeting: "您好：" }).included).toBe(
+    true,
+  );
 });
 ```
 
 **Step 2: 实现**
 
 `signatureContent` 返回体增加：
+
 ```ts
   const greeting = signature.useHtml
     ? htmlToText(signature.greeting)
@@ -155,6 +170,7 @@ it("带出每账号问候语快照：纯文本转 html、HTML 模式保留、空
 ### Task 3: withSignature 前置问候语
 
 **Files:**
+
 - Modify: `src/lib/compose-format.ts`（重构 withSignature，提取 signaturePart 助手）
 - Test: `src/lib/compose-format.test.ts`
 
@@ -174,7 +190,9 @@ it("发送时拼接 问候语+正文+落款", () => {
       html: "",
     },
   };
-  expect(prepareCompose(editor).deliveryBody).toBe("您好：\n\n正文内容\n\n祝您工作顺利");
+  expect(prepareCompose(editor).deliveryBody).toBe(
+    "您好：\n\n正文内容\n\n祝您工作顺利",
+  );
 });
 it("HTML 态问候语节点前置、落款节点后置", () => {
   const editor = {
@@ -199,10 +217,15 @@ it("HTML 态问候语节点前置、落款节点后置", () => {
   expect(bodyAt).toBeLessThan(signatureAt);
 });
 it("问候语为空时行为不变", () => {
-  const editor = { ...draft, body: "正文", signature: { ...snapshot, greeting: "", greetingHtml: "" } };
+  const editor = {
+    ...draft,
+    body: "正文",
+    signature: { ...snapshot, greeting: "", greetingHtml: "" },
+  };
   expect(prepareCompose(editor).deliveryBody).toBe("正文\n\n" + snapshot.body);
 });
 ```
+
 （`draft`/`snapshot` 用测试文件里现有夹具或最小构造。）
 
 **Step 2: 实现**（完整替换 withSignature，提取助手）
@@ -246,7 +269,12 @@ function withSignature(editor: Compose) {
   );
   if (signature.greetingHtml)
     doc.body.prepend(
-      signaturePart(doc, signature.greetingHtml, "data-yanxin-greeting", "marginBottom"),
+      signaturePart(
+        doc,
+        signature.greetingHtml,
+        "data-yanxin-greeting",
+        "marginBottom",
+      ),
     );
   if (signature.html || signature.body)
     doc.body.append(
@@ -270,6 +298,7 @@ function withSignature(editor: Compose) {
 ### Task 4: 签名设置页问候语编辑区
 
 **Files:**
+
 - Modify: `src/components/mail-signatures.tsx`
 - Test: `src/components/mail-signatures.test.tsx`
 
@@ -295,6 +324,7 @@ function withSignature(editor: Compose) {
 ### Task 5: 写信窗口三段式预览 + 移除纯文本模式
 
 **Files:**
+
 - Modify: `src/components/compose-dialog.tsx`
 - Modify: `src/lib/compose-format.ts`（composeFormat 默认 rich、plain→rich）
 - Test: `src/components/compose-dialog.test.tsx`
@@ -308,34 +338,38 @@ function withSignature(editor: Compose) {
 **Step 2: 实现**
 
 1. `composeFormat` 改为：
+
 ```ts
 export function composeFormat(draft: Compose): ComposeFormat {
   return !draft.format || draft.format === "plain" ? "rich" : draft.format;
 }
 ```
+
 2. Select 选项删除 `<SelectOption value="plain">纯文本</SelectOption>`。
 3. `changeFormat` 删除 `if (format === "plain")` 分支。
 4. 编辑器分支三元：`format === "rich" ? <RichEditor/> : (format === "markdown" || format === "html" ? <>源码+预览</> : null)`——原 plain Textarea 分支删除（因此失效的 import 一并清理）。
 5. 新增派生值并渲染问候语预览（放在 `.compose-editor` 之前）：
+
 ```tsx
-const greetingPreview = Boolean(
-  signaturePreview && value?.signature?.greeting,
-);
+const greetingPreview = Boolean(signaturePreview && value?.signature?.greeting);
 ```
+
 ```tsx
-{greetingPreview && (
-  <section className="px-6 pt-4 pb-2 flex flex-col gap-3">
-    <MailContent
-      html={
-        value.signature!.greetingHtml ||
-        textToHtml(value.signature!.greeting)
-      }
-      title="本封邮件问候语"
-      onOpenLink={() => {}}
-    />
-  </section>
-)}
+{
+  greetingPreview && (
+    <section className="px-6 pt-4 pb-2 flex flex-col gap-3">
+      <MailContent
+        html={
+          value.signature!.greetingHtml || textToHtml(value.signature!.greeting)
+        }
+        title="本封邮件问候语"
+        onOpenLink={() => {}}
+      />
+    </section>
+  );
+}
 ```
+
 6. 编辑器类名条件扩展：`${greetingPreview || signaturePreview ? "with-signature" : ""}`。
 
 **Step 3: 验证** `npx vitest run src/components/compose-dialog.test.tsx` → 绿（既有格式化切换测试按新语义修正）。
@@ -347,6 +381,7 @@ const greetingPreview = Boolean(
 ### Task 6: 正文图片压缩管线
 
 **Files:**
+
 - Create: `src/lib/inline-image.ts`
 - Test: `src/lib/inline-image.test.ts`
 
@@ -420,6 +455,7 @@ export async function inlineImageDataUrl(file: File): Promise<string> {
   }
 }
 ```
+
 （`imageFilesFromList` 在 rich-editor 里对 `FileList` 先展开为数组：`imageFilesFromList([...list])`。）
 
 **Step 3: 验证** `npx vitest run src/lib/inline-image.test.ts` → 绿。
@@ -431,6 +467,7 @@ export async function inlineImageDataUrl(file: File): Promise<string> {
 ### Task 7: 富文本编辑器图片能力
 
 **Files:**
+
 - Modify: `package.json` / `package-lock.json`（`npm install @tiptap/extension-image@^3.31.3`）
 - Modify: `src/components/rich-editor.tsx`
 - Test: `src/components/rich-editor.test.tsx`（无则新建，轻量：工具条按钮存在、扩展加载不报错）
@@ -444,14 +481,12 @@ Run: `npm install @tiptap/extension-image@^3.31.3`
 ```tsx
 import Image from "@tiptap/extension-image";
 import { ImagePlus } from "lucide-react"; // 图标名以项目现有 lucide 用法为准
-import {
-  imageFilesFromList,
-  inlineImageDataUrl,
-} from "@/lib/inline-image";
+import { imageFilesFromList, inlineImageDataUrl } from "@/lib/inline-image";
 import { toast } from "sonner";
 ```
 
 编辑器配置：
+
 ```tsx
 extensions: [
   StarterKit.configure({ ...现有配置 }),
@@ -484,6 +519,7 @@ editorProps: {
 ```
 
 组件内助手与隐藏文件选择：
+
 ```tsx
 const imageInput = useRef<HTMLInputElement>(null);
 async function insertImages(files: File[], at?: number | null) {
@@ -492,14 +528,19 @@ async function insertImages(files: File[], at?: number | null) {
       const src = await inlineImageDataUrl(file);
       const node = { type: "image", attrs: { src, alt: file.name || "图片" } };
       const chain = editor?.chain().focus();
-      (at == null ? chain?.insertContent(node) : chain?.insertContentAt(at, node))?.run();
+      (at == null
+        ? chain?.insertContent(node)
+        : chain?.insertContentAt(at, node)
+      )?.run();
     } catch (e) {
       toast.error(String(e));
     }
   }
 }
 ```
+
 tools 数组追加：
+
 ```tsx
 {
   name: "插入图片",
@@ -508,7 +549,9 @@ tools 数组追加：
   run: () => imageInput.current?.click(),
 },
 ```
+
 JSX 在 `.rich-editor` 内（format-toolbar 之后）加：
+
 ```tsx
 <input
   ref={imageInput}
@@ -523,6 +566,7 @@ JSX 在 `.rich-editor` 内（format-toolbar 之后）加：
   }}
 />
 ```
+
 注意：`editor` 变量在 tools 定义处可能尚未初始化（useEditor 返回在 tools 之后）——若如此，insertImages 内在运行时读取最新的 editor（用 `editorRef` 或在 run 时经 `useEditor` 返回值闭包；以实现时实际作用域为准，保证点击工具条/粘贴时 editor 已就绪）。
 
 **Step 3: 验证** `npx vitest run`（rich-editor 新增用例 + 全量 196+ 不回归）；`npx tsc --noEmit`。

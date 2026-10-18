@@ -14,23 +14,23 @@
 
 更新：2026-10-04。此文件描述 Alpha 实施记录，不替代 PRD 验收标准。最新剩余工作见 [开发计划核查](DEVELOPMENT_STATUS.md)。下方阶段汇总与早期验证保留历史信息，已完成条目以最新核查及后续日期记录为准。
 
-| 模块 | 当前实现 | 剩余工作 |
-| --- | --- | --- |
-| 桌面与视觉 | arm64 Tauri App；React/shadcn；dashboard-01 的 Sidebar/Inset/Card；深浅色；信封 v3 图标 | 签名、公证、更新、跨 macOS 版本验证、窗口状态记忆 |
-| 账号 | 多账号配置与编辑；主流预设和自定义 IMAP/POP3/SMTP；钥匙串；OAuth PKCE/刷新；编辑前收发连接验证 | OAuth 应用注册与服务商真实联调；企业策略兼容、自动发现 |
-| 收信 | TLS/STARTTLS；IMAP UID/UIDVALIDITY 增量与多文件夹下载；STATUS 兜底和无 UIDVALIDITY 的内容核对模式；POP3 UIDL；可设置检查间隔；IMAP IDLE 实时收取；循环暂停后补收 | 断点续传、限流与错误恢复、更准确的特殊文件夹识别；真实睡眠/断网恢复验收 |
-| 本地存档 | 原始 MIME 原子写入与同步落盘；哈希验证；去重；独立于服务器保留；批量完整性校验并列出异常 | 磁盘满/强制退出压力测试、容量策略与加密 |
-| 服务端清理 | IMAP 成功同步后对账；不存在的 INBOX 来源不再显示在收件箱，本地存档保留 | 服务器移动/删除/已读等双向队列；POP3 下载后视为本地收件，不跟随远端清理 |
-| 规则 | AND/OR、账号范围、顺序、停止、启停、编辑、只读预览、历史执行 | 更多动作、规则导入导出、服务端动作；复杂字符/日期边界进一步覆盖 |
-| 阅读整理 | 本地已读、星标、归类、废纸篓；HTML 清洗、外部图片显示、网页链接打开、顶部回复转发、完整日期；附件保存和 EML 导出；回复链对话、底部快速回复；服务器文件夹树 | 会话大数据性能、逐封列表切换、特殊文件夹映射 |
-| 搜索 | 本地正文/标题/发件人/收件人字段筛选；未读/星标/附件条件组合；分页加载 | FTS 索引、高级语法、大数据性能；当前单次最多 5000 条 |
-| 写信 | 纯文本/富文本/Markdown/HTML 源码、文件导入与预览；大窗口与最大化；附件、CC/BCC、草稿、回复/全部回复/转发、地址自动补全、发送前 8 秒取消；标准回复引用头及会话归属 | 转发原附件、签名、模板 |
-| 定时发送 | 本机持久计划、固定 MIME 与附件、修改时间、取消恢复草稿、过期/暂停提示；结果不明保护 | 云端定时；真实退出/睡眠/断网日用验证；计划备份与容量管理 |
-| 通讯录 | 本地联系人增删改查、邮件创建联系人、联系人和历史地址补全 | macOS Contacts/CardDAV、企业目录 |
-| 发送持久化 | 草稿/待发 MIME 先保存；SMTP 后本地 Sent 留存；失败不自动重发；记录界面；结果不明人工确认后创建重发草稿；恢复已发送的本地副本 | IMAP Sent 上传；大邮箱/真实网络中断发送验收；移除账号后的发送记录归档恢复 |
-| 备份 | SQLite 一致性快照、完整 MIME 校验/复制、manifest、邮件/规则/联系人幂等合并恢复；兼容旧备份 | 账号配置恢复（凭据仍排除）、加密备份、备份调度 |
-| Thunderbird 迁移 | 未实现 | 用户确认首版不需要 |
-| 云端 | 未接入 | 用户允许，未来另行设计 |
+| 模块             | 当前实现                                                                                                                                                          | 剩余工作                                                                  |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| 桌面与视觉       | arm64 Tauri App；React/shadcn；dashboard-01 的 Sidebar/Inset/Card；深浅色；信封 v3 图标                                                                           | 签名、公证、更新、跨 macOS 版本验证、窗口状态记忆                         |
+| 账号             | 多账号配置与编辑；主流预设和自定义 IMAP/POP3/SMTP；钥匙串；OAuth PKCE/刷新；编辑前收发连接验证                                                                    | OAuth 应用注册与服务商真实联调；企业策略兼容、自动发现                    |
+| 收信             | TLS/STARTTLS；IMAP UID/UIDVALIDITY 增量与多文件夹下载；STATUS 兜底和无 UIDVALIDITY 的内容核对模式；POP3 UIDL；可设置检查间隔；IMAP IDLE 实时收取；循环暂停后补收  | 断点续传、限流与错误恢复、更准确的特殊文件夹识别；真实睡眠/断网恢复验收   |
+| 本地存档         | 原始 MIME 原子写入与同步落盘；哈希验证；去重；独立于服务器保留；批量完整性校验并列出异常                                                                          | 磁盘满/强制退出压力测试、容量策略与加密                                   |
+| 服务端清理       | IMAP 成功同步后对账；不存在的 INBOX 来源不再显示在收件箱，本地存档保留                                                                                            | 服务器移动/删除/已读等双向队列；POP3 下载后视为本地收件，不跟随远端清理   |
+| 规则             | AND/OR、账号范围、顺序、停止、启停、编辑、只读预览、历史执行                                                                                                      | 更多动作、规则导入导出、服务端动作；复杂字符/日期边界进一步覆盖           |
+| 阅读整理         | 本地已读、星标、归类、废纸篓；HTML 清洗、外部图片显示、网页链接打开、顶部回复转发、完整日期；附件保存和 EML 导出；回复链对话、底部快速回复；服务器文件夹树        | 会话大数据性能、逐封列表切换、特殊文件夹映射                              |
+| 搜索             | 本地正文/标题/发件人/收件人字段筛选；未读/星标/附件条件组合；分页加载                                                                                             | FTS 索引、高级语法、大数据性能；当前单次最多 5000 条                      |
+| 写信             | 纯文本/富文本/Markdown/HTML 源码、文件导入与预览；大窗口与最大化；附件、CC/BCC、草稿、回复/全部回复/转发、地址自动补全、发送前 8 秒取消；标准回复引用头及会话归属 | 转发原附件、签名、模板                                                    |
+| 定时发送         | 本机持久计划、固定 MIME 与附件、修改时间、取消恢复草稿、过期/暂停提示；结果不明保护                                                                               | 云端定时；真实退出/睡眠/断网日用验证；计划备份与容量管理                  |
+| 通讯录           | 本地联系人增删改查、邮件创建联系人、联系人和历史地址补全                                                                                                          | macOS Contacts/CardDAV、企业目录                                          |
+| 发送持久化       | 草稿/待发 MIME 先保存；SMTP 后本地 Sent 留存；失败不自动重发；记录界面；结果不明人工确认后创建重发草稿；恢复已发送的本地副本                                      | IMAP Sent 上传；大邮箱/真实网络中断发送验收；移除账号后的发送记录归档恢复 |
+| 备份             | SQLite 一致性快照、完整 MIME 校验/复制、manifest、邮件/规则/联系人幂等合并恢复；兼容旧备份                                                                        | 账号配置恢复（凭据仍排除）、加密备份、备份调度                            |
+| Thunderbird 迁移 | 未实现                                                                                                                                                            | 用户确认首版不需要                                                        |
+| 云端             | 未接入                                                                                                                                                            | 用户允许，未来另行设计                                                    |
 
 ## 本轮验证
 
@@ -45,7 +45,6 @@
 
 [官方 dashboard-01](https://ui.shadcn.com/view/new-york-v4/dashboard-01) 与 [registry 源码](https://ui.shadcn.com/r/styles/new-york-v4/dashboard-01.json)。参考侧栏 288px、页头 48px、8px 外间距、12px 主区域圆角、中性颜色和卡片层级；小窗口侧栏缩至 244px。邮件列表和阅读区按邮件任务保留。
 
-
 ## 腾讯企业邮 UIDVALIDITY 兼容修复（2026-09-30）
 
 原收取流程只从 EXAMINE 响应取得 UIDVALIDITY，缺失时中止整个账号。现在按以下方式收取：
@@ -58,9 +57,7 @@
 
 新增 5 项协议回归测试使用真实 imap 库与模拟响应，覆盖 STATUS 恢复、正常增量/UIDVALIDITY 变化、缺失/0、UID 重用、重复下载、其他文件夹 STATUS 隔离和断线保留。协议依据：[RFC 9051 的 UID 与 UIDVALIDITY](https://www.rfc-editor.org/rfc/rfc9051.html#section-2.3.1.1)。
 
-
 同轮真实收取还发现 RFC822.SIZE 元数据与完整 BODY[] 响应不一致。现在明确区分传输完整性和大小元数据：完整性由 IMAP literal 的 `{N}` 字节长度、FETCH 成功结束与完整 BODY[] 字段校验保证；部分响应（含偏移）、正文缺失、错误 UID、截断和解析失败均拒绝存档。RFC822.SIZE 差异只记录大小诊断，以实际完整 MIME 为准，仍需通过 MIME 解析、原子落盘和哈希验证。新增 2 项测试验证元数据差异时正文/附件精确还原，以及截断/部分正文/错误 UID 被拒绝。参考 [RFC 9051 §2.3.4](https://www.rfc-editor.org/rfc/rfc9051.html#section-2.3.4) 和 [literal 字节长度](https://www.rfc-editor.org/rfc/rfc9051.html#section-4.3)。
-
 
 协议收取增加异常隔离。旧 IMAP 库对异常命令编号可能触发 panic；以前会使后台线程退出、任务互斥锁进入中毒状态，此后的收取错误被误报为“已有任务正在执行”。现在异常转为包含文件夹/步骤的可重试错误，关闭失败的连接、保留已下载存档，后台线程继续运行。新增测试模拟错误命令编号，检查任务锁可再次获取且后续正常同步仍能成功。
 
@@ -73,7 +70,6 @@
 服务器在非空文件夹也可能返回空 STATUS 属性。`vendor/imap-proto` 保留上游 0.10.2 源码与双许可证，仅允许 STATUS 的属性列表为空；这样可读完命令结束响应并保持连接同步，随后使用完整 MIME 核对模式。新增测试验证非空文件夹的空 STATUS、继续 FETCH 与重复下载去重。
 
 此前真实收取验证曾等待 macOS 钥匙串读取完成（线程采样停在 `auth::credentials → keyring::Entry::get_password`）。系统 SecurityAgent 界面不允许通过自动操作工具处理，需要用户完成系统授权；尚未宣称本次整轮同步成功。本轮只读核对已累计保存 320 封存档，完整同步是否成功仍需以收取日志为准。
-
 
 ## 旧邮件编码与 HTML 样式修复（2026-09-30）
 
@@ -88,7 +84,6 @@ HTML 清理改为完整文档模式，保留头部和片段开头的样式，以
 启动时按 parser_version 从已校验的本地 MIME 更新显示信息；备份恢复后也运行相同修复。不改写原始文件，不改变邮件 ID、来源、日期、已读/星标/废纸篓状态或本地分类，也不自动重跑过滤规则。损坏或缺失的原件保留旧记录，记录数量提示并在下次启动重试。
 
 验证：新增 1 项前端测试覆盖片段顶部样式和完整文档的 body 属性；新增 4 项 Rust 测试覆盖 GB18030 原始头、RFC 2047/UTF-8/西文编码、旧索引更新与状态保留、损坏原件及重试。真实 320 封存档均完成显示信息修复，原件 SHA-256 全部一致；47 封周报的名称已恢复。原生窗口确认周报恢复原始卡片和统计数字排版、摘要无 CSS。浏览器使用合成 HTML 长邮件验证正文滚动约 864px 后信息区位置不变；1050px 宽窗口操作区不溢出。测试期间打开邮件会按正常阅读流程标为已读。
-
 
 ## 分类内未读筛选与阅读修复（2026-09-30）
 
@@ -168,7 +163,6 @@ HTML 邮件的顶部外边距可折叠到 body 外侧；此前仅使用 body 边
 
 浏览器以示例数据检查 Markdown 草稿重开、HTML 文件导入与内嵌 CSS 预览、计划创建/改期到指定时间/取消恢复；1440×900 普通窗口宽 1160px，1050×650 回复窗口为 986×586px，展开 CC/BCC 和计划后底部仍在窗口内（617px），字段区可滚动；转发使用同一布局。新增真实 SMTP 定时投递、macOS 睡眠唤醒和附件大文件性能仍待联调。
 
-
 ## 菜单、可调整三栏与骨架屏（2026-10-01）
 
 - 沿用项目的 shadcn/Radix 组件。账号操作、回复操作、邮件筛选统一为 Dropdown Menu；筛选使用 CheckboxItem / RadioGroup。账号配置、过滤规则、写信格式/发件账号及后台检查间隔使用 Select，避免原生下拉菜单风格混杂。
@@ -204,7 +198,6 @@ prepareCompose 生成独立的 deliveryBody/deliveryHtml，保留可编辑 body/
 
 验证：43 项前端测试、41 项 Rust 测试、生产构建及 UI 检查通过。覆盖回复/转发默认开关、独立原文渲染、发送预览排除原文、HTML 表格/样式/body 属性保持、重复准备幂等、草稿及定时计划取消恢复、内嵌图片 MIME 往返。浏览器用合成周报核查原文和合并预览的表格及 CSS 实际生效，未向真实邮箱发送测试信。不同收件客户端对 HTML/CSS 的支持仍可能产生展示差异。
 
-
 ## IMAP 实时收取与开发实例管理（2026-10-02）
 
 - 每个启用的 IMAP 账号使用独立连接监听 INBOX，通过 CAPABILITY 检查 IDLE 支持；EXAMINE 后进入 IDLE，再触发补收，覆盖建立连接期间的新邮件。EXISTS 数量变化与 EXPUNGE 触发同步，重复通知及服务器保活不重复收取。
@@ -217,7 +210,6 @@ prepareCompose 生成独立的 deliveryBody/deliveryHtml，保留可编辑 body/
 验证：50 项 Rust 测试、43 项前端测试、UI 规则检查、生产构建和脚本语法检查通过。协议测试使用真实回环 TCP，覆盖初始补收、新邮件通知、重复通知、IDLE 拒绝/连接中断、持续保活下的续期、STARTTLS 拒绝以及腾讯尾随空格兼容；队列测试覆盖任务繁忙、失败重试与同步期间再次通知。重新构建后旧应用进程退出，直接重复启动后仍只有一个开发实例。设置页在浏览器演示中检查，无需重新安装。
 
 本轮已实连现有腾讯企业邮监听，未发送真实测试邮件；真实新邮件抵达及 macOS 睡眠唤醒完整流程仍待联调。IMAP IDLE 提供服务器通知后的及时同步，不保证离线、系统休眠或服务器不支持时即时到达。
-
 
 ## 邮件对话与快速回复（2026-10-02）
 
@@ -285,10 +277,9 @@ prepareCompose 生成独立的 deliveryBody/deliveryHtml，保留可编辑 body/
 
 - 原“正在处理邮件”提示来自收取与发送共用任务锁，尚未进入 SMTP。普通发送与定时发送改用独立发送锁；凭据变更和移除仍与活动发送互斥。账号凭据读取/刷新使用每账号锁，避免同时刷新 OAuth。发送状态与稳定 Message-ID、成功/失败/结果未确认保护保持，未增加自动重发。
 - 名称/本地留存设置单独在 SQLite 即时事务中保存，无需收取任务锁或网络验证；表单显示“保存设置”。同步结束只写最近收取时间和错误，不覆盖新偏好。IMAP 每封收取读取最新设置；开启留存而当前请求仅含邮件头时，重新取完整 MIME 后才能存档。关闭留存保留旧存档，后续邮件仅保存索引。
-- 邮件正文使用文档标记识别 iframe 初始化，不依赖其 URL。浏览器端清洗外链为占位 href，通过捕获 click/auxclick 打开外部网页；macOS WebKit 禁止脚本的沙箱无法可靠执行帧内监听，原生外链使用保留域名 yanxin-mail-link.invalid 的 HTTPS 路由（自定义协议在 WebKit 沙箱中也可能被阻止），由 Tauri 导航钩子在发起网络请求前取消帧导航并通知应用打开。只允许 HTTP/HTTPS/mailto，网页走系统浏览器，mailto 进入写信。正文脚本与表单继续禁止，内部锚点保留。
+- 邮件正文使用文档标记识别 iframe 初始化，不依赖其 URL。浏览器端清洗外链为占位 href，通过捕获 click/auxclick 打开外部网页；正文 iframe 为 `allow-same-origin allow-scripts`，帧内图片交互此前静默失灵的真实原因是**跨 realm 的 `instanceof`**（iframe 里的元素不满足外层 `instanceof Element`/`HTMLImageElement`，只有 `nodeType`/`tagName`/`closest` 可靠），现统一由 `frameImageTarget()` 判断，单击选中、双击打开、自定义右键菜单、⌘C 复制恢复；帧内点击直接拦下导航并交回应用；保留域名 yanxin-mail-link.invalid 的 HTTPS 路由与 Tauri 导航钩子（发起网络请求前取消帧导航并通知应用打开）降级为兜底。只允许 HTTP/HTTPS/mailto，网页走系统浏览器，mailto 进入写信。正文脚本与表单继续禁止（DOMPurify + 注入 CSP `default-src 'none'` 双保险，帧内无可执行脚本），内部锚点保留。
 
 验证：72 项 Rust、68 项前端测试、UI 铁律检查与生产构建通过。新增收取锁持有期间发送成功、失败/不确定与草稿保留、重复发送拒绝、偏好保存与同步状态互不覆盖、文档标记、链接嵌套点击/中键、原生链接路由及非法协议拒绝测试。实机在后台收取期间将腾讯企业邮本地留存关闭，提示“账号设置已保存”，设置页显示“在线阅读”，存档计数保留。实机点击截图中“去小站看看”后，Chrome 地址栏确认为 ai-resets.com；普通和最大化阅读中的 iframe 都保留 about:srcdoc 邮件正文，未跳转成外部网页。真实 SMTP 邮件未自动重发，需用户在草稿中重试。
-
 
 ## 活动记录文件夹名称（2026-10-03）
 
@@ -300,7 +291,6 @@ prepareCompose 生成独立的 deliveryBody/deliveryHtml，保留可编辑 body/
 
 验证：npm run test:desktop 的 6 项测试通过，覆盖有效证书解析、无证书/多证书拒绝、显式选择、临时签名拒绝、签名校验与失败传播。使用两份不同的原生可执行文件实际签名，确认 CDHash 不同而 designated requirement 相同；运行中的开发应用严格签名验证通过，证书与固定标识已生效，复用现有开发预览重启。此处仅解决开发签名身份变化，正式分发签名与公证尚未配置；切换后已有凭据可能需要用户首次选择“始终允许”，钥匙串锁定或证书更换时仍可能提示，尚未宣称用户系统授权已完成。
 
-
 ## 收件箱调度与 Tencent BODYSTRUCTURE 兼容（2026-10-04）
 
 - 实时通知原先排队执行全部文件夹同步，历史文件夹缺少 UIDVALIDITY 时每轮重查占用全局收取锁，手动收取直接返回忙碌。现在实时通知和普通手动收取仅检查 INBOX；每账号独立排队，同一账号同一文件夹用共享锁串行下载和来源核对。后台全量补查继续处理其他目录，显式目录刷新作用于当前目录。连接修改、暂停与移除仍与活动收件箱及历史同步互斥；名称和留存偏好仍可以直接保存。
@@ -309,7 +299,6 @@ prepareCompose 生成独立的 deliveryBody/deliveryHtml，保留可编辑 body/
 - 收取入库和来源核对前复核账号状态/连接配置，避免旧任务继续发布；多个同步任务的系统通知共享进程内邮件认领，防止重叠水位重复提示。活动记录区分收件箱与全部文件夹收取。
 
 验证：78 项 Rust、68 项前端测试通过；UI 铁律检查、生产构建与开发签名测试通过。复用 npm run desktop 原生预览，实际两账号均显示 IMAP IDLE 已连接，手动收取完成并记录新增 0 封；原有测试来信与回复可见。此前 16:16 的其他文件夹解析失败之后，16:18/16:19 实际全量收取已成功，账号感叹号消失。未代用户发送新邮件，因此新投递到实时出现的端到端延迟尚未测量；未改变账号留存设置、数据标识或安装应用包。
-
 
 ## 按账号删除本地邮件存档（2026-10-04）
 
@@ -356,7 +345,6 @@ prepareCompose 生成独立的 deliveryBody/deliveryHtml，保留可编辑 body/
 
 验证：79 项前端测试、UI 检查和生产构建通过，覆盖相邻切换/首项边界、未读移除后继续、输入与写信弹层不抢快捷键。原生示例邮箱从未读第一封切到第三封，列表空后保持正文、下一封禁用；切回全部后 ⌥↑ 正常返回上一封。排版检查通过，已退出示例模式；未改变真实邮件已读状态。
 
-
 ## 真实历史目录收取检查点（2026-10-05 10:05）
 
 新开发预览的“最近活动”确认 QQ 全部文件夹收取完成，新增 **796 封邮件**；腾讯企业邮 09:56 全目录成功、新增 0 封。此前阻断于 UID 1339 的历史目录本轮已恢复。没有发送测试邮件、删除真实数据或重新安装应用包。原始文件名与旧日期未逐封打开核验，协议回归已验证它们的保护逻辑；此结果不替代长期实时收取和其他服务商验收。
@@ -377,7 +365,6 @@ prepareCompose 生成独立的 deliveryBody/deliveryHtml，保留可编辑 body/
 
 预览验证发现重编译期间 UI 工具会自动打开尚未更新的旧 bundle，单实例检查使新版退出；运行映像 UUID 与文件 UUID 不同确认了此情况。10:54 等待开发启动完成并重新绑定新版，Vite/Tauri/应用父子进程保持正常。D 为重启补收，不作为自动到达通过；E（腾讯→QQ）10:55 SMTP 接受，持续运行期间自动显示在 QQ 收件箱，数据库只读核对 QQ 的 INBOX 活动来源存在，未手动收取或重启。10:54、10:55、10:56 均有两账号收件箱补查记录，全目录仍在独立扫描，证明定时补查不再等待历史扫描结束；本轮不区分 E 首次到达由 IDLE、历史扫描还是补查触发，不报告精确推送延迟。测试间隔暂设 1 分钟，10:56 恢复原 5 分钟并保存。真实测试共 A/B/C/D/E 五封，均在两个授权邮箱之间，未删除用户邮件。HTML 的标题、加粗及列表在 QQ 阅读界面正确。
 
-
 ## 服务端已读/星标出站队列（2026-10-05 15:23）
 
 新增 `operations.rs`、`ServerOperations` 设置卡片。用户 read/star 与本地更新同事务入队；最新 revision 覆盖旧意图，运行中的旧请求完成不能清除新请求。账号独立执行、按目录挑选可执行工作；每个请求最多修改一个系统标记。断线自动退避，拒绝/身份冲突需要处理，可手动重试；重启只恢复幂等标记任务。账号移除或连接身份变化、邮件来源失效和本地状态被规则改变均阻止旧请求。POP3、本机 Sent UUID 与仅存档数据保持本地语义。备份删除队列表，恢复不导入服务器任务。
@@ -388,7 +375,6 @@ prepareCompose 生成独立的 deliveryBody/deliveryHtml，保留可编辑 body/
 
 未解决：两个账号的“其他文件夹”来源写入前核对失败。QQ 返回 Folder not exist，腾讯 Need to SELECT first；发生于 SELECT 后的 UID BODY.PEEK[]。这些来源在 LIST 缓存中均标记 selectable，不能直接按只读父目录假定修正。腾讯手动重试实际再次失败，并显示易懂的步骤提示。保留失败任务与存档，不掩盖成成功。下次先查目录选择/重复来源兼容与服务端状态增量回读，然后继续 MOVE/COPY 等目录操作。规则动作、归类和废纸篓仍是本地。
 
-
 ## 服务端标记回读与目录响应保护（2026-10-05 16:59）
 
 实现 SYNC-01A2：缓存来源按 100 个 UID 获取 FLAGS，合并 Seen/Flagged，新邮件继承服务器星标；回读在 IMMEDIATE 事务中校验账号身份、活动来源和当前未完成意图，不入队回写，不更改正文、原件、分类或废纸篓。多来源优先采用 INBOX，避免根目录重复来源覆盖其状态。当前本地规则的标记动作新增持久覆盖字段，用户显式操作释放相应覆盖；规则仍只在本地执行。
@@ -396,7 +382,6 @@ prepareCompose 生成独立的 deliveryBody/deliveryHtml，保留可编辑 body/
 腾讯/QQ 根目录实际 EXAMINE 报告为空，却搜索出 267/3424 个 UID。新增存在性和矛盾响应校验，不能继续将这些 UID 入库；正常空目录后新收到的 EXISTS 更新允许继续读取。自动扫描跳过这个目录的读取并继续其余目录，最终报告部分失败，保留全部既有来源及完整存档。根路径实际写入和旧重复来源修复仍待完成，不做按目录名称的盲目清理。
 
 129 项 Rust、88 项前端、11 项开发脚本及 UI 检查/构建通过。真实两个 INBOX 回读成功，QQ 联调 E 的在线正文、加星后刷新、取消星标和服务器确认通过；最终已读、无星标。无新增发送或删除。未使用独立外部客户端修改标记，跨客户端完整端到端验收仍未完成。接续入口及预览 PID/日志写入 DEVELOPMENT_STATUS.md 最新检查点。
-
 
 ## 异常目录来源隔离与独立核查（2026-10-05 17:46）
 
@@ -412,7 +397,6 @@ prepareCompose 生成独立的 deliveryBody/deliveryHtml，保留可编辑 body/
 
 验证：138 项 Rust、94 项前端、11 项脚本测试通过，UI 检查/TypeScript/生产构建通过。补充协议拒绝与可靠空目录恢复保护、隔离任务旧确认/重启/精确恢复、事务回滚、在线条目会话缓存恢复、核查错误跨刷新保留、隔离目录不自动重试。既有大分包警告仍存在。预览保持运行，PID/日志及下一步持久 COPY/结果不明保护入口见 DEVELOPMENT_STATUS.md 最新检查点；移动/复制、原在线来源恢复与首版其他待办尚未完成。
 
-
 ## 服务器 COPY 持久任务与设置间距（2026-10-05 20:40）
 
 完成 SYNC-01B1。`directory_operations.rs` 单独保存非幂等任务，提交前持久记录 submitted，复制回执保存后只读核验目标全文，再原子关联来源。重启仅恢复未提交预检和已确认只读核验；submitted 无回执进入 uncertain，不自动重复 COPY。相同来源/目标去重；取消只在提交前或明确失败，确认丢失不能重试。备份排除任务，来源和 MIME 保留。
@@ -424,7 +408,6 @@ prepareCompose 生成独立的 deliveryBody/deliveryHtml，保留可编辑 body/
 真实原生 COPY：QQ 联调 E 从收件箱复制到邮件归档，确认 1582296105:1703；企业邮回复 B 从收件箱复制到已发送，确认 1587179777:58；均核对目标全文后 completed，原来源/已读/星标/本地 metadata hash 保持，两份测试副本保留。没有新发 SMTP、移动、清理或使用重启补收充当 IDLE 验收。9244 元数据/5460 完整存档和原 root 来源计数复制前后相同。
 
 149 项 Rust、101 项前端、11 项开发脚本及 UI 检查/TypeScript/构建通过；既有大分包警告仍在。下一步 SYNC-01B2 MOVE 与源/目标关联冲突，不盲目用 EXPUNGE/CLOSE；旧异常来源准确恢复、服务端已发送上传、规则远端动作及其余首版待办未完成。后续检查点见 DEVELOPMENT_STATUS.md。
-
 
 ## 单封服务器 MOVE 与未知结果只读恢复（2026-10-05 21:25）
 
@@ -461,3 +444,128 @@ JSON strategy 标记区分原生与兼容任务，不改变旧日志语义。cle
 新增官方 Tauri updater、HTTPS GitHub Release 端点及固定公钥；更新签名私钥存放仓库外并上传 Actions Secret。更新入口仅有新版本时出现，设置页可检查，shadcn 更新中心显示说明和进度，下载/签名验证后由用户安装并重启。写信和开发预览保护、安装失败及重启失败分别处理；重启前等待 SMTP/同步完成。
 
 GitHub CI 和两架构发布工作流已推送；首次 Checks 已成功，Release 构建/实际安装验收按 DEVELOPMENT_STATUS.md 最新检查点记录。当前没有 Developer ID/公证，更新签名与 Apple 签名分别记录，不声称系统信任和钥匙串授权已解决。详见 UPDATES.md。
+
+## 阅读器图片交互与原生剪贴板修复（2026-10-18）
+
+阅读器正文 iframe 内的图片交互此前全部静默失灵（单击无选中框、双击无反应、右键是 WKWebView 原生菜单、⌘C 与菜单「复制图片」都报 NotAllowedError）。根因不是沙箱：帧内 DOM 属于另一个 realm，`event.target instanceof Element` 与 `img instanceof HTMLImageElement` 对它们恒为 false，onPointer/onContext/onDoubleClick 因此在 guard 处提前 return（监听器一直在触发，所以上一轮补 `allow-scripts` 毫无变化）。改用只依赖 `nodeType`/`tagName`/`closest` 的 `frameImageTarget()` 后四项交互恢复；`sandbox="allow-same-origin allow-scripts"` 保留，帧内没有任何可执行脚本（DOMPurify 禁 script/on* 属性 + 帧内 CSP `default-src 'none'`）。
+
+写剪贴板改走原生：WKWebView 拒绝 `navigator.clipboard.write`（NotAllowedError），新增 `copy_mail_image` 命令——由 `fetch_mail_image` 取字节后用 `NSPasteboardItem` 同时写入原格式（`public.png`/`public.jpeg`…）与 `public.tiff` 两种类型，Finder/预览/Office 都能粘贴（Finder 粘出的是原格式文件）；前端不再用 `ClipboardItem`，`mail_image_data` 命令与其返回结构体一并删除。选中框改为 `outline-offset: -2px` 画在图片内部：图片贴着 iframe 左边时，画在边框盒外的那条左边线会被帧边界裁掉，用户只看到三面框。图片右键菜单去掉「用系统应用打开」，只留「复制图片 / 保存图片…」，双击仍交系统默认应用打开。
+
+验证：前端 51 文件 / 398 项测试、UI 铁律检查、TypeScript、Prettier 与生产构建通过，`cargo test --release` 340 项通过，`cargo check` 无新增告警。装机后需人工核对：单击图片出现完整四面蓝框、⌘C 与菜单「复制图片」提示「图片已复制」并能粘贴到预览/Finder、右键只有两项、双击仍用系统应用打开。
+
+## 写信编辑器崩溃修复与收件人区紧凑化（2026-10-18）
+
+用户点「写邮件」时经常直接看到红框「富文本编辑器暂时无法加载 / null is not an object (evaluating 'this.commandManager.commands')」。根因是 Tiptap v3 的 `useEditor`：它在 `scheduleDestroy` 里用 1ms 定时器销毁「尚未挂载」的实例，而 `Editor.destroy()` 会把 `commandManager` 置为 `null`，`get commands()` 又是直接解引用 `this.commandManager.commands`（`chain()` / `can()` 都有空实现兜底，`commands` 没有）。于是实例在「渲染已提交、副作用还没跑」的窗口里被销毁时，只要有人碰 `editor.commands` 就抛错。写信打开时自动插入问候语的副作用正是第一处受害者（`blankBody()` 走的是销毁后仍可用的 `editor.state` 缓存，所以错误停在下一行的 `commands`）。
+
+修复：问候语副作用先判 `editor.isDestroyed`（新实例建好后该副作用会因 `editor` 变化重跑，问候语不会丢）；`editor.commands.setTextSelection(...)` 改为 `editor.chain().setTextSelection(...).run()`；渲染处从 `if (!editor) return null` 改为 `if (!editor || editor.isDestroyed) return null`；链接对话框关闭的 `editor.commands.focus()` 与 `insertPaths()` 也各自加销毁判断。
+
+收件人区按反馈调整：**抄送默认显示**，密送只在点「密送」后展开（草稿自身带密送时也直接显示；展开后行尾按钮变成「收起密送」，点它可以再收回去）；行的紧凑度用 `.compose-row` 统一收紧——padding `9px 26px` → `6px 22px`、gap `13px` → `10px`、正文输入高 `27px` → `24px`、发件人下拉 `34px` → `26px`，并给 `.text-link` 加 `height: 24px`（它是 `h-9` 的按钮，会把整行撑到 47px，是之前「行很高」的主因）；label 保持 `41px` 并加 `white-space: nowrap`，避免「发件人 / 收件人」折成两行。
+
+验证：前端 51 文件 / 399 项测试（新增回归：实例被销毁后问候语副作用不得抛错；把两处修复还原即失败于 `Cannot read properties of null (reading 'commands')`）、UI 铁律检查、TypeScript、Prettier 与生产构建通过。浏览器实测写信行高 35–37px（此前 47–53px），密送点击后出现密送行、无控制台报错。
+
+## 写信工具条压成一行、密送可收起（2026-10-18）
+
+反馈两点：正文工具条上「发送预览 / 导入文件」被挤到第二行；密送展开后收不回去。
+
+工具条单行：图标按钮 `32px → 26px`（`.format-toolbar [data-slot="tooltip-trigger"]`，同时去掉内边距）、分组内间距 `4px → 2px`、工具条 `padding 6px 23px → 5px 12px`、`gap 2px → 1px`、`min-height 45px → 37px`；右侧控件（正文格式下拉 + 发送预览 + 导入文件）统一 `height: 26px`、字号 13px。实测整条最小内容宽：带文字 1004px、只留图标 888px；写信窗口最宽 1160px（内边距 12px×2 → 内容区 1136px），所以 1160px 窗口下必然单行。窗口窄于 1240px 时 `@media` 把「发送预览 / 导入文件」的文字（`.extras-label`）收成图标、`title` 仍保留提示，这样 ≥976px 的窗口都是单行；再窄就允许折行。
+
+密送可开可收：`bccOpen` 改成 `boolean | null`（`null` = 跟随草稿，草稿自带密送就直接展开），抄送行尾的开关在「密送 ⇄ 收起密送」之间切换。收起时即使密送里已经填了地址也只隐藏那一行——值仍然保留并照常发出。
+
+验证：前端 51 文件 / 400 项测试（新增：点「密送」展开、填地址后点「收起密送」收回）、UI 铁律检查、TypeScript、Prettier 与生产构建通过。浏览器实测 `.format-toolbar` 在 1136px 与 912px 宽下均高 37px（单行），888px 才折成两行；密送行按「密送 → 收起密送」顺序出现与消失。
+
+## 写信窗口改为非模态浮动面板（2026-10-18）
+
+用户反馈写信窗口「置顶、不能操作别的」，需要一个能一边写信一边翻看其他邮件的窗口。根因是 Radix `Dialog` 默认模态：打开写信时 `document.body` 被加上 `pointer-events: none`，并渲染半透明遮罩（实测计算色 `oklab(0 0 0 / 0.5)`），所以背后的邮件列表点不动、也读不了。先按「主窗口内浮动面板」重做：`Dialog` 加 `modal={false}`，`DialogContent` 新增可选的 `overlay` prop（默认渲染遮罩，写信传 `false`），再加 `onInteractOutside={(e) => e.preventDefault()}`——非模态分支的 `DialogContentNonModal` 是「只有回调没有 preventDefault 才记录这次外部交互」，于是点收件箱不再关掉草稿，背景邮件列表可以正常滚动、点开、复制正文。
+
+窗口行为按 Foxmail 习惯补齐：标题栏按住可拖动（双击最大化、再双击还原），八向边角热区可调整大小（最小 640×420，拖出视口会被收敛回来），窗口控制做成 macOS 三灯放在标题左侧（红=关闭、黄=最小化、绿=最大化/还原，指针落到三灯上才浮出图标），点写信窗口以外的应用界面自动把窗口收成底部细条，点细条上的「继续写信」回来；Esc 在最小化状态下不再触发关闭。几何用 CSS 自定义属性（`--compose-left/top/width/height`）+ `.compose-floating` 类落地，因为 `.compose-dialog` 原有的 `width/height/top` 都带 `!important`，React 内联样式会被压掉，拖动会完全没反应。`.compose-floating` 上同时 `transition: none !important`：`DialogContent` 自带的 `transition: all .2s`（Tailwind `duration-200`）会让拖动变成拖泥带水的补间动画。工具条按对话框自身宽度降级（`ResizeObserver` → `.compose-narrow`，窄于 1240px 隐藏按钮文字，与既有 `@media (max-width: 1239px)` 兜底互补）。
+
+第一版交付后用户实测「一点拖动就漂到左上角、拖不动、双击标题没反应」，据此定位到三个真问题。**(1) 标题栏上方有一圈死区**：`.compose-dialog` 原有的 `padding: 24px 0 0` 在标题栏上方留出 24px 空白，那块区域既没有拖动监听、也够不到标题栏的 `onDoubleClick`——用 `elementFromPoint` 实测窗口顶部 8/16/24px 处命中的是窗口本身而不是标题栏，于是「顶部拖不动、双击没效果」，视觉上还像左上角一块灰；现在窗口不再留这圈空白，标题栏紧贴窗口顶部，整条标题栏都能拖、能双击。**(2) 拖动基准被打开动画的缩放污染**：基准取的是 `getBoundingClientRect()`，而打开动画 `zoom-in-95` 会给窗口套 `scale(0.95)`（实测基准被量成 889×574 @ (95,109)，真实布局盒是 936×604 @ (32,64)），第一次拖动就把窗口缩小并挪位；现在改取 computed style 的布局盒（`left/top` 手动折半，因为居中用的是 `translate`），动画期间也量不错。**(3) 手势收不了尾**：move/up 只挂在触发元素上并依赖 `setPointerCapture`，捕获失败或指针移出元素时手势永远不结束，之后再滑回标题区会带着旧基准把窗口拽飞；现在手势期间把 `pointermove/pointerup/pointercancel/blur` 挂到 `window` 上，并在主键已经松开时立即收尾。
+
+自动最小化的判定直接看 `document` 上的 `pointerdown`：目标落在 `[role="dialog"/"alertdialog"/"listbox"/"menu"]` 里就不算「离开」——写信窗口自己的字体/字号下拉、发送预览、别的对话框都是挂到 body 上的弹层，DOM 上都在写信窗口外面。实测点字体下拉不会收起窗口，点主界面侧边栏会收起且草稿仍在。没用 Radix 的 `onInteractOutside` 做这件事：它只负责「别把草稿关掉」（`preventDefault`），而且在 jsdom 里不触发、单测覆盖不到。
+
+「最大化的上限低了」的定位结论：最大化按钮走的是既有的 `.compose-expanded`（`width: calc(100vw - 24px)`、`max-width: none`），本来就不受上限约束；真正上限偏低的是**非最大化**浮动态的 `max-width: 1160px`（基线 `432f441`/0.1.5 的旧值），已提到 `1440px`。
+
+验证：前端 51 文件 / 410 项测试（`compose window management` 10 项：非模态打开无遮罩、拖动标题区切到浮动定位并按视口收敛、双击最大化再双击还原且最大化时收掉缩放手柄、右下角热区缩放到最小尺寸停住、最小化后底部细条还原、点窗口之外自动收成细条且草稿不丢、点窗口自己的弹层不收窗口、拖动基准取布局盒不受缩放影响、在窗口外松开后不再带着旧基准拖动、三灯顺序与位置）、UI 铁律检查、TypeScript 与 Prettier 通过。浏览器实测（dev server 演示模式，1000×700）：整条标题栏可拖、第一次拖动落在布局盒 + 位移并按视口收敛（无缩小/挪位）、双击切最大化与还原、右下角缩放命中最小尺寸、点侧边栏自动收成细条且正文仍在、点字体下拉不收窗口。装机后需人工验收：拖动跟手、双击标题最大化/还原、四边八角缩放、三灯外观、点其他地方自动收细条并「继续写信」回来，以及写信时能正常点开其他邮件复制正文（WKWebView 的指针/焦点行为与 Chromium 不完全一致，需以装机为准）。
+
+## 写信窗口默认尺寸：拖动「漂移」与双击「无效」的真因（2026-10-18）
+
+第二轮反馈三点：三灯样式 OK 但要再左移一个灯；从三灯到标题栏任意位置一按就漂移；点其他地方自动最小化 OK。前两点查下来不是手势代码的问题，而是**默认窗口尺寸**的问题——用 Swift + `WKWebView` 探针（真 WebKit，加载 dev server + 演示模式）逐项实测：
+
+- 沿标题栏左→右各点一下（`pointerdown`+`pointerup` 不动）：rect 全程 `[32,64,1316,804]` 不变——**单点不会漂移**，手感代码是对的。
+- 双击标题栏：`[32,64,1316,804]` → `[12,44,1356,844]`，即宽高各 +40px、位置居中挪 20px。尺寸差太小 → 看着「没效果」；位置又动了 20px → 看着「漂移」。
+- 拖动 −300/−200：直接落到 `[8,8]` 并卡死；再往下拖只到 `[8,88]`。因为 1380×900 主窗口里窗口本身是 1316×804，`clampGeometry` 只留 left ∈ [8,56]、top ∈ [8,88] ——**任何正常幅度的拖动都会瞬间贴到左上角**，这就是用户说的「一定漂移」。
+
+修复：`.compose-dialog` 默认尺寸改成 `width: clamp(640px, calc(100vw - 280px), 1120px)`、`height: clamp(420px, calc(100dvh - var(--window-titlebar-height) - 208px), 700px)`（1380×900 下 = **1100×660**，四边各留约 100px 拖动余地），`max-width` 同步收到 1120px；`.compose-expanded`（双击/绿灯最大化）保持 `calc(100vw - 24px)` × `calc(100dvh - titlebar - 24px)` = 1356×844，最大化与默认尺寸差 256×184px，双击效果一眼可见。默认 1100px 会触发既有的窄窗降级（把「发送预览 / 导入文件」的文字收成图标），实测同一套工具条在 1100px 与 1316px 下控件宽度完全一致（56 / 266 / 104 / extras 257.1 / 26×N、高 36px 单行、无溢出），故 `COMPOSE_NARROW_WIDTH` 由 1240 下调到 1080，默认窗口下文字标签照旧显示。
+
+三灯再左移一个灯（12px）：标题栏左内边距 `25px → 13px`，第一个红点落在窗口左边缘内 14px；同时把四角缩放热区 `14px → 12px`，否则左移后的红点左上角 1×2px 会被 `nw` 热区抢走（实测红点中心 `insideLight: true`）。
+
+验证（真 WKWebView，1380×900）：开窗 `[140,136,1100,660]`、`narrow:false`、两个文字标签 `display:block`；点标题栏 rect 不变；拖 +100/+80 精确落在 `[240,216]`（1:1，无夹取）；双击到 `[12,44,1356,844]`，再双击精确回到 `[240,216,1100,660]`。门禁：TypeScript、Prettier、UI 铁律检查、前端 51 文件 / 410 项测试全绿。装机后需人工验收：拖动跟手且不再往角落吸、双击/绿灯最大化与还原、三灯位置与点击、四角缩放，以及最大化后正文/工具条排版是否仍正常。
+
+## 写信窗口「拖不动」的真因（WKWebView `buttons` 恒为 0）与多写信窗口（2026-10-18）
+
+第三轮反馈六点：三灯那一行「除了三灯本身，其他任意位置一按就漂，因此不能拖动、不能点击」；三灯图标要按主窗口素材（− / ✕ / 对角）；点窗口外自动最小化 OK；最小化再恢复要保留最大化状态；能否同时写多封（第一封最小化后写第二封、或从收件箱回复，目前会覆盖第一封）。
+
+**拖动失效的真因是 WebKit 的 `PointerEvent.buttons`。** 先用辅助功能（AX）在装机版上复现：写信窗口 `AXGroup pos=175,174 size=1120×636`，用 `CGEvent` 从标题栏拖到 +100/+80，位置**纹丝不动**（不是漂移，是完全没有反应）；同一条 CGEvent 路径点绿灯能把窗口切成 `1446×820`，说明点击投递正常、问题在手势本身。随后用最小 `WKWebView` 探针 + 真实 CGEvent 拖拽量到：`pointerdown` 2 次、`pointerup` 2 次，而 **131 次 `pointermove`/`mousemove` 的 `buttons` 全部是 0**。手势里那句「`(event.buttons & 1) === 0` 就立即收尾」（上一轮为了防「在窗口外松手后带着旧基准把窗口拽飞」加的）于是在第一次 `pointermove` 就把每一次拖动都取消了——表现就是「不能拖动」。前几轮没抓到，是因为我自己的探针脚本用 `new PointerEvent(..., { buttons: 1 })` 构造事件，绕过了真机行为，所以在 WKWebView 探针里拖动「恰好是好的」，属于假绿。
+
+修法：删掉 `buttons` 判断，收尾完全交给事件——`window` 上挂 `pointermove/pointerup/pointercancel/mouseup/blur`，并在 `pointerdown` 里 `try { event.currentTarget.setPointerCapture(event.pointerId) } catch {}`（指针拖到窗口外松手时仍能收到 `pointerup`，jsdom 不支持捕获时退回 window 监听）。回归测试新增「移动事件报 `buttons: 0` 时依然能拖动」。
+
+**最小化保留最大化状态**：`minimizeCompose` 原来写 `setExpanded(false); setMinimized(true)`，于是「最大化 → 最小化 → 继续写信」会退回默认中框；现在只 `setMinimized(true)`，`.compose-minimized` 只做 `display: none`，恢复时 `compose-expanded` 原样还在。
+
+**三灯图标改为主窗口（原生 macOS）观感**：红=描边 1.15px 的细 ✕、黄=一条横线、绿=两块对角三角（最大化朝外、还原朝内），颜色固定 `#000 !important`（深色主题下也不变），显隐仍由 `.compose-light svg` 的 opacity 控制（悬停 0.62）。同时把四角热区注释里过时的「角 14px」改成 12px。
+
+**多写信窗口（一封一窗）**：App 里 `draft: Compose | null` 改成 `composes: Compose[]`——`openCompose` 追加、`closeCompose(id)` 只关自己那扇，写邮件/回复/转发/联系人「写信」/草稿箱 `onOpen`/发件箱 `onDraft`/重新编辑已发送/撤回重开这些入口全部改成追加而不是替换；渲染成 `composes.map((item, index) => <ComposeDialog key={item.id} draft={item} stackIndex={index} … />)`，浮动位置、最大化、最小化都是组件内部 state，靠 `key` 天然隔离，所以第一封最小化后写第二封（或从收件箱回复）不再覆盖。`draft` 变量保留为「最后打开的那封」，继续供全局键盘守卫、`editorOpen`、`UpdateDialog blocked` 等「有没有在写信」的判断使用；草稿箱「清空时保留正在编辑的那份」改成按 id 集合排除。多个「继续写信」还原条各自是 `position: fixed` 的独立元素，用 `stackIndex * 52px` 向上错开（`--compose-bar-lift`），避免叠在一起。
+
+验证：`npx tsc --noEmit`、`npx prettier --check "src/**/*.{ts,tsx,css}"`、`npm run check:ui` 全绿；前端 **51 文件 / 413 项测试**（`compose window management` 12 项，新增「`buttons=0` 仍能拖动」「最大化后最小化再恢复仍最大化」；`App.test.tsx` 新增「第二封不覆盖第一封」）。装机后需人工验收：拖动跟手（含最大化状态最小化后恢复）、三灯图标与点击、四角缩放、以及同时写两封信互不干扰。
+
+## 拖动漂移的真因：生产构建吃掉了 `translate` 覆盖（2026-10-18）
+
+第四轮反馈：三灯图标、点窗口外自动最小化、最小化后保留最大化都 OK，但**「一按标题栏就漂移」仍在**。
+
+装机版上用真实 `CGEvent` 复现（主窗 1470×876）：写信窗开在 `175,174 / 1120×636`，**只点一下**标题栏（`575,192`，指针零位移），窗口立刻变成 `-385,-144` —— 位移正好 `(-560,-318) = (-1120/2, -636/2)`，即**半个窗口身位**，不是被夹到角落：`left/top` 一旦换成显式值，`DialogContent` 自带的 `translate-x/y-[-50%]` 仍然生效，把窗口又推走半格。
+
+为什么前几轮抓不到：`src/index.css` 里写的是 `.compose-dialog.compose-floating { translate: none !important; transform: none !important }`，但**生产 CSS 里 `translate: none` 被压缩器折进后面的 `transform: none` 一起丢掉了**（lightningcss 把独立变换属性降级合并进 `transform`，同一规则里后写的 `transform` 把它吃掉）。产物实测：`dist/assets/index-*.css` 里 `.compose-dialog.compose-floating{left:var(--compose-left)!important;…;transform:none!important}` 只有 `transform`、没有 `translate`。dev 不做这种降级，所以我跑 dev server 的 WKWebView 探针里「恰好是好的」——又一次「只验证源码、没验证产物」的假绿。
+
+修法——**写信窗口彻底不用 `translate` 居中**：
+
+- `.compose-dialog` 居中改成 `left:0; right:0; margin-inline:auto` + `top: var(--window-titlebar-height); bottom:0; margin-block:auto`（在标题栏以下区域垂直居中）。与原 `left:50% + translate:-50%`、`top: calc(50% + titlebar/2) + translate:-50%` 视觉等价：1470×876 下仍是 `175,136`（屏幕 174），最大化仍是 `12,44 / 1446×820`。
+- 基础规则加 `transform: none !important`，关掉入场 `zoom-in-95` 的 `scale`（淡入的 opacity 保留）→ `getBoundingClientRect()` 永远等于布局盒。
+- `.compose-floating` 复位 `right:auto; bottom:auto; margin:0`，并删掉那条会被构建吃掉的 `translate: none`。
+- `DialogContent` 自带的 `translate-x/y-[-50%]` 从**类名**上顶掉：`compose-dialog translate-x-0 translate-y-0`（`cn` 会把同组的 `-50%` 类替换掉），不再靠 CSS 覆盖。
+- `measureGeometry` 改回 `getBoundingClientRect()`（居中不再靠 translate、rect 不再被入场缩放污染），删掉「left/top 自己折半」的老逻辑。
+
+验证（装机版 + 真实 `CGEvent`，辅助功能读回几何）：
+
+- 开窗 `175,174 / 1120×636`；**点一下标题栏 → 仍 `175,174`**（修复前立刻跳到 `-385,-144`）；
+- 拖 +100/+80 → 精确 `275,254`；
+- 双击标题栏 → `12,82 / 1446×820`；在标题栏内再双击 → 精确回到 `275,254`；
+- 再点「写邮件」→ 两个 `AXGroup 写邮件` 并存；点第一封的「继续写信」→ 第一封回到 `275,254`，第二封收成条并向上错开 `52px`。
+- 产物 CSS 复核：`.compose-dialog{…left:0!important;right:0!important;top:var(--window-titlebar-height)!important;bottom:0!important;margin-block:auto!important;margin-inline:auto!important;transform:none!important}`、`.compose-floating{…margin:0!important;bottom:auto!important;right:auto!important}` 全在。
+- 门禁：TypeScript、Prettier、UI 铁律检查、前端 **51 文件 / 413 项测试**全绿；单测「拖动基准取实际盒子，居中不再依赖会被生产构建吃掉的 translate」同时断言类名里不再出现 `translate-x-[-50%]`。
+
+## 「点写信窗自己的 UI 也被收起」的误触（2026-10-18）
+
+第五轮反馈：1/2（漂移）通过；新问题是「写邮件触发最小化现在容易误判，限定范围：非写邮件的窗口，否则图片缩放、或者点击其他，会误触」。
+
+根因是自动最小化的判定面太窄：`document` 上的 pointerdown 只用 role 白名单 `[role=dialog|alertdialog|listbox|menu]` 认「点在写信窗自己的弹层上」，而写信窗派生出来的 UI 里有四样不在白名单里 ——
+
+- 图片缩放 `− % +` 浮条（`rich-image-zoom.tsx`）：`createPortal(document.body)` + `role="toolbar"`；
+- 富文本工具条的提示气泡（`role="tooltip"`）；
+- sonner 通知横幅（`data-sonner-toast`，挂在 `#root` 里，没有上述 role）；
+- 另一封写信窗的「继续写信」还原条（`.compose-restore-bar`，就地渲染在 `#root` 里）。
+
+点这些地方都会把正在写的信收起来：用户说的「图片缩放、点击其他会误触」。
+
+修法（最小改动）：把这四样并进同一个 `closest()` 选择器，仍然是「点到写信窗派生的 UI 就不算离开写信窗口」这一条规则：
+
+```
+.rich-image-zoom, [data-sonner-toast], .compose-restore-bar,
+[role="dialog"], [role="alertdialog"], [role="listbox"], [role="menu"], [role="tooltip"]
+```
+
+验证：
+
+- 装机版（1470×876）+ 真实 `CGEvent`：开第一封（`175,174 / 1120×636`）→ 再点侧边栏「写邮件」→ 第一封收成细条、第二封打开（原行为不变）→ **点第一封的「继续写信」：第一封回到 `175,174 / 1120×636`，第二封也仍在 `175,174 / 1120×636`，没有被收起**（修复前同样操作会把第二封收成细条，实测复现过）；
+- 点主界面侧边栏：两封同时收成细条，两条还原条按 52px 错开（原行为不变）；
+- 单测新增「点写信窗派生出来的浮层（图片缩放浮条 / 通知 / 提示气泡）不会把窗口收起来」：用旧白名单跑必失败（已实测），新选择器下通过；
+- 产物 JS 复核：`dist/assets/index-*.js` 里含 `rich-image-zoom,[data-sonner-toast]` 选择器；
+- 门禁：TypeScript、Prettier、UI 铁律检查、前端 **51 文件 / 414 项测试**全绿。

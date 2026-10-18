@@ -1,6 +1,45 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi } from "vitest";
+import { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import { mailDocumentHeight } from "../lib/mail-layout";
+import { MailContent } from "./mail-content";
+
+// WebKit 在禁止脚本的沙箱帧里会静默丢弃帧内事件监听器：少了 allow-scripts，
+// 图片点选蓝框、双击打开、自研右键菜单、⌘C 复制会一起失灵。
+describe("mail body sandbox", () => {
+  let root: Root;
+  let host: HTMLDivElement;
+  beforeEach(() => {
+    Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+    vi.stubGlobal("requestAnimationFrame", () => 1);
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+  });
+  afterEach(async () => {
+    await act(async () => root.unmount());
+    host.remove();
+    vi.unstubAllGlobals();
+  });
+  it("runs the frame with scripts so frame listeners still fire", async () => {
+    await act(async () => {
+      root.render(<MailContent html="<p>正文</p>" onOpenLink={() => {}} />);
+    });
+    expect(host.querySelector("iframe")?.getAttribute("sandbox")).toBe(
+      "allow-same-origin allow-scripts",
+    );
+  });
+});
 
 function layout(top: number, height: number, contentBottom: number) {
   const doc = document.implementation.createHTMLDocument("邮件布局");

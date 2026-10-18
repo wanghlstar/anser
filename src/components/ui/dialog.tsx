@@ -49,13 +49,16 @@ function DialogContent({
   className,
   children,
   showCloseButton = true,
+  overlay = true,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content> & {
   showCloseButton?: boolean;
+  /** 非模态面板（如写信窗口）不要遮罩，免得挡住背后的邮件列表 */
+  overlay?: boolean;
 }) {
   return (
     <DialogPortal data-slot="dialog-portal">
-      <DialogOverlay />
+      {overlay && <DialogOverlay />}
       <DialogPrimitive.Content
         data-slot="dialog-content"
         className={cn(

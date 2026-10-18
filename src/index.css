@@ -2003,15 +2003,37 @@ button.nav-collapse .collapse-chevron {
   font-size: 12px;
 }
 .compose-dialog {
-  width: calc(100vw - 64px) !important;
+  /* 默认就是一个「真正的写信窗口」，不是几乎铺满主界面的面板。
+     1380×900 下原来是 1316×804：可拖动余地只剩 24~48px，一拖就被 clampGeometry 顶到角落
+     （看起来像窗口「漂移」），双击/绿灯最大化也只放大 40px（看起来像「没效果」）。
+     现在默认约 1100×660，四边都留出 100px 左右的拖动余地，最大化也有明显变化。 */
+  width: clamp(640px, calc(100vw - 280px), 1120px) !important;
   background: color-mix(in srgb, var(--background) 55%, white) !important;
-  max-width: 1160px !important;
-  top: calc(50% + var(--window-titlebar-height) / 2);
-  height: min(860px, calc(100dvh - var(--window-titlebar-height) - 64px));
+  max-width: 1120px !important;
+  /* 居中用 left/right + margin:auto，不用 translate：DialogContent 自带
+     translate-x/y-[-50%]，而生产构建的 CSS 压缩器会把这里的 translate 折进后面的
+     transform 一起丢掉，结果点一下标题栏窗口就整体挪半个身位（dev 下看不出来）。 */
+  left: 0 !important;
+  right: 0 !important;
+  margin-inline: auto !important;
+  top: var(--window-titlebar-height) !important;
+  bottom: 0 !important;
+  margin-block: auto !important;
+  /* 关掉入场 zoom-in 的 scale：带 transform 时 getBoundingClientRect() 量到的是缩放后的
+     盒子，第一次拖动会把窗口缩小并挪位（淡入的 opacity 不受影响）。 */
+  transform: none !important;
+  /* 208px = 上下各留约 100px 拖动余地 + 标题栏落差 */
+  height: clamp(
+    420px,
+    calc(100dvh - var(--window-titlebar-height) - 208px),
+    700px
+  );
   display: flex !important;
   flex-direction: column;
   max-height: calc(100dvh - var(--window-titlebar-height) - 64px);
-  padding: 24px 0 0 !important;
+  /* 顶部不再留 24px 空白：那圈空白既不能拖也不能双击（拖动/最大化都失效），
+     看着还像「左上角一块灰」。标题栏直接从窗口顶部开始，跟系统窗口一致。 */
+  padding: 0 !important;
   overflow: hidden;
   gap: 12px !important;
 }
@@ -2021,18 +2043,158 @@ button.nav-collapse .collapse-chevron {
   height: calc(100dvh - var(--window-titlebar-height) - 24px);
   max-height: calc(100dvh - var(--window-titlebar-height) - 24px);
 }
+/* 非模态浮动写信窗口：拖动/缩放后改用显式 left/top/width/height，
+   并把居中用的 right/bottom/margin:auto 复位。 */
+.compose-dialog.compose-floating {
+  left: var(--compose-left) !important;
+  top: var(--compose-top) !important;
+  right: auto !important;
+  bottom: auto !important;
+  margin: 0 !important;
+  width: var(--compose-width) !important;
+  height: var(--compose-height) !important;
+  max-width: none !important;
+  max-height: none !important;
+  transform: none !important;
+  /* 贴到窗口边缘时不要往主界面上投一圈灰影。 */
+  box-shadow: none !important;
+  /* DialogContent 自带的 transition: all .2s 会让拖动/缩放拖泥带水，浮动时关掉。 */
+  transition: none !important;
+}
+/* 最小化：内容藏起来，只留底部的「继续写信」细条。 */
+.compose-dialog.compose-minimized {
+  display: none !important;
+}
+/* 边角缩放热区。悬停在窗口内边缘（6px / 角 14px），不盖住正文与按钮。 */
+.compose-resize-handle {
+  position: absolute;
+  z-index: 2;
+}
+.compose-resize-handle[data-dir="n"],
+.compose-resize-handle[data-dir="s"] {
+  left: 10px;
+  right: 10px;
+  height: 6px;
+}
+.compose-resize-handle[data-dir="n"] {
+  top: 0;
+  cursor: ns-resize;
+}
+.compose-resize-handle[data-dir="s"] {
+  bottom: 0;
+  cursor: ns-resize;
+}
+.compose-resize-handle[data-dir="w"],
+.compose-resize-handle[data-dir="e"] {
+  top: 10px;
+  bottom: 10px;
+  width: 6px;
+}
+.compose-resize-handle[data-dir="w"] {
+  left: 0;
+  cursor: ew-resize;
+}
+.compose-resize-handle[data-dir="e"] {
+  right: 0;
+  cursor: ew-resize;
+}
+.compose-resize-handle[data-dir="nw"],
+.compose-resize-handle[data-dir="ne"],
+.compose-resize-handle[data-dir="sw"],
+.compose-resize-handle[data-dir="se"] {
+  /* 角热区 12px：刚好收在左移后的第一个红点左边，免得抢走三灯的点击。 */
+  width: 12px;
+  height: 12px;
+}
+.compose-resize-handle[data-dir="nw"] {
+  top: 0;
+  left: 0;
+  cursor: nwse-resize;
+}
+.compose-resize-handle[data-dir="ne"] {
+  top: 0;
+  right: 0;
+  cursor: nesw-resize;
+}
+.compose-resize-handle[data-dir="sw"] {
+  bottom: 0;
+  left: 0;
+  cursor: nesw-resize;
+}
+.compose-resize-handle[data-dir="se"] {
+  bottom: 0;
+  right: 0;
+  cursor: nwse-resize;
+}
+/* 最小化后停在窗口底部的还原条 */
+.compose-restore-bar {
+  position: fixed;
+  z-index: 60;
+  left: 50%;
+  /* 多个写信窗口时按 stackIndex 向上错开，避免还原条叠在一起 */
+  bottom: calc(16px + var(--compose-bar-lift, 0px));
+  translate: -50% 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: min(560px, calc(100vw - 48px));
+  padding: 8px 10px 8px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--background);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.18);
+}
+.compose-restore-label {
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .compose-heading {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 10px;
 }
-.compose-heading > div {
+/* 窗口控制做成 macOS 三灯放在标题左侧：红=关闭、黄=最小化、绿=最大化/还原。 */
+.compose-heading > .compose-lights {
   display: flex;
-  gap: 4px;
+  gap: 8px;
+}
+.compose-light {
+  width: 12px !important;
+  height: 12px !important;
+  min-width: 12px;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 999px !important;
+  /* 图标固定深色（深色主题下也保持 macOS 三灯观感），显隐交给 svg 的 opacity。 */
+  color: #000 !important;
+  box-shadow: inset 0 0 0 0.5px rgb(0 0 0 / 0.12);
+}
+.compose-light svg {
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+/* 指针落到三灯上时才浮出图标，跟 macOS 一致。 */
+.compose-lights:hover .compose-light svg {
+  opacity: 0.62;
+}
+.compose-light-close {
+  background: #ff5f57 !important;
+}
+.compose-light-min {
+  background: #febc2e !important;
+}
+.compose-light-zoom {
+  background: #28c840 !important;
 }
 .compose-dialog > [data-slot="dialog-header"] {
   flex-shrink: 0;
-  padding: 0 25px 7px;
+  /* 标题区即窗口标题栏：拖动移动窗口，双击最大化/还原。
+     左边距 13px = 比原来（25px）再左移一个灯（12px）。 */
+  padding: 12px 25px 7px 13px;
+  cursor: default;
+  user-select: none;
 }
 .compose-dialog fieldset {
   display: flex;
@@ -2049,20 +2211,21 @@ button.nav-collapse .collapse-chevron {
   flex-shrink: 0;
   display: flex;
   align-items: center;
-  gap: 13px;
+  gap: 10px;
   border-bottom: 1px solid var(--border);
-  padding: 9px 26px;
+  padding: 6px 22px;
 }
 .compose-row label {
   color: var(--muted);
   font-size: 13px;
   width: 41px;
   flex-shrink: 0;
+  white-space: nowrap;
 }
 .compose-row input {
   border: 0;
   box-shadow: none !important;
-  height: 27px;
+  height: 24px;
   padding: 0;
   font-size: 14px;
   outline: 0;
@@ -2081,6 +2244,8 @@ button.nav-collapse .collapse-chevron {
 .compose-row .text-link {
   white-space: nowrap;
   font-size: 12px;
+  height: 24px;
+  padding: 0 6px;
 }
 .compose-format {
   flex-shrink: 0;
@@ -2227,23 +2392,58 @@ button.nav-collapse .collapse-chevron {
 }
 .format-toolbar {
   display: flex;
-  gap: 2px;
-  padding: 6px 23px;
+  gap: 1px;
+  padding: 5px 12px;
   border-bottom: 1px solid var(--border);
   align-items: center;
   flex-wrap: wrap;
-  min-height: 45px;
+  min-height: 37px;
   flex-shrink: 0;
 }
 .format-toolbar > * {
   flex-shrink: 0;
+}
+/* 图标按钮收到 26px 并去掉内边距，分组内间距 2px：这样整排图标加上右侧的
+   「格式 / 发送预览 / 导入文件」才能排成一行（原先 32px 按钮在 1160px 的
+   写信窗口里一定会把右侧那一组挤到第二行）。 */
+.format-toolbar [data-slot="tooltip-trigger"] {
+  width: 26px;
+  height: 26px;
+  min-width: 26px;
+  padding: 0;
+}
+.format-toolbar
+  > div:not(.toolbar-extras):not([role="group"]):not([role="radiogroup"]) {
+  gap: 2px;
 }
 /* 合并后的工具条：外部控件（格式/预览/导入）靠右 */
 .format-toolbar .toolbar-extras {
   margin-left: auto;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
+}
+.format-toolbar .toolbar-extras [data-slot="button"],
+.format-toolbar .toolbar-extras .select-field {
+  height: 26px;
+  font-size: 13px;
+}
+.format-toolbar .toolbar-extras [data-slot="button"] {
+  padding: 0 8px;
+}
+.format-toolbar .toolbar-extras .select-field {
+  padding: 0 4px 0 6px;
+}
+/* 窗口窄到放不下文字时，「发送预览 / 导入文件」只留图标（title 提示仍在），
+   免得工具条又折成两行。视口媒体查询是兜底，.compose-narrow 由 ResizeObserver
+   按「写信窗口自身宽度」切换，缩放窗口后也能正确降级。 */
+.compose-narrow .format-toolbar .extras-label {
+  display: none;
+}
+@media (max-width: 1239px) {
+  .format-toolbar .extras-label {
+    display: none;
+  }
 }
 .format-toolbar button[aria-pressed="true"] {
   background: var(--secondary);
@@ -2617,6 +2817,26 @@ button.nav-collapse .collapse-chevron {
   border-radius: 5px;
   font-size: 12px;
 }
+/* 附件条选中态：参照 Foxmail 附件列表 ui-selected */
+.compose-attachments .compose-attachment[data-selected="true"] {
+  outline: 1.5px solid #3b82f6;
+  outline-offset: -1px;
+  background: color-mix(in oklab, #3b82f6 14%, var(--secondary));
+}
+.compose-attachment-name {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.compose-attachment-hint {
+  display: flex;
+  align-items: center;
+  padding: 6px 2px;
+  background: none;
+  font-size: 11px;
+  color: var(--muted);
+}
 .compose-attachments button {
   border: 0;
   background: none;
@@ -2743,6 +2963,19 @@ button.nav-collapse .collapse-chevron {
   width: 100%;
   gap: 2px;
   padding: 4px 6px 4px 4px;
+}
+/* Foxmail 附件栏选中态 ui-selected：蓝色高亮 + 描边 */
+.attachment-list .mail-attachment[data-selected="true"] {
+  outline: 1.5px solid #3b82f6;
+  outline-offset: -1px;
+  background: color-mix(in oklab, #3b82f6 10%, transparent);
+}
+.attachment-selection {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding-top: 2px;
+  font-size: 11px;
+  color: var(--muted);
 }
 .attachment-preview {
   height: auto;
@@ -3317,7 +3550,7 @@ button.nav-collapse .collapse-chevron {
   flex: 1;
   border: 0;
   box-shadow: none;
-  height: 34px;
+  height: 26px;
   justify-content: flex-start;
 }
 .compose-format .select-field {

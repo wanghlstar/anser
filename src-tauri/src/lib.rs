@@ -1690,13 +1690,6 @@ async fn notification_mail(state: tauri::State<'_, AppState>, token: String) -> 
         .await
         .map_err(err)?
 }
-#[derive(serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-struct MailImageData {
-    mime: String,
-    data: String,
-}
-
 /// 阅读器里复制/保存图片：iframe 有 CSP，前端 fetch 外链图会被拦、canvas 会被跨域污染，
 /// 所以统一由 Rust 取字节（data: 本地解码，http(s): 直接下载）。
 fn fetch_mail_image(url: &str) -> Result<(String, Vec<u8>)> {
@@ -1730,20 +1723,6 @@ fn fetch_mail_image(url: &str) -> Result<(String, Vec<u8>)> {
     Ok((mime, bytes))
 }
 
-#[tauri::command]
-async fn mail_image_data(url: String) -> Result<MailImageData> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let (mime, bytes) = fetch_mail_image(&url)?;
-        use base64::{engine::general_purpose::STANDARD, Engine};
-        Ok(MailImageData {
-            mime,
-            data: STANDARD.encode(bytes),
-        })
-    })
-    .await
-    .map_err(err)?
-}
-
 /// 保存图片到指定路径；path 为空时写到临时文件并用系统默认应用打开。
 #[tauri::command]
 async fn save_mail_image(url: String, path: Option<String>) -> Result<String> {
@@ -1775,6 +1754,263 @@ async fn save_mail_image(url: String, path: Option<String>) -> Result<String> {
     })
     .await
     .map_err(err)?
+}
+
+/// 把正文图片复制到系统剪贴板。WKWebView 里 `navigator.clipboard.write` 会抛
+/// NotAllowedError（用户实测），所以写剪贴板必须走原生 NSPasteboard。
+#[tauri::command]
+async fn copy_mail_image(url: String) -> Result<()> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let (mime, bytes) = fetch_mail_image(&url)?;
+        copy_image_to_pasteboard(&mime, &bytes)
+    })
+    .await
+    .map_err(err)?
+}
+
+/// 用系统默认应用打开一个本地附件文件（写信附件条双击/空格）。
+#[tauri::command]
+async fn open_attachment_path(path: String) -> Result<()> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let file = std::path::PathBuf::from(&path);
+        if !file.is_file() {
+            return Err(format!("附件不存在：{path}"));
+        }
+        open::that(&file).map_err(|e| format!("无法打开附件，请确认已安装对应应用：{e}"))
+    })
+    .await
+    .map_err(err)?
+}
+
+/// 把本地文件路径写进系统剪贴板（NSFilenamesPboardType），
+/// 可直接粘贴到 Finder 或其它应用；只写文件类型，不混入纯文本路径。
+#[tauri::command]
+async fn copy_attachment_paths(paths: Vec<String>) -> Result<()> {
+    if paths.is_empty() {
+        return Ok(());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        for path in &paths {
+            if !std::path::Path::new(path).is_file() {
+                return Err(format!("附件不存在：{path}"));
+            }
+        }
+        copy_files_to_pasteboard(&paths)
+    })
+    .await
+    .map_err(err)?
+}
+
+/// 把邮件里的附件复制到剪贴板：附件先落到临时目录，再写 NSFilenamesPboardType。
+#[tauri::command]
+async fn copy_mail_attachments(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    indexes: Vec<usize>,
+) -> Result<()> {
+    if indexes.is_empty() {
+        return Ok(());
+    }
+    let store = state.store.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut paths = Vec::with_capacity(indexes.len());
+        for index in indexes {
+            let mail = store.mail(&id)?;
+            let raw = store.message_raw(&mail)?;
+            let bytes = archive::attachment(&raw, index)?;
+            let target = std::env::temp_dir().join(format!(
+                "yanxin-attachment-{}-{index}",
+                uuid::Uuid::new_v4()
+            ));
+            archive::atomic_write(&target, &bytes)?;
+            paths.push(target.to_string_lossy().into_owned());
+        }
+        copy_files_to_pasteboard(&paths)
+    })
+    .await
+    .map_err(err)?
+}
+
+#[cfg(target_os = "macos")]
+fn copy_files_to_pasteboard(paths: &[String]) -> Result<()> {
+    use objc::{class, msg_send, sel, sel_impl};
+    use std::ffi::CString;
+    let ns_string = |text: &str| -> Result<*mut objc::runtime::Object> {
+        let c = CString::new(text).map_err(|_| "路径含有非法字符")?;
+        let object: *mut objc::runtime::Object =
+            unsafe { msg_send![class!(NSString), stringWithUTF8String: c.as_ptr()] };
+        if object.is_null() {
+            return Err("无法创建路径字符串".into());
+        }
+        Ok(object)
+    };
+    unsafe {
+        let pasteboard: *mut objc::runtime::Object =
+            msg_send![class!(NSPasteboard), generalPasteboard];
+        if pasteboard.is_null() {
+            return Err("无法访问系统剪贴板".into());
+        }
+        // 先清空，避免把用户原有的剪贴板内容搅在一起。
+        let _: () = msg_send![pasteboard, clearContents];
+        let urls: Vec<*mut objc::runtime::Object> = paths
+            .iter()
+            .map(|path| {
+                let string = ns_string(path)?;
+                let url: *mut objc::runtime::Object =
+                    msg_send![class!(NSURL), fileURLWithPath: string];
+                if url.is_null() {
+                    return Err(format!("无法定位附件：{path}"));
+                }
+                Ok(url)
+            })
+            .collect::<Result<_>>()?;
+        let array: *mut objc::runtime::Object = msg_send![
+            class!(NSArray),
+            arrayWithObjects: urls.as_ptr()
+            count: urls.len()
+        ];
+        if array.is_null() {
+            return Err("无法组装剪贴板内容".into());
+        }
+        // NSPasteboard 的 -writeObjects: 返回 Bool。
+        let written: bool = msg_send![pasteboard, writeObjects: array];
+        if !written {
+            return Err("写入系统剪贴板失败".into());
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn copy_files_to_pasteboard(_paths: &[String]) -> Result<()> {
+    Err("当前系统不支持复制附件到剪贴板".into())
+}
+
+/// 把图片字节写进系统剪贴板：同时给出原格式（png/jpeg…）和 TIFF 两种类型，
+/// Finder 与只认特定类型的应用都能粘贴。
+#[cfg(target_os = "macos")]
+fn copy_image_to_pasteboard(mime: &str, bytes: &[u8]) -> Result<()> {
+    use objc::{class, msg_send, sel, sel_impl};
+    let ns_string = |text: &str| -> Result<*mut objc::runtime::Object> {
+        use std::ffi::CString;
+        let c = CString::new(text).map_err(|_| "剪贴板类型名含有非法字符")?;
+        let object: *mut objc::runtime::Object =
+            unsafe { msg_send![class!(NSString), stringWithUTF8String: c.as_ptr()] };
+        if object.is_null() {
+            return Err("无法创建剪贴板类型".into());
+        }
+        Ok(object)
+    };
+    unsafe {
+        let pasteboard: *mut objc::runtime::Object =
+            msg_send![class!(NSPasteboard), generalPasteboard];
+        if pasteboard.is_null() {
+            return Err("无法访问系统剪贴板".into());
+        }
+        let data: *mut objc::runtime::Object = msg_send![
+            class!(NSData),
+            dataWithBytes: bytes.as_ptr() as *const std::ffi::c_void
+            length: bytes.len()
+        ];
+        if data.is_null() {
+            return Err("无法写入图片数据".into());
+        }
+        // NSImage 只用来校验图片并把任意输入转成 TIFF。
+        let allocated: *mut objc::runtime::Object = msg_send![class!(NSImage), alloc];
+        let image: *mut objc::runtime::Object = msg_send![allocated, initWithData: data];
+        if image.is_null() {
+            return Err("无法识别图片格式".into());
+        }
+        let tiff: *mut objc::runtime::Object = msg_send![image, TIFFRepresentation];
+        let item_alloc: *mut objc::runtime::Object = msg_send![class!(NSPasteboardItem), alloc];
+        let item: *mut objc::runtime::Object = msg_send![item_alloc, init];
+        if !tiff.is_null() {
+            let _: () = msg_send![item, setData: tiff forType: ns_string("public.tiff")?];
+        }
+        if let Some(kind) = image_pasteboard_type(mime) {
+            let _: () = msg_send![item, setData: data forType: ns_string(kind)?];
+        }
+        let array: *mut objc::runtime::Object =
+            msg_send![class!(NSArray), arrayWithObject: item];
+        let _: () = msg_send![pasteboard, clearContents];
+        let written: bool = msg_send![pasteboard, writeObjects: array];
+        let _: () = msg_send![image, release];
+        let _: () = msg_send![item, release];
+        if !written {
+            return Err("写入系统剪贴板失败".into());
+        }
+    }
+    Ok(())
+}
+
+/// 把 fetch_mail_image 报出的 mime 映射成 UTI；认不出的只给 TIFF。
+#[cfg(target_os = "macos")]
+fn image_pasteboard_type(mime: &str) -> Option<&'static str> {
+    match mime {
+        "image/png" => Some("public.png"),
+        "image/jpeg" | "image/jpg" => Some("public.jpeg"),
+        "image/gif" => Some("com.compuserve.gif"),
+        "image/webp" => Some("org.webmproject.webp"),
+        _ => None,
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn copy_image_to_pasteboard(_mime: &str, _bytes: &[u8]) -> Result<()> {
+    Err("当前系统不支持复制图片到剪贴板".into())
+}
+
+/// 从系统剪贴板读取「复制的文件」路径：Finder ⌘C 的文件只进
+/// NSFilenamesPboardType，WKWebView 的 DataTransfer 读不到，需要原生侧取。
+#[tauri::command]
+fn pasteboard_file_paths() -> Vec<String> {
+    read_pasteboard_file_paths()
+}
+
+#[cfg(target_os = "macos")]
+fn read_pasteboard_file_paths() -> Vec<String> {
+    use objc::{class, msg_send, sel, sel_impl};
+    unsafe {
+        let pasteboard: *mut objc::runtime::Object =
+            msg_send![class!(NSPasteboard), generalPasteboard];
+        if pasteboard.is_null() {
+            return Vec::new();
+        }
+        let classes: *mut objc::runtime::Object =
+            msg_send![class!(NSArray), arrayWithObject: class!(NSURL)];
+        let urls: *mut objc::runtime::Object =
+            msg_send![pasteboard, readObjectsForClasses: classes options: 0usize];
+        if urls.is_null() {
+            return Vec::new();
+        }
+        let count: usize = msg_send![urls, count];
+        (0..count)
+            .filter_map(|index| {
+                let url: *mut objc::runtime::Object = msg_send![urls, objectAtIndex: index];
+                if url.is_null() {
+                    return None;
+                }
+                let path: *mut objc::runtime::Object = msg_send![url, path];
+                if path.is_null() {
+                    return None;
+                }
+                let bytes: *const std::os::raw::c_char =
+                    msg_send![path, UTF8String];
+                if bytes.is_null() {
+                    return None;
+                }
+                std::ffi::CStr::from_ptr(bytes)
+                    .to_str()
+                    .ok()
+                    .map(str::to_owned)
+            })
+            .collect()
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn read_pasteboard_file_paths() -> Vec<String> {
+    Vec::new()
 }
 
 #[tauri::command]
@@ -2169,8 +2405,12 @@ pub fn run() {
             take_eml_paths,
             take_notification_mail,
             notification_mail,
-            mail_image_data,
             save_mail_image,
+            copy_mail_image,
+            open_attachment_path,
+            copy_attachment_paths,
+            copy_mail_attachments,
+            pasteboard_file_paths,
             open_eml_file,
             close_eml_file,
             preview_eml_attachment,

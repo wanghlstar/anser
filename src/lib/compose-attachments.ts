@@ -8,6 +8,15 @@ export function mergeAttachmentPaths(existing: string[], incoming: string[]) {
     ]),
   ];
 }
+// 主题还空着时，用第一个附件的文件名（去掉扩展名）当主题：从 Finder 粘/拖
+// 文件进来通常是「发个文件」，不填主题会一直被拦在发送前。
+export function attachmentSubject(subject: string, paths: string[]) {
+  if (subject.trim()) return subject;
+  const name = (paths[0]?.split("/").pop() || "").trim();
+  const dot = name.lastIndexOf(".");
+  // 只去掉真正的扩展名：`.gitignore` 这类以点开头的文件名保持原样。
+  return dot > 0 ? name.slice(0, dot) : name;
+}
 export function insideComposeDrop(
   position: { x: number; y: number },
   bounds: { left: number; right: number; top: number; bottom: number },
