@@ -27,7 +27,9 @@
 ## 二、当前基线
 
 - 仓库 `/Users/wanghlstar/Mytools/anser`，分支 `feat/port-upstream-a`（未推送到 origin，除用户要求外不要 push）。
-- 快照 tag：`checkpoint-2026-10-18-compose-window`（此前还有 `checkpoint-2026-10-17-port-upstream-a`、`baseline-2026-10-16`；`v0.1.x` 是发布 tag）。
+- 发布：**0.1.9**（发布提交 `9e1e8e0 release: 0.1.9 …`，注解 tag `v0.1.9`，发布说明 `docs/releases/v0.1.9.md`）；上一版 0.1.8。
+- 快照 tag：`checkpoint-2026-10-18-compose-window`（0.1.9 之前那次临时快照）；更早还有 `checkpoint-2026-10-17-port-upstream-a`、`baseline-2026-10-16`。
+- 注意：本地发布 tag 与 upstream（`ansermail/anser`）的 tag 同名，本地用注解 tag 覆盖了 upstream 的同名轻量 tag（例如 `v0.1.9` 原本指向 upstream 的 `220f4cc`）。**不要把 upstream 的同名 tag fetch 回来覆盖本地发布 tag**，需要时用 `git log v0.1.x` 确认指向的是本地发布提交。
 - 门禁基线：`npx tsc --noEmit`、`npx prettier --check "src/**/*.{ts,tsx,css}"`、`npm run check:ui`、`npx vitest run` = **51 文件 / 414 用例**全绿。
 
 本次快照（2026-10-18 这一轮会话，5 段反馈）包含：
