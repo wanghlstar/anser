@@ -37,7 +37,6 @@ import { directorySource } from "./lib/server-destinations";
 import { mailMenuKind } from "./lib/mail-menu";
 import { coalesceRefresh } from "./lib/refresh-queue";
 import { ConversationReader } from "./components/conversation-reader";
-import { MailWindow } from "./components/mail-window";
 import { ScrollPane } from "./components/scroll-pane";
 import { replyHeaders } from "./lib/conversations";
 import { signatureContent } from "./lib/signatures";
@@ -308,8 +307,6 @@ export default function App() {
     [contactSeed, setContactSeed] = useState<Address | null>(null),
     // 允许多个写信窗口并存：数组里每封一个窗口，各自保留自己的位置与最大化状态
     [composes, setComposes] = useState<Compose[]>([]),
-    // 浮动阅读窗口：同样是「一封一窗」，关闭后从数组里移除
-    [mailWindows, setMailWindows] = useState<Mail[]>([]),
     [drafts, setDrafts] = useState<Compose[]>([]),
     // 发送倒计时：写信窗口收起后仍走完，撤回后邮件回到草稿
     [pendingSend, setPendingSend] = useState<{
@@ -333,19 +330,18 @@ export default function App() {
     (id: string) => setComposes((list) => list.filter((d) => d.id !== id)),
     [],
   );
-  // 浮动阅读窗口（同 Foxmail）：列表双击或右键「在新窗口打开」弹出一扇，
-  // 各窗互不影响，主界面里再点别的邮件也不会换掉它们的内容。
-  const openMailWindow = useCallback(
-    (mail: Mail) =>
-      setMailWindows((list) =>
-        list.some((item) => item.id === mail.id) ? list : [...list, mail],
-      ),
-    [],
-  );
-  const closeMailWindow = useCallback(
-    (id: string) => setMailWindows((list) => list.filter((m) => m.id !== id)),
-    [],
-  );
+  // 阅读窗口是独立原生窗口（Rust 建 WebviewWindow）：列表双击或右键「在新窗口打开」，
+  // 同一封邮件只开一扇（重复点会聚焦原窗口）。主界面里再点别的邮件不影响已开的窗。
+  const openMailWindow = useCallback((mail: Mail) => {
+    if (!native) {
+      toast.info("请在桌面客户端中在新窗口打开邮件");
+      return;
+    }
+    void invoke<string>("open_mail_window", {
+      id: mail.id,
+      subject: mail.subject,
+    }).catch((e) => toast.error(String(e)));
+  }, []);
   // ⌘W：主窗口的原生「关闭窗口」在 Rust 侧被拦下（避免把整个窗口收进托盘），
   // 改成通知前端先走写信窗口的关闭确认。只有真正在写信时才拦截。
   const composesRef = useRef(composes);
@@ -601,6 +597,42 @@ export default function App() {
   }
   const openMailLinkRef = useRef(openMailLink);
   openMailLinkRef.current = openMailLink;
+  // 独立阅读窗口把「回复 / 全部回复 / 转发 / 导出 / 保存附件 / 打开链接」发回主窗口，
+  // 统一在这里处理：写信窗口、保存对话框、链接打开都只有主窗口这一份实现。
+  const mailWindowActionRef = useRef<
+    (payload: {
+      action: string;
+      id: string;
+      index?: number;
+      name?: string;
+      href?: string;
+    }) => void
+  >(() => {});
+  mailWindowActionRef.current = (payload) => {
+    if (payload.action === "link") {
+      void openMailLinkRef
+        .current(payload.href ?? "")
+        .catch((error) => toast.error(`无法打开链接：${String(error)}`));
+      return;
+    }
+    void call<Detail>("mail_detail", { id: payload.id })
+      .then((source) => {
+        if (payload.action === "reply")
+          compose(source.mail, false, false, source);
+        else if (payload.action === "reply-all")
+          compose(source.mail, false, true, source);
+        else if (payload.action === "forward")
+          compose(source.mail, true, false, source);
+        else if (payload.action === "export") void exportMail(source.mail);
+        else if (payload.action === "attachment")
+          void attachment(
+            payload.index ?? 0,
+            payload.name ?? "附件",
+            source.mail,
+          );
+      })
+      .catch((e) => toast.error(String(e)));
+  };
   const refreshAction = useRef<() => Promise<void>>(async () => {});
   refreshAction.current = async () => {
     const seq = ++request.current;
@@ -762,17 +794,28 @@ export default function App() {
           .current(payload)
           .catch((error) => toast.error(`无法打开链接：${String(error)}`));
       });
+      const e = await listen<{
+        action: string;
+        id: string;
+        index?: number;
+        name?: string;
+        href?: string;
+      }>("mail-window-action", ({ payload }) =>
+        mailWindowActionRef.current(payload),
+      );
       if (!active) {
         a();
         b();
         c();
         d();
+        e();
       } else
         cleanup = () => {
           a();
           b();
           c();
           d();
+          e();
         };
     });
     const timer = setInterval(() => void refresh(), 20000);
@@ -4164,23 +4207,6 @@ export default function App() {
           }
         }}
       />
-      {mailWindows.map((item, index) => (
-        <MailWindow
-          key={item.id}
-          mail={item}
-          demo={demo}
-          stackIndex={index}
-          onClose={() => closeMailWindow(item.id)}
-          onReply={(source, forward = false, all = false) =>
-            compose(source.mail, forward, all, source)
-          }
-          onExport={(mail) => void exportMail(mail)}
-          onAttachment={(mail, index, name) => attachment(index, name, mail)}
-          onLink={(href) =>
-            void openMailLink(href).catch((e) => toast.error(String(e)))
-          }
-        />
-      ))}
       {composes.map((item, index) => (
         <ComposeDialog
           key={item.id}

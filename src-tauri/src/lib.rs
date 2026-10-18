@@ -45,6 +45,10 @@ struct AppState {
     /// 是否有正在编辑的写信窗口。原生菜单的「关闭窗口」(⌘W) 会被这里拦下来，
     /// 交给前端先关写信窗口，而不是把整个主窗口收进托盘。
     compose_open: Arc<std::sync::atomic::AtomicBool>,
+    /// 阅读窗口（独立原生窗口）的 label → 邮件 id。窗口前端启动时按 label 反查
+    /// 自己该显示哪封邮件；窗口销毁时清掉。
+    mail_windows: Arc<Mutex<std::collections::HashMap<String, String>>>,
+    mail_window_seq: Arc<std::sync::atomic::AtomicUsize>,
 }
 /// 托盘右键菜单里需要反向更新勾选状态的菜单项。
 struct TrayState {
@@ -885,6 +889,71 @@ fn set_compose_open(state: tauri::State<AppState>, open: bool) {
     state
         .compose_open
         .store(open, std::sync::atomic::Ordering::Relaxed);
+}
+/// 在一扇独立原生窗口里打开这封邮件。同一封邮件只开一扇窗，重复调用聚焦原窗口。
+#[tauri::command]
+async fn open_mail_window(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    id: String,
+    subject: String,
+) -> Result<String> {
+    let seq = state
+        .mail_window_seq
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    if let Some(label) = state
+        .mail_windows
+        .lock()
+        .map_err(err)?
+        .iter()
+        .find(|(_, mail)| mail.as_str() == id)
+        .map(|(label, _)| label.clone())
+    {
+        if let Some(window) = app.get_webview_window(&label) {
+            let _ = window.unminimize();
+            let _ = window.set_focus();
+            return Ok(label);
+        }
+    }
+    let label = format!("mail-window-{seq}");
+    let title = if subject.trim().is_empty() {
+        "无主题".to_string()
+    } else {
+        subject.trim().to_string()
+    };
+    let mut builder = tauri::WebviewWindowBuilder::new(
+        &app,
+        &label,
+        tauri::WebviewUrl::App("index.html".into()),
+    )
+    .title(title)
+    .inner_size(760.0, 640.0)
+    .min_inner_size(480.0, 360.0);
+    // 从主窗口位置逐层错开，避免连开几封完全叠在一起。
+    if let Some(main) = app.get_webview_window("main") {
+        if let Ok(position) = main.outer_position() {
+            let step = (seq % 6) as f64 * 28.0;
+            builder = builder.position(
+                position.x as f64 + 40.0 + step,
+                position.y as f64 + 40.0 + step,
+            );
+        }
+    }
+    builder.build().map_err(err)?;
+    state
+        .mail_windows
+        .lock()
+        .map_err(err)?
+        .insert(label.clone(), id);
+    // 这里刻意不淡入：主窗口那条 fade_in_window 是「从托盘重新显示」时才走，
+    // 窗口与 runloop 都已就绪；新建的窗口立刻走 alphaValue=0 + animator 动画，
+    // CGWindowList 里会长期停在 alpha=0.0（窗口在屏幕上但看不见）。
+    Ok(label)
+}
+/// 阅读窗口启动时问「我是哪封邮件」：label 由窗口自己上报（getCurrentWindow().label）。
+#[tauri::command]
+fn mail_window_mail(state: tauri::State<AppState>, label: String) -> Option<String> {
+    state.mail_windows.lock().ok()?.get(&label).cloned()
 }
 #[tauri::command]
 fn prepare_forward_files(
@@ -2273,6 +2342,8 @@ pub fn run() {
                 realtime: realtime.clone(),
                 dock_enabled: dock_enabled.clone(),
                 compose_open: compose_open.clone(),
+                mail_windows: Arc::new(Mutex::new(std::collections::HashMap::new())),
+                mail_window_seq: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             });
             watch_dock_icon(app.handle().clone(), dock_enabled);
             #[cfg(target_os = "macos")]
@@ -2412,6 +2483,17 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
+            // 阅读窗口关掉后清掉 label → 邮件 id 的登记。
+            if let tauri::WindowEvent::Destroyed = event {
+                if window.label().starts_with("mail-window-") {
+                    if let Some(state) = window.app_handle().try_state::<AppState>() {
+                        if let Ok(mut windows) = state.mail_windows.lock() {
+                            windows.remove(window.label());
+                        }
+                    }
+                }
+                return;
+            }
             if window.label() == "main" {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                     api.prevent_close();
@@ -2518,6 +2600,8 @@ pub fn run() {
             open_compose_session,
             close_compose_session,
             set_compose_open,
+            open_mail_window,
+            mail_window_mail,
             prepare_forward_files,
             read_body_images,
             send_mail,

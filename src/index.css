@@ -2188,41 +2188,43 @@ button.nav-collapse .collapse-chevron {
 .compose-light-zoom {
   background: #28c840 !important;
 }
-/* 浮动阅读窗口（列表双击 / 右键「在新窗口打开」）：外壳复用上面这套写信窗口的浮动窗口
-   类名（.compose-dialog 系列）与 --compose-* 几何变量，这里只覆盖默认尺寸与内部排版。
-   这样拖动、八角缩放、居中、三灯永远只有一份实现（那几处都踩过坑，见 RULES 关键发现 21–25）。 */
-.mail-window {
-  /* 比写信窗口略窄：阅读时通常只需要瞟一眼，也要给主界面留出可点的余地。
-     width/max-width 必须 !important（写信窗口那条是 !important），
-     height/max-height 反而不能加：否则会盖掉 .compose-dialog.compose-expanded
-     的高度（0,2,0 的特异性在两边都 !important 时仍然输给 0,1,0）。 */
-  width: clamp(640px, calc(100vw - 360px), 980px) !important;
-  max-width: 980px !important;
-  height: clamp(
-    420px,
-    calc(100dvh - var(--window-titlebar-height) - 240px),
-    720px
-  );
-  max-height: calc(100dvh - var(--window-titlebar-height) - 32px);
+/* 阅读窗口：独立原生窗口（Rust 侧 WebviewWindow，label 形如 mail-window-N），
+   用 macOS 原生标题栏，所以这里没有窗口外壳与三灯——只排窗口内容
+   （主题 / 工具条 / 收发件人 / 正文）。拖动、缩放、最大化、最小化、⌘W 全由系统负责。 */
+.mail-reader {
+  display: flex;
+  height: 100dvh;
+  min-height: 0;
+  flex-direction: column;
+  background: var(--background);
 }
-.mail-window-title {
+.mail-reader-head {
+  display: flex;
+  flex-shrink: 0;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 0 8px;
+  border-bottom: 1px solid var(--border);
+}
+.mail-reader-title {
   overflow: hidden;
-  font-size: 13px;
+  padding: 0 16px;
+  font-size: 14px;
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.mail-window-toolbar {
+.mail-reader-toolbar {
   display: flex;
   flex-shrink: 0;
   align-items: center;
   gap: 2px;
   padding: 0 12px 0 8px;
 }
-.mail-window-toolbar-spacer {
+.mail-reader-toolbar-spacer {
   flex: 1;
 }
-.mail-window-byline {
+.mail-reader-byline {
   display: flex;
   flex-shrink: 0;
   align-items: baseline;
@@ -2231,20 +2233,20 @@ button.nav-collapse .collapse-chevron {
   color: var(--muted);
   font-size: 12px;
 }
-.mail-window-byline strong {
+.mail-reader-byline strong {
   color: var(--foreground);
   font-size: 13px;
 }
-.mail-window-address {
+.mail-reader-address {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.mail-window-byline time {
+.mail-reader-byline time {
   flex-shrink: 0;
   margin-left: auto;
 }
-.mail-window-recipients {
+.mail-reader-recipients {
   flex-shrink: 0;
   overflow: hidden;
   padding: 0 16px;

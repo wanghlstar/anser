@@ -2236,7 +2236,7 @@ describe("mail list receive actions", () => {
   });
 });
 
-describe("floating mail windows", () => {
+describe("mail reader windows", () => {
   async function doubleClick(row: Element) {
     await act(async () => {
       row.dispatchEvent(
@@ -2244,43 +2244,25 @@ describe("floating mail windows", () => {
       );
     });
   }
-  it("double clicking a mail opens a floating window that the list does not take over", async () => {
+  it("double clicking a mail asks the desktop client for a native reader window", async () => {
     await click(nav("全部收件箱"));
     const rows = [...host.querySelectorAll("button.mail-row-main")];
     expect(rows.length).toBeGreaterThan(1);
-    const firstSubject =
-      rows[0].querySelector(".row-subject-text")?.textContent;
-    const secondSubject =
-      rows[1].querySelector(".row-subject-text")?.textContent;
+    const info = vi.spyOn(toast, "info").mockReturnValue(0);
     await doubleClick(rows[0]);
-    expect(document.querySelectorAll(".mail-window")).toHaveLength(1);
-    expect(
-      document.querySelector(".mail-window .mail-window-title")?.textContent,
-    ).toBe(firstSubject);
-    // 同一封再双击一次不重复开窗
-    await doubleClick(rows[0]);
-    expect(document.querySelectorAll(".mail-window")).toHaveLength(1);
-    // 再去点列表里另一封：主界面正文换新邮件，浮动窗内容原地不动
-    await click(rows[1]);
-    expect(document.querySelectorAll(".mail-window")).toHaveLength(1);
-    expect(
-      document.querySelector(".mail-window .mail-window-title")?.textContent,
-    ).toBe(firstSubject);
-    expect(host.textContent).toContain(secondSubject!);
-    // 红点关掉
-    await click(
-      document.querySelector('.mail-window [aria-label="关闭阅读窗口"]'),
-    );
-    expect(document.querySelector(".mail-window")).toBeNull();
+    // 阅读窗口是真正的系统窗口，jsdom 里没有原生运行时：只提示，不假装开窗
+    //（原生窗口的开、关、拖出主窗口只能装机版人工验收）。
+    expect(info).toHaveBeenCalledWith("请在桌面客户端中在新窗口打开邮件");
   });
   it("offers 在新窗口打开 in the list context menu", async () => {
     await click(nav("全部收件箱"));
     await openRowMenu();
     expect(menuLabels()).toContain("在新窗口打开");
+    const info = vi.spyOn(toast, "info").mockReturnValue(0);
     const item = [...document.querySelectorAll('[role="menuitem"]')].find(
       (el) => el.textContent?.includes("在新窗口打开"),
     );
     await click(item ?? null);
-    expect(document.querySelector(".mail-window")).toBeTruthy();
+    expect(info).toHaveBeenCalledWith("请在桌面客户端中在新窗口打开邮件");
   });
 });
