@@ -386,6 +386,11 @@ pub struct Preferences {
     /// 写信「发送邮件」的撤销倒计时秒数；0 = 立即发送，无倒计时
     #[serde(default = "default_send_countdown_seconds")]
     pub send_countdown_seconds: u32,
+    /// 上次关窗时主窗口是否铺满屏幕（内部状态，不在设置页展示）。macOS 拖到顶部
+    /// 的「填充」不置 zoom 位，插件记的 maximized 一直是 false，所以铺满的意图
+    /// 得自己记；下次启动按当前屏幕可用区域重新铺满。
+    #[serde(default)]
+    pub window_fill: bool,
 }
 fn default_send_countdown_seconds() -> u32 {
     5
@@ -452,6 +457,7 @@ impl Default for Preferences {
             archive_index_enabled: true,
             dock_visible: true,
             send_countdown_seconds: 5,
+            window_fill: false,
         }
     }
 }

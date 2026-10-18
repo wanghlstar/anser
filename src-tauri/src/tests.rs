@@ -4029,3 +4029,65 @@ fn compose_window_registry_reports_open_drafts_and_the_latest_window() {
     assert!(crate::compose_window_infos(&empty, |_| false).is_empty());
     assert_eq!(crate::latest_compose_label(&empty), None);
 }
+
+#[test]
+fn mail_window_registry_reports_subject_and_focus_for_the_floating_bar() {
+    let mut windows = std::collections::HashMap::new();
+    windows.insert(
+        "mail-window-2".to_string(),
+        serde_json::json!({ "id": "mail-b", "subject": "月度报告" }),
+    );
+    windows.insert(
+        "mail-window-10".to_string(),
+        serde_json::json!({ "id": "mail-a", "subject": "" }),
+    );
+    // 没有邮件 id 的登记不该混进悬浮条。
+    windows.insert("mail-window-3".to_string(), serde_json::json!({}));
+    assert_eq!(
+        crate::mail_window_infos(&windows, |label| label == "mail-window-2"),
+        vec![
+            serde_json::json!({
+                "label": "mail-window-2",
+                "subject": "月度报告",
+                "focused": true
+            }),
+            serde_json::json!({
+                "label": "mail-window-10",
+                "subject": "",
+                "focused": false
+            }),
+        ]
+    );
+    let empty = std::collections::HashMap::new();
+    assert!(crate::mail_window_infos(&empty, |_| false).is_empty());
+}
+
+#[test]
+fn window_fill_only_matches_windows_that_really_cover_the_screen() {
+    // 实测：旧存档 2900×1712 @ (0,76)、当前屏幕可用区域 2940×1752 @ (0,76)
+    //（Dock 调小后多出来的 20pt 正是用户说的「占不满」）。
+    assert!(crate::rect_fills_area(
+        (0, 76, 2900, 1712),
+        (0, 76, 2940, 1752)
+    ));
+    // 完全相等、以及比可用区域略大一点（窗口被拖动过的旧尺寸）都算铺满。
+    assert!(crate::rect_fills_area((0, 0, 2940, 1752), (0, 0, 2940, 1752)));
+    assert!(crate::rect_fills_area(
+        (-20, 0, 2980, 1772),
+        (0, 0, 2940, 1752)
+    ));
+    // 正经的窗口尺寸（默认 1380×900 之类）不能被当成铺满。
+    assert!(!crate::rect_fills_area(
+        (60, 80, 2760, 1800),
+        (0, 0, 2940, 1752)
+    ));
+    assert!(!crate::rect_fills_area(
+        (0, 0, 1380, 900),
+        (0, 0, 2940, 1752)
+    ));
+    // 只有一边贴边、另一边差得多，也不算铺满。
+    assert!(!crate::rect_fills_area(
+        (0, 0, 2940, 1200),
+        (0, 0, 2940, 1752)
+    ));
+}

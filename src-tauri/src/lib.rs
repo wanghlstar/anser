@@ -45,9 +45,10 @@ struct AppState {
     /// 是否有正在编辑的写信窗口。原生菜单的「关闭窗口」(⌘W) 会被这里拦下来，
     /// 交给前端先关写信窗口，而不是把整个主窗口收进托盘。
     compose_open: Arc<std::sync::atomic::AtomicBool>,
-    /// 阅读窗口（独立原生窗口）的 label → 邮件 id。窗口前端启动时按 label 反查
-    /// 自己该显示哪封邮件；窗口销毁时清掉。
-    mail_windows: Arc<Mutex<std::collections::HashMap<String, String>>>,
+    /// 阅读窗口（独立原生窗口）的 label → `{id, subject}` 载荷。窗口前端启动时按
+    /// label 反查自己该显示哪封邮件；主窗口靠它渲染「阅读窗口不在前台」的悬浮条，
+    /// 窗口销毁时清掉。
+    mail_windows: Arc<Mutex<std::collections::HashMap<String, serde_json::Value>>>,
     mail_window_seq: Arc<std::sync::atomic::AtomicUsize>,
     /// 写信窗口（独立原生窗口）的 label → `{draft, accounts}` 载荷。窗口前端启动时
     /// 按 label 反查自己该编辑哪封草稿；窗口销毁时清掉，并把剩下的草稿 id 报给主窗口
@@ -931,7 +932,9 @@ async fn open_mail_window(
         .lock()
         .map_err(err)?
         .iter()
-        .find(|(_, mail)| mail.as_str() == id)
+        .find(|(_, mail)| {
+            mail.pointer("/id").and_then(|value| value.as_str()) == Some(id.as_str())
+        })
         .map(|(label, _)| label.clone())
     {
         if let Some(window) = app.get_webview_window(&label) {
@@ -965,11 +968,11 @@ async fn open_mail_window(
         }
     }
     builder.build().map_err(err)?;
-    state
-        .mail_windows
-        .lock()
-        .map_err(err)?
-        .insert(label.clone(), id);
+    state.mail_windows.lock().map_err(err)?.insert(
+        label.clone(),
+        serde_json::json!({ "id": id, "subject": subject.trim() }),
+    );
+    emit_mail_windows(&app, &state);
     // 这里刻意不淡入：主窗口那条 fade_in_window 是「从托盘重新显示」时才走，
     // 窗口与 runloop 都已就绪；新建的窗口立刻走 alphaValue=0 + animator 动画，
     // CGWindowList 里会长期停在 alpha=0.0（窗口在屏幕上但看不见）。
@@ -978,7 +981,55 @@ async fn open_mail_window(
 /// 阅读窗口启动时问「我是哪封邮件」：label 由窗口自己上报（getCurrentWindow().label）。
 #[tauri::command]
 fn mail_window_mail(state: tauri::State<AppState>, label: String) -> Option<String> {
-    state.mail_windows.lock().ok()?.get(&label).cloned()
+    let windows = state.mail_windows.lock().ok()?;
+    Some(windows.get(&label)?.pointer("/id")?.as_str()?.to_string())
+}
+/// 阅读窗口标签里的序号（`mail-window-3` → 3）：按开启顺序排窗口用。
+fn mail_label_seq(label: &str) -> Option<usize> {
+    label.strip_prefix("mail-window-")?.parse::<usize>().ok()
+}
+/// 阅读窗口登记表的对外快照（按开启顺序）：label、邮件主题、是否在前台。
+/// 主窗口用它渲染「阅读窗口不在前台」的悬浮条（和写信窗口那套同一思路）。
+fn mail_window_infos(
+    windows: &std::collections::HashMap<String, serde_json::Value>,
+    focused: impl Fn(&str) -> bool,
+) -> Vec<serde_json::Value> {
+    let mut labels: Vec<&String> = windows.keys().collect();
+    labels.sort_by_key(|label| mail_label_seq(label.as_str()));
+    labels
+        .into_iter()
+        .filter_map(|label| {
+            let payload = windows.get(label)?;
+            // 没有邮件 id 的登记是坏的，别混进悬浮条。
+            payload.pointer("/id")?.as_str()?;
+            Some(serde_json::json!({
+                "label": label,
+                "subject": payload.pointer("/subject")?.clone(),
+                "focused": focused(label),
+            }))
+        })
+        .collect()
+}
+/// 阅读窗口开、关、或前后台切换时，把登记快照同步给主窗口。
+fn emit_mail_windows(app: &tauri::AppHandle, state: &AppState) {
+    let infos = match state.mail_windows.lock() {
+        Ok(windows) => mail_window_infos(&windows, |label| {
+            app.get_webview_window(label)
+                .and_then(|window| window.is_focused().ok())
+                .unwrap_or(false)
+        }),
+        Err(_) => Vec::new(),
+    };
+    let _ = app.emit_to("main", "mail-windows-changed", infos);
+}
+/// 主窗口点「查看邮件」：把那扇原生阅读窗口抬回前台（最小化时先还原）。
+#[tauri::command]
+fn focus_mail_window(app: tauri::AppHandle, label: String) -> Result<()> {
+    if let Some(window) = app.get_webview_window(&label) {
+        let _ = window.unminimize();
+        window.set_focus().map_err(err)?;
+    }
+    Ok(())
 }
 
 /// 发给某一扇写信窗口的「请关闭自己」事件。**必须与主窗口收的
@@ -1965,6 +2016,80 @@ fn window_state_flags() -> tauri_plugin_window_state::StateFlags {
     // Fullscreen is a separate macOS Space; preserve zoom/maximized only.
     StateFlags::SIZE | StateFlags::POSITION | StateFlags::MAXIMIZED
 }
+/// 窗口外框是否（几乎）铺满屏幕可用区域：四边留白都在容差内即算铺满。
+/// 容差取每条边的 5%——macOS 的「拖到顶部填充」自带一点窗口间距，
+/// 完全相等是等不到的。
+fn rect_fills_area(
+    outer: (i32, i32, u32, u32),
+    area: (i32, i32, u32, u32),
+) -> bool {
+    let (x, y, width, height) = outer;
+    let (ax, ay, aw, ah) = area;
+    let (tol_x, tol_y) = (aw as i32 / 20, ah as i32 / 20);
+    (x - ax).abs() <= tol_x
+        && (y - ay).abs() <= tol_y
+        && (ax + aw as i32 - x - width as i32).abs() <= tol_x
+        && (ay + ah as i32 - y - height as i32).abs() <= tol_y
+}
+/// 主窗口现在算不算「铺满屏幕」。不能只看 is_maximized()：macOS 拖到屏幕顶部
+/// （或双击标题栏）的「填充」不置 zoom 位，插件记下来的 maximized 一直是 false。
+fn main_window_fills_screen(window: &tauri::WebviewWindow) -> bool {
+    if window.is_maximized().unwrap_or(false) {
+        return true;
+    }
+    let (Ok(position), Ok(size), Ok(Some(monitor))) = (
+        window.outer_position(),
+        window.outer_size(),
+        window.current_monitor(),
+    ) else {
+        return false;
+    };
+    let area = monitor.work_area();
+    rect_fills_area(
+        (position.x, position.y, size.width, size.height),
+        (
+            area.position.x,
+            area.position.y,
+            area.size.width,
+            area.size.height,
+        ),
+    )
+}
+/// 把主窗口铺满当前屏幕可用区域（菜单栏与 Dock 之外）。Dock/分辨率变了以后，
+/// 插件的旧像素尺寸不会跟着重算，所以启动时按当前屏幕重新铺满一次。
+fn fill_main_window(window: &tauri::WebviewWindow) {
+    let Ok(Some(monitor)) = window.current_monitor() else {
+        return;
+    };
+    let area = monitor.work_area();
+    let _ = window.set_position(tauri::PhysicalPosition::new(
+        area.position.x,
+        area.position.y,
+    ));
+    let _ = window.set_size(tauri::PhysicalSize::new(
+        area.size.width,
+        area.size.height,
+    ));
+}
+/// 关窗/退出时保存主窗口状态，并记下「上次是不是铺满屏幕」：铺满是个意图，
+/// 下次启动要按当前屏幕重算，而不是照搬旧的像素尺寸。只有真的变了才写库；
+/// 只在主线程调用（读窗口几何与屏幕要碰 NSWindow/NSScreen）。
+fn save_main_window_state(app: &tauri::AppHandle) {
+    if let (Some(window), Some(state)) = (
+        app.get_webview_window("main"),
+        app.try_state::<AppState>(),
+    ) {
+        let fills = main_window_fills_screen(&window);
+        if let Ok(mut preferences) = state.store.preferences() {
+            if preferences.window_fill != fills {
+                preferences.window_fill = fills;
+                let _ = state.store.save_preferences(&preferences);
+            }
+        }
+    }
+    use tauri_plugin_window_state::AppHandleExt;
+    let _ = app.save_window_state(window_state_flags());
+}
 #[tauri::command]
 fn take_eml_paths(state: tauri::State<eml_files::EmlFiles>) -> Result<Vec<String>> {
     state.take_pending()
@@ -2535,6 +2660,22 @@ pub fn run() {
                 false,
             );
             set_dock_visible(dock_show);
+            // 上次关窗时主窗口是铺满屏幕的：按当前屏幕可用区域重新铺满。
+            // 插件的窗口状态只还原旧像素尺寸，Dock/分辨率变了不会跟着重算，
+            // 结果就是「Dock 调小之后占不满」。两条判据合起来用：
+            //   ① 上次关窗时记下的「铺满」意图（最准，Dock 怎么变都算数）；
+            //   ② 还原后的窗口本来就几乎铺满当前屏幕（首次升级后意图还没记过）。
+            // 判定要放进主队列异步回调：插件的还原也是异步的，等它落到窗口上再量才准。
+            let was_full = store.preferences().map(|p| p.window_fill).unwrap_or(false);
+            let handle = app.handle().clone();
+            let restored = handle.clone();
+            let _ = handle.run_on_main_thread(move || {
+                if let Some(window) = restored.get_webview_window("main") {
+                    if was_full || main_window_fills_screen(&window) {
+                        fill_main_window(&window);
+                    }
+                }
+            });
             let gate = Arc::new(Mutex::new(()));
             let send_gate = Arc::new(Mutex::new(()));
             let realtime = Arc::new(realtime::RealtimeControl::default());
@@ -2697,6 +2838,7 @@ pub fn run() {
                         if let Ok(mut windows) = state.mail_windows.lock() {
                             windows.remove(&label);
                         }
+                        emit_mail_windows(&window.app_handle(), &state);
                     }
                 } else if label.starts_with("compose-window-") {
                     if let Some(state) = window.app_handle().try_state::<AppState>() {
@@ -2704,6 +2846,15 @@ pub fn run() {
                             windows.remove(&label);
                         }
                         emit_compose_windows(&window.app_handle(), &state);
+                    }
+                }
+                return;
+            }
+            // 阅读窗口被盖住/回到前台：主窗口据此显示或收起「阅读窗口」悬浮条。
+            if label.starts_with("mail-window-") {
+                if let tauri::WindowEvent::Focused(_) = event {
+                    if let Some(state) = window.app_handle().try_state::<AppState>() {
+                        emit_mail_windows(&window.app_handle(), &state);
                     }
                 }
                 return;
@@ -2756,8 +2907,7 @@ pub fn run() {
                             .emit_to("main", "compose-close-requested", ());
                         return;
                     }
-                    use tauri_plugin_window_state::AppHandleExt;
-                    let _ = window.app_handle().save_window_state(window_state_flags());
+                    let _ = save_main_window_state(window.app_handle());
                     let _ = window.hide();
                 }
             }
@@ -2850,6 +3000,7 @@ pub fn run() {
             set_compose_open,
             open_mail_window,
             mail_window_mail,
+            focus_mail_window,
             open_compose_window,
             compose_window_draft,
             close_compose_window,
@@ -2920,6 +3071,11 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Reopen { .. } = event {
                 show_main_window(app);
+            }
+            if let tauri::RunEvent::Exit = event {
+                // 插件自己也会在 Exit 存一次窗口状态；这里顺带记下「铺满」意图，
+                // 让 ⌘Q 退出和 ⌘W 收进托盘走同一套判定。
+                let _ = save_main_window_state(app);
             }
             #[cfg(not(target_os = "macos"))]
             let _ = (app, event);

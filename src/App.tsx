@@ -265,6 +265,13 @@ function queryScope(query: Query) {
 // 原生写信窗口的登记（Rust 的 compose-windows-changed 同步过来）：窗口 label、正在
 // 编辑的草稿、是否在前台（不在前台时主窗口底部显示「继续写信」悬浮条）。
 type NativeComposeWindow = { label: string; draft: Compose; focused: boolean };
+// 原生阅读窗口的登记（Rust 的 mail-windows-changed 同步过来）：窗口 label、邮件主题、
+// 是否在前台（不在前台时主窗口底部显示「查看邮件」悬浮条）。
+type NativeMailWindow = {
+  label: string;
+  subject: string;
+  focused: boolean;
+};
 export default function App() {
   const updates = useAppUpdate();
   const { askConfirmation, confirmationDialog } = useConfirmation();
@@ -329,6 +336,7 @@ export default function App() {
   const [composeWindows, setComposeWindows] = useState<NativeComposeWindow[]>(
     [],
   );
+  const [mailWindows, setMailWindows] = useState<NativeMailWindow[]>([]);
   // 有没有在写信：应用内浮动窗（浏览器预览/演示）与原生写信窗口都算。
   const composing = !!draft || composeWindows.length > 0;
   const accountsRef = useRef(data.accounts);
@@ -741,6 +749,9 @@ export default function App() {
       const stops = await Promise.all([
         listen<NativeComposeWindow[]>("compose-windows-changed", (event) =>
           setComposeWindows(Array.isArray(event.payload) ? event.payload : []),
+        ),
+        listen<NativeMailWindow[]>("mail-windows-changed", (event) =>
+          setMailWindows(Array.isArray(event.payload) ? event.payload : []),
         ),
         listen("compose-changed", () => void refresh()),
         listen<{ draft: Compose; seconds: number }>(
@@ -4382,6 +4393,39 @@ export default function App() {
             >
               <ChevronUp size={14} />
               继续写信
+            </Button>
+          </div>
+        ))}
+      {/* 原生阅读窗口不在前台时，主窗口底部给一条「查看邮件」：点它把阅读窗口抬回前台，
+          回到前台（Rust 报 focused）后自动消失。排在写信窗口的悬浮条下面，避免叠在一起。 */}
+      {mailWindows
+        .filter((item) => !item.focused)
+        .map((item, index) => (
+          <div
+            key={item.label}
+            className="compose-restore-bar"
+            style={{
+              bottom: `calc(16px + ${
+                (composeWindows.filter((bar) => !bar.focused).length + index) *
+                52
+              }px)`,
+            }}
+          >
+            <span className="compose-restore-label">
+              {item.subject.trim() || "无主题"}
+            </span>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() =>
+                void invoke("focus_mail_window", {
+                  label: item.label,
+                }).catch((e) => toast.error(String(e)))
+              }
+            >
+              <ChevronUp size={14} />
+              查看邮件
             </Button>
           </div>
         ))}
