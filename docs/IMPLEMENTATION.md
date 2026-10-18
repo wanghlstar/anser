@@ -569,3 +569,50 @@ GitHub CI 和两架构发布工作流已推送；首次 Checks 已成功，Relea
 - 单测新增「点写信窗派生出来的浮层（图片缩放浮条 / 通知 / 提示气泡）不会把窗口收起来」：用旧白名单跑必失败（已实测），新选择器下通过；
 - 产物 JS 复核：`dist/assets/index-*.js` 里含 `rich-image-zoom,[data-sonner-toast]` 选择器；
 - 门禁：TypeScript、Prettier、UI 铁律检查、前端 **51 文件 / 414 项测试**全绿。
+
+## 列表头部：刷新右移 + 按账号收取（2026-10-18）
+
+第六轮反馈 3：「邮件列表 全部收件箱 需要把刷新右移，现在拉到最小宽度，字体缩进了，另外这个刷新/收件是对所有账号的吧？能不能做成带下拉的，默认是全部，下拉点哪个账号是哪个」。用户拍板：标题不截断（不要把刷新放最右，会和其他项目样式不统一）、账号下拉值得做。
+
+**真因**：`src/index.css` 里 `.list-heading > div { flex: 1; overflow: hidden }` 同时命中标题组与右侧动作组 `.list-heading-actions`，两者各占一半宽度，动作组内容又左对齐 —— 窄宽度下标题被省略号截断、刷新按钮停在中间。
+
+**改法**：
+
+- `index.css`：该规则收窄为 `.list-heading > div:first-child`，新增 `.list-heading > .list-heading-actions { flex: none }`（标题组吃剩余宽度，动作组按内容宽贴右）。
+- 新增 `src/components/ui/button-group.tsx`：取自 shadcn 官方 new-york registry，按本仓库约定适配导入（`cn` 来自 `"cn"`、`Slot` 来自 `"radix-ui"` 用 `Slot.Root`、`Separator` 用本地 `./separator`）。
+- `App.tsx`：头部刷新改成 `ButtonGroup` —— 左侧 ghost icon 按钮（`aria-label`/`title`「收取全部账号」）点击 `sync()`；右侧 `DropdownMenu` 触发按钮（「选择收取邮件的账号」，带 `ChevronDown`），菜单为「收取邮件」标题 +「全部账号」+ 分隔线 + 每个启用账号 `{name} · {email}`；只在 `!query.remoteFolder` 时渲染。
+- `sync(accountId?: string)`：只有「全部账号 + 远程文件夹视图 + 该账号」才走 `sync_remote_folder`，其余走 `sync_mail`（带 `{ id }` 或不带）。
+- 后端 `lib.rs`：`sync_mail(state, app, id: Option<String>)` 转交 `collect_mail(&store, &app, id.as_deref())`；`collect_mail` 新增 `only: Option<&str>` 过滤账号列表；托盘调用点传 `None`，行为不变。
+
+**验证**：Prettier / TypeScript / `check:ui` 通过；Vitest **51 文件 / 416 项**全绿；`cargo test` **340 passed / 1 ignored**；`npm run build` 成功，产物 `dist/assets/index-*.css` 里 grep 到 `.list-heading>div:first-child{flex:1;overflow:hidden}` 与 `.list-heading>.list-heading-actions{flex:none}`。真实浏览器（`http://localhost:1420` 开发预览 + 演示模式）在列表面板最坏宽度 259px（minSize 280 以下）实测：改前标题 `h1` 宽 74（截断）、动作组停在 x=343；改后标题组宽 155、`h1` 宽 98 且 `scrollWidth === 98`（「全部收件箱」「本地废纸篓」都不再截断），动作组贴右（内容右边界 453 = 面板右缘 234 + 219）。下拉菜单实测文本：`收取邮件 / 全部账号 / 工作邮箱 · alex@example.com / 个人邮箱 · hello@example.net`。单测新增 `describe("mail list receive actions")` 两条（菜单列出全部账号、选中「工作邮箱」时只调 `sync_mail` 带 `{ id: "demo-work" }`）。
+
+## 浮动阅读窗口：双击 / 右键在新窗口打开（2026-10-18）
+
+第六轮反馈 2：「收件列表能否支持双击/右键，弹出新窗口显示邮件正文，可拖动、八角拖动大小、不置顶，然后再去点击列表，正文显示新邮件，弹出的不变（参考 Foxmail）」。用户拍板方案 A（应用内浮动窗）与「双击与右键都要」。
+
+**做法**：新增 `src/components/mail-window.tsx`（`MailWindow`）——应用内非模态浮动阅读窗，一窗一封，可同时多开。
+
+- **窗口外壳复用写信窗口**：同样的非模态 `DialogContent`（`overlay={false}`、`onInteractOutside/onFocusOutside` 都 `preventDefault`）、同样的 `.compose-dialog / .compose-expanded / .compose-floating / .compose-minimized` 类名、同样的 `--compose-*` 几何变量与 `.compose-resize-handle` 八角热区、同样的三灯 SVG 与 `.compose-restore-bar`。理由：拖动/缩放/居中这三处是踩过坑的地方（RULES 21–25），不能再复制第二份实现。`MailWindow` 只额外加一个 `.mail-window` 类覆盖默认尺寸与内部排版。
+- **与写信窗口的关键差别：点窗口外面不自动收起**（用户要的是「再去点列表里的别的邮件，这个窗口原样留在原位」），所以这里不挂「点外面自动最小化」的 document 监听；Esc 也刻意留给写信窗（多封非模态 Dialog 之间没有 Esc 仲裁，会互相误关），阅读窗用红点或还原条关闭。
+- **内容只读**：标题栏（主题）+ 工具条（回复 / 全部回复 / 转发 / 导出原始邮件）+ 发件人/时间/收件人 + 正文（`MailContent`，图片缩放、链接、自定义菜单沿用已验收能力）+ `MailAttachments`（下载）。不带星标/删除等修改类操作（收件箱视图只读）。
+- **多开与错开**：`stackIndex > 0` 的窗口在挂载时算好阶梯位置（+28/+20px），后续再开的窗不会叠在第一扇上。
+- **入口**：列表行 `onDoubleClick` 打开；右键菜单在收件与发件分支各加一条「在新窗口打开」（`ExternalLink` 图标）。同一封邮件重复双击不会开第二扇（`mailWindows` 里按 id 去重）。
+- **接线**：`App.tsx` 新增 `mailWindows: Mail[]` 状态与 `openMailWindow/closeMailWindow`；窗口的回调直接复用主阅读器的处理器（`compose(source.mail, forward, all, source)`、`exportMail`、`attachment`、`openMailLink`），位置放在写信窗口之前渲染。
+
+**CSS 注意点（已踩）**：`.mail-window` 覆盖尺寸时 `width/max-width` **必须** `!important`（`.compose-dialog` 那条是 `!important`，同特异度靠后覆盖），而 `height/max-height` **绝不能**加 `!important` —— 否则会盖掉 `.compose-dialog.compose-expanded` 的高度（两者都 `!important` 时高特异度胜，但 `.mail-window` 只有 0,1,0，输给 `.compose-dialog.compose-expanded` 的 0,2,0）。第一版就写错了，表现为「最大化后只是位置变了、尺寸不动」。
+
+**验证**：
+
+- 门禁：Prettier / TypeScript / `check:ui` 全过；Vitest **52 文件 / 430 项**全绿（新增 `mail-window.test.tsx` 8 条 + `App.test.tsx` 2 条）；`npm run build` 成功，产物 `dist/assets/index-*.css` 里 grep 到 `.mail-window{…width:clamp(640px,100vw - 360px,980px)!important;max-width:980px!important}`（height 无 `!important`）、`.compose-dialog.compose-expanded` 与 `.compose-dialog.compose-floating` 规则完整。
+- 真实浏览器（`http://localhost:1420` 开发预览 + 演示模式，**先把标签页切到前台**再看动画/几何）实测：双击第一行 → 出现 `.mail-window`（标题=主题、byline=发件人+时间、收件人一行、正文、工具条 4 个按钮、8 个缩放手柄、无遮罩）；双击第二行 → 两扇窗错开（180,152 → 208,156）；再单击列表第三行 → 两扇窗标题与位置都不变；点窗口外（侧栏/body）→ 不收起也不关闭；最大化 → 铺满（视口 779×642 时为 755×586，x=12），还原 → 回到原来的浮动几何；最小化 → 只剩还原条「阅读 · <主题> / 继续阅读」，点回来仍是最大化；红点 → 只剩另一扇；点窗口内的「回复」→ 写信窗口打开且收件人/主题正确（`team@example.org` / `Re: …`），点阅读窗正文不会把写信窗收成细条，点主界面列表才会（原行为不变）。
+- 装机版真机（拖动/八角缩放在 WKWebView 里的表现）待用户人工验收。
+
+## 写信窗口关闭确认与 ⌘W（2026-10-18）
+
+第六轮反馈 1：「写信/回复 X 关闭时是否保存（默认很快就保存草稿了）；如果否就删除对应的草稿，是就不需要做什么」；1.3 补充「写信时支持 ⌘W 关闭写信而不是整个邮件」。
+
+**设计**：红点 ×、⌘W、Esc 走同一个 `requestClose()` —— 空白邮件（`hasDraftContent` 为假）直接静默舍弃；有内容弹三按钮 `AlertDialog`「保存这封邮件的草稿？」（描述：邮件已经自动保存到草稿箱，选「不保存」会删除这份草稿）：「取消」不关继续编辑、「不保存」= `delete_draft`、「保存」= `save_draft`。黄灯最小化不弹确认。
+
+**⌘W 的关键点**：macOS 上 ⌘W 是原生菜单加速键（`PredefinedMenuItem::close_window`），在 `NSApplication` 层就被处理，WKWebView 收不到 `keydown`；`PredefinedMenuItem` 改不了加速键，而改默认菜单会连累已验收的 ⌘C/⌘V。所以走「Rust 拦 `CloseRequested` + 前端上报是否有写信窗口」：`AppState.compose_open: Arc<AtomicBool>` + 新命令 `set_compose_open(open)`，前端在 `composes.length` 变化时上报；`on_window_event` 的 `CloseRequested` 里 `prevent_close()` 后若在写信就 `window.emit("compose-close-requested")`（App 收到后给最后一封写信窗口发 `closeSignal` 序号），否则维持原来的 `save_window_state + hide()`。前端另留 `keydown` 兜底（将来能收到键的场合）。
+
+**验证**：Prettier / TypeScript / `check:ui` 通过；Vitest **51 文件 / 420 项**全绿（新增 4 条：取消保留草稿与窗口、不保存删草稿并关窗、前端 ⌘W 先弹确认、`closeSignal` 变化先弹确认）；`cargo test` **340 passed / 1 ignored**；`npm run build` 成功。真实浏览器（开发预览 + 演示模式）实测：设置主题后点红点 × → 弹出 `role="alertdialog"`，内容为「保存这封邮件的草稿？/ 邮件已经自动保存到草稿箱。选择「不保存」会删除这份草稿。」+ 取消 / 不保存 / 保存三按钮，写信窗仍在且未被最小化；点「取消」后弹层消失、写信窗保留；再点红点 × →「不保存」后写信窗与弹层一起消失。⌘W 与三按钮的最终行为待用户在装机版人工验收（浏览器里 ⌘W 会被浏览器自己吃掉，测不了）。

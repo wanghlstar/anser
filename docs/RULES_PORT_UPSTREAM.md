@@ -52,6 +52,26 @@
 
 26. **写信窗「点外面自动最小化」的判定要能认全写信窗派生出来的 UI，别只列 role**。现在这四样都得进同一个 `closest()` 选择器：`.rich-image-zoom`（图片缩放 `− % +` 浮条，`createPortal(body)` + `role="toolbar"`）、`[data-sonner-toast]`（通知横幅，就地挂在 `#root` 里）、`[role="tooltip"]`（富文本工具条提示气泡）、`.compose-restore-bar`（另一封写信窗的「继续写信」还原条，就地渲染在 `#root` 里），再加上原本的 `dialog/alertdialog/listbox/menu`。漏掉它们的后果都一样：点一下缩放、点一下通知或点一下还原条，正在写的信就被收起来（用户反馈的「误触」）。**在写信窗里新增浮层时，把它的 role 或类名加进这个选择器**；要减少这种手工维护，可以给写信窗浮层统一加 `data-compose-ui` 标记再按标记认。
 
+27. **macOS 上 ⌘W 是原生菜单加速键，WKWebView 根本收不到这个 keydown**。`tauri::menu::Menu::default` 会给 `PredefinedMenuItem::close_window` 挂 ⌘W（File 与 Window 子菜单各一个），事件在 `NSApplication` 层就被处理掉，前端 `keydown` 监听不会触发；而 `PredefinedMenuItem` 只暴露 `id()/text()/set_text()`，改不了加速键。**先去改默认菜单会顺带弄坏已验收的 ⌘C/⌘V（同属 Edit 子菜单），不要动它**。做法：改在 Rust 侧拦 `WindowEvent::CloseRequested` —— 前端用 `set_compose_open(open)` 上报「当前有没有写信窗口」，为真时 `api.prevent_close()` 后 `window.emit("compose-close-requested")` 交给前端弹关闭确认，为假时才走原来的 `save_window_state + hide()`（否则 ⌘W 会把整个主窗口收进托盘，正是用户抱怨的「关的是整个邮件」）。前端再留一个 `keydown` 兜底，处理将来能收到键的场合。
+
+28. **关闭有内容的写信窗口要「先问再关」，而且确认弹层本身不能触发自动最小化**。红点 ×、⌘W（原生与前端兜底）、Esc 三处走同一个 `requestClose()`：空白邮件直接舍弃、有内容弹「取消 / 不保存 / 保存」；**「不保存」= `delete_draft`**（离散掉自动保存的那份草稿），「保存」= `save_draft`，「取消」= 什么都不做继续编辑。另外这个确认弹层也是写信窗派生的 UI，自动最小化的 effect 必须把 `closePrompt` 加进早退条件与依赖数组，否则点弹层遮罩就会把写信窗收进「继续写信」还原条（RULES 26 的同一坑，role 白名单已覆盖 `alertdialog`，但组件内的早退判断也要同步）。
+
+29. **Radix 弹层的关闭有退出动画，DOM 会残留一小段时间，别据此误判「没关掉」**。`AlertDialog` 关闭后节点会带 `data-state="closed"` 再留在 DOM 里等 `animationend`（实测 300ms 时仍在、1800ms 已移除），`document.querySelector('[role="alertdialog"]')` 在这段时间里查得到。**断言「弹窗已关」要等节点真正消失（`waitFor` / 充足等待），或改查内容是否还在**；反过来，「点取消后弹层还在」不能当成 bug。
+
+30. **列表头部的标题被截断，真因是「标题组」和「动作组」共用了同一条 `flex: 1` 规则**。`src/index.css` 的 `.list-heading > div { flex: 1; overflow: hidden }` 会把两侧各撑成一半宽度，动作组内容左对齐，于是窄宽度下标题被省略号截断、刷新按钮停在中间（用户反馈「字体缩进了」）。修法是把它收窄到 `> div:first-child`，并显式给动作组 `> .list-heading-actions { flex: none }`。**同一容器里两个子元素共用选择器时要复核：命中范围比你以为的大。**头部「收取 + 选账号」用 shadcn `ButtonGroup`（`src/components/ui/button-group.tsx`，取自官方 new-york registry，无新增依赖：`radix-ui` 的 `Slot.Root` + 本地 `Separator`）拼「ghost icon 按钮 + DropdownMenu 触发按钮」，不要自己拉两个裸按钮贴一起。
+
+31. **收取全部/单个账号用同一个命令带可选参数，别加第二套代码路径**。`sync_mail(id?: Option<String>)` → `collect_mail(store, app, only)` 里 `.filter(match only)`，托盘调用点传 `None` 保持原行为；账号下拉只在「非远程文件夹」视图渲染（远程文件夹该收的是那个文件夹本身）。演示模式（`isDemo()`）下 `invoke` 会被拦，新增命令在前端要包 `.catch(() => {})`，否则控制台报错。
+
+32. **应用内「第二个窗口类型」不要复制写信窗口那套浮动窗口机制，直接把类名与几何变量复用过去**。`MailWindow`（浮动阅读窗）用的就是 `.compose-dialog / .compose-expanded / .compose-floating / .compose-minimized`、`--compose-*` 变量、`.compose-resize-handle`、`.compose-light*`、`.compose-restore-bar`，自己只多一个 `.mail-window` 覆盖默认尺寸与内部排版。拖动/八角缩放/居中/三灯这几处都踩过坑（见 21–25），复制第二份等于把坑再走一遍；复用后行为与观感也天然一致。**代价是类名语义变宽（`compose-*` 实为「浮动窗口外壳」），所以在 `mail-window.tsx` 顶部写清楚这层含义**，将来若要改第三处再考虑重命名。
+
+33. **给复用过来的浮动外壳覆盖尺寸时：`width/max-width` 要 `!important`，`height/max-height` 绝对不能加**。写信窗口的宽度规则是 `!important`（`.compose-dialog`），所以同特异度的 `.mail-window` 必须也 `!important` 才能覆盖；而高度规则 `.compose-dialog.compose-expanded { height: … }` 是 **非** `!important` —— 若 `.mail-window` 的高度写了 `!important`，就会以 0,1,0 反杀掉 0,2,0 的展开高度（两个都是 `!important` 时由特异性决定，`.mail-window` 输）。第一版正是这么写的，表现是「点最大化后窗口只是挪了个位置，尺寸纹丝不动」。
+
+34. **浏览器探针要先 `bringToFront`（聚焦标签页），否则读到的几何/样式是动画中间值**。后台标签页里 Chromium 会挂起 CSS transition（compositor 停摆），`getBoundingClientRect()` 于是长期停在上一个状态：同一扇阅读窗在后台标签页里反复读到「最大化前」的 `640×428` 与 `margin-left:76px`，切到前台后再点一次立刻是 `755×586`、`x=12`。诊断手法：同一个操作隔时间多读几帧，或对比切前台前后的读数；`tools.browser.tabs.focus({tabID})` 即可。
+
+35. **多封非模态 Dialog 之间没有 Esc 仲裁，Esc 只能给其中一个用**。写信窗口的 Esc 是「保存/不保存/取消」关闭确认（必须有），所以浮动阅读窗的 `onEscapeKeyDown` 直接 `preventDefault()` 不响应，用红点或还原条关闭。否则两扇窗同时开着时按一次 Esc 会连带关掉/收起另一扇（Radix 的 `DismissableLayer` 对同级的非模态层不做「最上层」判定）。
+
+36. **jsdom 里对同一组件重新 `root.render()` 不会重跑 `useState` 的惰性初始化**，所以验证「第二扇窗按 stackIndex 错开」这类挂载期计算，必须改 `key` 让它真正重挂（App 里本来就是 `key={mail.id}`）；否则断言会拿到第一扇的旧几何。
+
 ## 移植清单（上游基线 `v0.1.19`）
 
 **后端**

@@ -2181,3 +2181,106 @@ describe("bulk clearing", () => {
     ).toBe(true);
   });
 });
+describe("mail list receive actions", () => {
+  it("lists every account in the header receive dropdown and defaults to all", async () => {
+    await click(nav("全部收件箱"));
+    const trigger = host.querySelector(
+      '[aria-label="选择收取邮件的账号"]',
+    ) as HTMLElement | null;
+    expect(trigger).not.toBeNull();
+    await act(async () => {
+      trigger!.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }),
+      );
+    });
+    const labels = [...document.querySelectorAll('[role="menuitem"]')].map(
+      (el) => el.textContent?.trim(),
+    );
+    expect(labels).toContain("全部账号");
+    expect(labels.some((label) => label?.includes("工作邮箱"))).toBe(true);
+    expect(labels.some((label) => label?.includes("个人邮箱"))).toBe(true);
+  });
+  it("receives only the selected account from the header dropdown", async () => {
+    const seed = await snapshot(localQuery);
+    await act(async () => root.unmount());
+    leaveDemo();
+    vi.spyOn(api, "mailPage").mockResolvedValue({
+      ...seed,
+      messages: [],
+      nextCursor: null,
+      revision: 1,
+      reset: false,
+      bodyCoverage: { known: 0, unknown: 0 },
+    });
+    const calls = vi
+      .spyOn(api, "call")
+      .mockImplementation(
+        async <T,>(command: string): Promise<T> =>
+          (command === "sync_mail" ? 3 : []) as T,
+      );
+    root = createRoot(host);
+    await act(async () => root.render(<App />));
+    const trigger = host.querySelector(
+      '[aria-label="选择收取邮件的账号"]',
+    ) as HTMLElement | null;
+    await act(async () => {
+      trigger!.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }),
+      );
+    });
+    const item = [...document.querySelectorAll('[role="menuitem"]')].find(
+      (el) => el.textContent?.includes("工作邮箱"),
+    );
+    await click(item ?? null);
+    expect(calls.mock.calls).toContainEqual(["sync_mail", { id: "demo-work" }]);
+  });
+});
+
+describe("floating mail windows", () => {
+  async function doubleClick(row: Element) {
+    await act(async () => {
+      row.dispatchEvent(
+        new MouseEvent("dblclick", { bubbles: true, cancelable: true }),
+      );
+    });
+  }
+  it("double clicking a mail opens a floating window that the list does not take over", async () => {
+    await click(nav("全部收件箱"));
+    const rows = [...host.querySelectorAll("button.mail-row-main")];
+    expect(rows.length).toBeGreaterThan(1);
+    const firstSubject =
+      rows[0].querySelector(".row-subject-text")?.textContent;
+    const secondSubject =
+      rows[1].querySelector(".row-subject-text")?.textContent;
+    await doubleClick(rows[0]);
+    expect(document.querySelectorAll(".mail-window")).toHaveLength(1);
+    expect(
+      document.querySelector(".mail-window .mail-window-title")?.textContent,
+    ).toBe(firstSubject);
+    // 同一封再双击一次不重复开窗
+    await doubleClick(rows[0]);
+    expect(document.querySelectorAll(".mail-window")).toHaveLength(1);
+    // 再去点列表里另一封：主界面正文换新邮件，浮动窗内容原地不动
+    await click(rows[1]);
+    expect(document.querySelectorAll(".mail-window")).toHaveLength(1);
+    expect(
+      document.querySelector(".mail-window .mail-window-title")?.textContent,
+    ).toBe(firstSubject);
+    expect(host.textContent).toContain(secondSubject!);
+    // 红点关掉
+    await click(
+      document.querySelector('.mail-window [aria-label="关闭阅读窗口"]'),
+    );
+    expect(document.querySelector(".mail-window")).toBeNull();
+  });
+  it("offers 在新窗口打开 in the list context menu", async () => {
+    await click(nav("全部收件箱"));
+    await openRowMenu();
+    expect(menuLabels()).toContain("在新窗口打开");
+    const item = [...document.querySelectorAll('[role="menuitem"]')].find(
+      (el) => el.textContent?.includes("在新窗口打开"),
+    );
+    await click(item ?? null);
+    expect(document.querySelector(".mail-window")).toBeTruthy();
+  });
+});

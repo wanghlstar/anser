@@ -42,6 +42,9 @@ struct AppState {
     send_gate: Arc<Mutex<()>>,
     realtime: Arc<realtime::RealtimeControl>,
     dock_enabled: Arc<std::sync::atomic::AtomicBool>,
+    /// 是否有正在编辑的写信窗口。原生菜单的「关闭窗口」(⌘W) 会被这里拦下来，
+    /// 交给前端先关写信窗口，而不是把整个主窗口收进托盘。
+    compose_open: Arc<std::sync::atomic::AtomicBool>,
 }
 /// 托盘右键菜单里需要反向更新勾选状态的菜单项。
 struct TrayState {
@@ -793,20 +796,29 @@ fn sync_all(store: &Store, app: &tauri::AppHandle) -> Result<u32> {
     }
 }
 #[tauri::command]
-async fn sync_mail(state: tauri::State<'_, AppState>, app: tauri::AppHandle) -> Result<u32> {
+async fn sync_mail(
+    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
+    id: Option<String>,
+) -> Result<u32> {
     let store = state.store.clone();
-    tauri::async_runtime::spawn_blocking(move || collect_mail(&store, &app))
+    tauri::async_runtime::spawn_blocking(move || collect_mail(&store, &app, id.as_deref()))
         .await
         .map_err(err)?
 }
 /// 手动收取：只收各账号收件箱，历史文件夹继续交给后台扫描。
-fn collect_mail(store: &Store, app: &tauri::AppHandle) -> Result<u32> {
+/// 传入 `only` 时只收该账号，供列表头部的账号下拉使用。
+fn collect_mail(store: &Store, app: &tauri::AppHandle, only: Option<&str>) -> Result<u32> {
     // Explicit refresh checks inboxes first. Historical folders continue
     // through the background sweep and their individual refresh action.
     let accounts = store
         .accounts()?
         .into_iter()
         .filter(|a| a.enabled)
+        .filter(|a| match only {
+            Some(id) => a.id == id,
+            None => true,
+        })
         .collect::<Vec<_>>();
     let (count, errors) = std::thread::scope(|scope| {
         let jobs = accounts
@@ -866,6 +878,13 @@ fn open_compose_session(state: tauri::State<AppState>, id: String) -> Result<Str
 #[tauri::command]
 fn close_compose_session(state: tauri::State<AppState>, id: String, token: String) -> Result<()> {
     state.store.close_compose_session(&id, &token)
+}
+/// 前端在写信窗口开关时上报，供 ⌘W 判定是关写信窗口还是收主窗口。
+#[tauri::command]
+fn set_compose_open(state: tauri::State<AppState>, open: bool) {
+    state
+        .compose_open
+        .store(open, std::sync::atomic::Ordering::Relaxed);
 }
 #[tauri::command]
 fn prepare_forward_files(
@@ -2246,12 +2265,14 @@ pub fn run() {
             let gate = Arc::new(Mutex::new(()));
             let send_gate = Arc::new(Mutex::new(()));
             let realtime = Arc::new(realtime::RealtimeControl::default());
+            let compose_open = Arc::new(std::sync::atomic::AtomicBool::new(false));
             app.manage(AppState {
                 store: store.clone(),
                 gate: gate.clone(),
                 send_gate: send_gate.clone(),
                 realtime: realtime.clone(),
                 dock_enabled: dock_enabled.clone(),
+                compose_open: compose_open.clone(),
             });
             watch_dock_icon(app.handle().clone(), dock_enabled);
             #[cfg(target_os = "macos")]
@@ -2319,7 +2340,7 @@ pub fn run() {
                         let handle = app.clone();
                         tauri::async_runtime::spawn(async move {
                             let _ = tauri::async_runtime::spawn_blocking(move || {
-                                collect_mail(&store, &handle)
+                                collect_mail(&store, &handle, None)
                             })
                             .await;
                         });
@@ -2394,6 +2415,17 @@ pub fn run() {
             if window.label() == "main" {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                     api.prevent_close();
+                    // ⌘W：正在写信时先把写信窗口的关闭流程交给前端（弹
+                    //「保存/不保存/取消」），不把整个主窗口收进托盘。
+                    let composing = window
+                        .app_handle()
+                        .state::<AppState>()
+                        .compose_open
+                        .load(std::sync::atomic::Ordering::Relaxed);
+                    if composing {
+                        let _ = window.emit("compose-close-requested", ());
+                        return;
+                    }
                     use tauri_plugin_window_state::AppHandleExt;
                     let _ = window.app_handle().save_window_state(window_state_flags());
                     let _ = window.hide();
@@ -2485,6 +2517,7 @@ pub fn run() {
             clear_drafts,
             open_compose_session,
             close_compose_session,
+            set_compose_open,
             prepare_forward_files,
             read_body_images,
             send_mail,

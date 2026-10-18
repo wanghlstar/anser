@@ -37,6 +37,7 @@ import { directorySource } from "./lib/server-destinations";
 import { mailMenuKind } from "./lib/mail-menu";
 import { coalesceRefresh } from "./lib/refresh-queue";
 import { ConversationReader } from "./components/conversation-reader";
+import { MailWindow } from "./components/mail-window";
 import { ScrollPane } from "./components/scroll-pane";
 import { replyHeaders } from "./lib/conversations";
 import { signatureContent } from "./lib/signatures";
@@ -99,6 +100,7 @@ import {
   Undo2,
 } from "lucide-react";
 import { Button } from "./components/ui/button";
+import { ButtonGroup } from "./components/ui/button-group";
 import {
   Sidebar,
   SidebarContent,
@@ -306,6 +308,8 @@ export default function App() {
     [contactSeed, setContactSeed] = useState<Address | null>(null),
     // 允许多个写信窗口并存：数组里每封一个窗口，各自保留自己的位置与最大化状态
     [composes, setComposes] = useState<Compose[]>([]),
+    // 浮动阅读窗口：同样是「一封一窗」，关闭后从数组里移除
+    [mailWindows, setMailWindows] = useState<Mail[]>([]),
     [drafts, setDrafts] = useState<Compose[]>([]),
     // 发送倒计时：写信窗口收起后仍走完，撤回后邮件回到草稿
     [pendingSend, setPendingSend] = useState<{
@@ -329,6 +333,54 @@ export default function App() {
     (id: string) => setComposes((list) => list.filter((d) => d.id !== id)),
     [],
   );
+  // 浮动阅读窗口（同 Foxmail）：列表双击或右键「在新窗口打开」弹出一扇，
+  // 各窗互不影响，主界面里再点别的邮件也不会换掉它们的内容。
+  const openMailWindow = useCallback(
+    (mail: Mail) =>
+      setMailWindows((list) =>
+        list.some((item) => item.id === mail.id) ? list : [...list, mail],
+      ),
+    [],
+  );
+  const closeMailWindow = useCallback(
+    (id: string) => setMailWindows((list) => list.filter((m) => m.id !== id)),
+    [],
+  );
+  // ⌘W：主窗口的原生「关闭窗口」在 Rust 侧被拦下（避免把整个窗口收进托盘），
+  // 改成通知前端先走写信窗口的关闭确认。只有真正在写信时才拦截。
+  const composesRef = useRef(composes);
+  composesRef.current = composes;
+  const composeCloseSeq = useRef(0);
+  const [composeClose, setComposeClose] = useState<{
+    id: string;
+    n: number;
+  } | null>(null);
+  useEffect(() => {
+    if (!native || isDemo()) return;
+    void call("set_compose_open", { open: composes.length > 0 }).catch(
+      () => {},
+    );
+  }, [composes.length]);
+  useEffect(() => {
+    if (!native) return;
+    let cleanup = () => {};
+    let active = true;
+    void import("@tauri-apps/api/event").then(async ({ listen }) => {
+      const un = await listen("compose-close-requested", () => {
+        const list = composesRef.current;
+        const target = list[list.length - 1];
+        if (!target) return;
+        composeCloseSeq.current += 1;
+        setComposeClose({ id: target.id, n: composeCloseSeq.current });
+      });
+      if (!active) un();
+      else cleanup = un;
+    });
+    return () => {
+      active = false;
+      cleanup();
+    };
+  }, []);
   const searchRef = useRef<HTMLInputElement>(null),
     request = useRef(0),
     queryRef = useRef(query),
@@ -1332,7 +1384,7 @@ export default function App() {
     }
   }
 
-  async function sync() {
+  async function sync(accountId?: string) {
     if (syncing) return;
     if (demo) {
       toast.info("演示模式不连接真实邮箱");
@@ -1341,13 +1393,18 @@ export default function App() {
     setSyncing(true);
     try {
       const n =
-        query.remoteFolder && query.accountId
+        !accountId && query.remoteFolder && query.accountId
           ? await call<number>("sync_remote_folder", {
               id: query.accountId,
               folder: query.remoteFolder,
             })
-          : await call<number>("sync_mail");
-      toast.success(`收取完成，新增 ${n} 封邮件`);
+          : await call<number>("sync_mail", accountId ? { id: accountId } : {});
+      const who = accountId
+        ? data.accounts.find((a) => a.id === accountId)?.name
+        : "";
+      toast.success(
+        who ? `已收取 ${who}，新增 ${n} 封邮件` : `收取完成，新增 ${n} 封邮件`,
+      );
     } catch (e) {
       toast.error(String(e), { duration: 8000 });
     } finally {
@@ -2744,18 +2801,53 @@ export default function App() {
                           <Trash2 size={16} />
                         </Button>
                       )}
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        disabled={syncing || !data.accounts.length}
-                        title="收取邮件"
-                        onClick={() => void sync()}
-                      >
-                        <RefreshCw
-                          size={16}
-                          className={syncing ? "animate-spin" : ""}
-                        />
-                      </Button>
+                      <ButtonGroup>
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          disabled={syncing || !data.accounts.length}
+                          title="收取全部账号"
+                          aria-label="收取全部账号"
+                          onClick={() => void sync()}
+                        >
+                          <RefreshCw
+                            size={16}
+                            className={syncing ? "animate-spin" : ""}
+                          />
+                        </Button>
+                        {!query.remoteFolder && (
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="icon-sm"
+                                disabled={syncing || !data.accounts.length}
+                                title="选择收取邮件的账号"
+                                aria-label="选择收取邮件的账号"
+                              >
+                                <ChevronDown size={16} />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuLabel>收取邮件</DropdownMenuLabel>
+                              <DropdownMenuItem onSelect={() => void sync()}>
+                                全部账号
+                              </DropdownMenuItem>
+                              <DropdownMenuSeparator />
+                              {data.accounts
+                                .filter((a) => a.enabled)
+                                .map((a) => (
+                                  <DropdownMenuItem
+                                    key={a.id}
+                                    onSelect={() => void sync(a.id)}
+                                  >
+                                    {a.name} · {a.email}
+                                  </DropdownMenuItem>
+                                ))}
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        )}
+                      </ButtonGroup>
                     </div>
                   </div>
                   {serverFolders.find(
@@ -3209,6 +3301,7 @@ export default function App() {
                                   <Button
                                     variant="ghost"
                                     className="mail-row-main"
+                                    onDoubleClick={() => openMailWindow(m)}
                                     onClick={(event) => {
                                       // ⌘/Ctrl+点击：单独切换这一行的勾选，
                                       // 像 Foxmail 附件栏那样做不连续多选。
@@ -3349,6 +3442,13 @@ export default function App() {
                                     {menuKind === "received" ? (
                                       <>
                                         <ContextMenuItem
+                                          onSelect={() => openMailWindow(m)}
+                                        >
+                                          <ExternalLink />
+                                          在新窗口打开
+                                        </ContextMenuItem>
+                                        <ContextMenuSeparator />
+                                        <ContextMenuItem
                                           onSelect={() => compose(m)}
                                         >
                                           <Reply />
@@ -3413,6 +3513,13 @@ export default function App() {
                                       </>
                                     ) : (
                                       <>
+                                        <ContextMenuItem
+                                          onSelect={() => openMailWindow(m)}
+                                        >
+                                          <ExternalLink />
+                                          在新窗口打开
+                                        </ContextMenuItem>
+                                        <ContextMenuSeparator />
                                         <ContextMenuItem
                                           onSelect={() => void reeditSent(m)}
                                         >
@@ -4057,11 +4164,31 @@ export default function App() {
           }
         }}
       />
+      {mailWindows.map((item, index) => (
+        <MailWindow
+          key={item.id}
+          mail={item}
+          demo={demo}
+          stackIndex={index}
+          onClose={() => closeMailWindow(item.id)}
+          onReply={(source, forward = false, all = false) =>
+            compose(source.mail, forward, all, source)
+          }
+          onExport={(mail) => void exportMail(mail)}
+          onAttachment={(mail, index, name) => attachment(index, name, mail)}
+          onLink={(href) =>
+            void openMailLink(href).catch((e) => toast.error(String(e)))
+          }
+        />
+      ))}
       {composes.map((item, index) => (
         <ComposeDialog
           key={item.id}
           draft={item}
           stackIndex={index}
+          closeSignal={
+            composeClose?.id === item.id ? composeClose.n : undefined
+          }
           onClose={() => closeCompose(item.id)}
           accounts={data.accounts}
           onSent={() => void refresh()}

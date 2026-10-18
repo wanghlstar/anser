@@ -6,10 +6,11 @@ import { ComposeDialog } from "./compose-dialog";
 import * as api from "@/lib/api";
 import { toast } from "sonner";
 import { call, enterDemo, leaveDemo, newDraft, snapshot } from "@/lib/api";
-import type { Compose, OutboxRecord } from "@/lib/types";
+import type { Account, Compose, OutboxRecord } from "@/lib/types";
 import { localDateTime } from "@/lib/schedule-time";
 let root: Root, host: HTMLDivElement;
 let seed: Compose;
+let accounts: Account[];
 let renderHarness: () => Promise<void>;
 async function click(label: string) {
   const button = [...document.querySelectorAll("button")].find(
@@ -18,6 +19,11 @@ async function click(label: string) {
   );
   expect(button).toBeTruthy();
   await act(async () => button!.click());
+}
+// 关闭有内容的写信窗口会先问「保存 / 不保存 / 取消」，选「保存」再关。
+async function closeSaving() {
+  await click("保存草稿并关闭");
+  await click("保存");
 }
 async function input(selector: string, value: string) {
   const e = document.querySelector(selector) as HTMLInputElement;
@@ -110,6 +116,7 @@ beforeEach(async () => {
     to: "receiver@example.com",
     subject: "Source test",
   };
+  accounts = data.accounts;
   function Harness() {
     const [draft, setDraft] = useState<Compose | null>(seed);
     return (
@@ -198,7 +205,7 @@ describe("compose formats and scheduling", () => {
         ) as HTMLButtonElement
       ).click(),
     );
-    await click("保存草稿并关闭");
+    await closeSaving();
     const saved = (await call<Compose[]>("list_drafts"))[0];
     expect(saved.quote?.included).toBe(false);
     expect(saved.quote?.html).toContain("<table");
@@ -223,7 +230,7 @@ describe("compose formats and scheduling", () => {
         .querySelector('iframe[title="写信正文预览"]')
         ?.getAttribute("srcdoc"),
     ).toContain("<strong>bold</strong>");
-    await click("保存草稿并关闭");
+    await closeSaving();
     const drafts = await call<Compose[]>("list_drafts");
     expect(drafts[0].format).toBe("markdown");
     expect(drafts[0].source).toContain("**bold**");
@@ -412,7 +419,7 @@ describe("signature composition", () => {
         ) as HTMLButtonElement
       ).click(),
     );
-    await click("保存草稿并关闭");
+    await closeSaving();
     const saved = (await call<Compose[]>("list_drafts")).find(
       (d) => d.id === seed.id,
     )!;
@@ -625,7 +632,7 @@ describe("empty drafts", () => {
       to: "recipient@example.com",
     };
     await renderHarness();
-    await click("保存草稿并关闭");
+    await closeSaving();
     expect(
       (await call<Compose[]>("list_drafts")).find((d) => d.id === seed.id)?.to,
     ).toBe("recipient@example.com");
@@ -902,5 +909,114 @@ describe("compose window management", () => {
     await click("继续写信");
     expect(dialog().className).not.toContain("compose-minimized");
     expect(dialog().className).toContain("compose-expanded");
+  });
+});
+
+describe("closing a draft with content", () => {
+  const prompt = () =>
+    document.body.textContent?.includes("保存这封邮件的草稿？") ?? false;
+  // 等自动保存落库，后面的断言才能确认真实存在过一份草稿。
+  async function settled() {
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 700));
+    });
+  }
+  async function listDrafts() {
+    return await call<Compose[]>("list_drafts");
+  }
+  it("asks on the close light and keeps both the draft and the window when cancelled", async () => {
+    seed = {
+      ...newDraft(accounts[0].id),
+      id: "prompt-cancel",
+      to: "keep@example.com",
+      subject: "Keep me",
+    };
+    await renderHarness();
+    await settled();
+    await click("保存草稿并关闭");
+    expect(prompt()).toBe(true);
+    await click("取消");
+    expect(prompt()).toBe(false);
+    expect(document.querySelector(".compose-dialog")).not.toBeNull();
+    expect((await listDrafts()).some((d) => d.id === "prompt-cancel")).toBe(
+      true,
+    );
+  });
+  it("deletes the autosaved draft when the user chooses not to save", async () => {
+    seed = {
+      ...newDraft(accounts[0].id),
+      id: "prompt-discard",
+      to: "drop@example.com",
+      subject: "Drop me",
+    };
+    await renderHarness();
+    await settled();
+    expect((await listDrafts()).some((d) => d.id === "prompt-discard")).toBe(
+      true,
+    );
+    await click("保存草稿并关闭");
+    await click("不保存");
+    expect(document.querySelector(".compose-dialog")).toBeNull();
+    expect((await listDrafts()).some((d) => d.id === "prompt-discard")).toBe(
+      false,
+    );
+  });
+  it("asks for confirmation on ⌘W instead of closing the window outright", async () => {
+    seed = {
+      ...newDraft(accounts[0].id),
+      id: "prompt-shortcut",
+      to: "shortcut@example.com",
+      subject: "Shortcut",
+    };
+    await renderHarness();
+    await settled();
+    await act(async () => {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "w",
+          metaKey: true,
+          bubbles: true,
+        }),
+      );
+    });
+    expect(prompt()).toBe(true);
+    await click("保存");
+    expect(document.querySelector(".compose-dialog")).toBeNull();
+  });
+  it("asks on the close signal sent by the app for ⌘W", async () => {
+    seed = {
+      ...newDraft(accounts[0].id),
+      id: "prompt-signal",
+      to: "signal@example.com",
+      subject: "Signal",
+    };
+    function SignalHarness() {
+      const [draft, setDraft] = useState<Compose | null>(seed);
+      const [signal, setSignal] = useState(0);
+      return (
+        <>
+          <ComposeDialog
+            draft={draft}
+            accounts={accounts}
+            closeSignal={signal}
+            onClose={() => setDraft(null)}
+            onSent={() => {}}
+          />
+          <button type="button" onClick={() => setSignal((n) => n + 1)}>
+            请求关闭
+          </button>
+        </>
+      );
+    }
+    await act(async () => root.render(<SignalHarness key={seed.id} />));
+    await bodyEditor();
+    await settled();
+    await click("请求关闭");
+    expect(prompt()).toBe(true);
+    await click("不保存");
+    expect(document.querySelector(".compose-dialog")).toBeNull();
+    expect((await listDrafts()).some((d) => d.id === "prompt-signal")).toBe(
+      false,
+    );
   });
 });

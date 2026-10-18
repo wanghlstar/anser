@@ -51,6 +51,16 @@ import {
   DialogTitle,
   DialogDescription,
 } from "./ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "./ui/alert-dialog";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Textarea } from "./ui/textarea";
@@ -150,6 +160,7 @@ export function ComposeDialog({
   onSent,
   onBackground,
   stackIndex = 0,
+  closeSignal,
 }: {
   draft: Compose | null;
   onClose: () => void;
@@ -159,6 +170,8 @@ export function ComposeDialog({
   onBackground?: (draft: Compose, seconds: number) => void;
   /** 同屏第几个写信窗口：多个「继续写信」还原条错开，避免叠在一起 */
   stackIndex?: number;
+  /** 外部（⌘W）请求关闭这封信：自增的序号，变化即触发关闭确认 */
+  closeSignal?: number;
 }) {
   const { askConfirmation, cancelConfirmation, confirmationDialog } =
     useConfirmation();
@@ -167,6 +180,7 @@ export function ComposeDialog({
     [sending, setSending] = useState(false),
     [closing, setClosing] = useState(false),
     [bccOpen, setBccOpen] = useState<boolean | null>(null);
+  const [closePrompt, setClosePrompt] = useState(false);
   const [signatureError, setSignatureError] = useState("");
   const [signatureReload, setSignatureReload] = useState(0);
   const [suggestions, setSuggestions] = useState<Address[]>([]);
@@ -335,7 +349,7 @@ export function ComposeDialog({
   // 这里自己挂 document 监听，不用 Radix 的 onInteractOutside——那个只负责「别关闭草稿」，
   // 而且在 jsdom 里不触发，单测覆盖不到。注册时机在打开它的那次 pointerdown 之后，不会自伤。
   useEffect(() => {
-    if (!draft || minimized || sending || closing) return;
+    if (!draft || minimized || sending || closing || closePrompt) return;
     const handlePointerDown = (event: PointerEvent) => {
       const target = event.target as Element | null;
       if (!target?.closest) return;
@@ -355,7 +369,29 @@ export function ComposeDialog({
     };
     document.addEventListener("pointerdown", handlePointerDown);
     return () => document.removeEventListener("pointerdown", handlePointerDown);
-  }, [draft, minimized, sending, closing, minimizeCompose]);
+  }, [draft, minimized, sending, closing, closePrompt, minimizeCompose]);
+  // 关闭这封信的请求来源：主窗口的原生 ⌘W（Rust 转成 closeSignal），
+  // 以及能收键时的前端 ⌘W 兜底。都走同一个「保存 / 不保存 / 取消」确认。
+  const requestCloseRef = useRef<() => void>(() => {});
+  requestCloseRef.current = requestClose;
+  const lastCloseSignal = useRef(closeSignal ?? 0);
+  useEffect(() => {
+    if (!closeSignal || closeSignal === lastCloseSignal.current) return;
+    lastCloseSignal.current = closeSignal;
+    requestCloseRef.current();
+  }, [closeSignal]);
+  useEffect(() => {
+    if (!draft) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey)) return;
+      if (event.altKey || event.shiftKey) return;
+      if (event.key.toLowerCase() !== "w") return;
+      event.preventDefault();
+      requestCloseRef.current();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [draft]);
   // 视口变化后把浮动窗口拉回可见范围。
   useEffect(() => {
     const handleViewportResize = () => {
@@ -646,12 +682,27 @@ export function ComposeDialog({
   function update(p: Partial<Compose>) {
     setValue((v) => (v ? { ...v, ...p } : null));
   }
-  async function close() {
+  /** 关闭前的把关：有内容先问「保存 / 不保存 / 取消」，空白邮件直接舍弃。 */
+  function requestClose() {
     if (sending || closingNow.current) return;
     if (imageBusy.current) {
       toast.info("正文图片正在读取，请稍后关闭");
       return;
     }
+    const current = latest.current;
+    if (!current || !hasDraftContent(current)) {
+      void close();
+      return;
+    }
+    setClosePrompt(true);
+  }
+  async function close(discard = false) {
+    if (sending || closingNow.current) return;
+    if (imageBusy.current) {
+      toast.info("正文图片正在读取，请稍后关闭");
+      return;
+    }
+    setClosePrompt(false);
     const current = latest.current;
     closingNow.current = true;
     setClosing(true);
@@ -659,7 +710,8 @@ export function ComposeDialog({
     try {
       if (current)
         await persist(async () => {
-          if (hasDraftContent(current))
+          // 不保存 = 删掉自动存下的那份草稿；其余情况有内容就保存。
+          if (!discard && hasDraftContent(current))
             await call("save_draft", { draft: current });
           else await call("delete_draft", { id: current.id });
         });
@@ -921,7 +973,7 @@ export function ComposeDialog({
       modal={false}
       open={!!draft}
       onOpenChange={(v) => {
-        if (!v) void close();
+        if (!v) requestClose();
       }}
     >
       {/* DialogContent 自带 translate-x/y-[-50%] 居中；写信窗口改成 left/right + margin:auto
@@ -953,6 +1005,10 @@ export function ComposeDialog({
           else if (expanded) {
             e.preventDefault();
             setExpanded(false);
+          } else {
+            // 关闭也走「保存 / 不保存 / 取消」，与红点 ×、⌘W 一致。
+            e.preventDefault();
+            requestClose();
           }
         }}
       >
@@ -978,7 +1034,7 @@ export function ComposeDialog({
                 className="compose-light compose-light-close"
                 aria-label={hasContent ? "保存草稿并关闭" : "舍弃空白邮件"}
                 disabled={sending || closing}
-                onClick={() => void close()}
+                onClick={requestClose}
               >
                 <svg
                   viewBox="0 0 12 12"
@@ -1601,6 +1657,33 @@ export function ComposeDialog({
         </DialogContent>
       </Dialog>
       {confirmationDialog}
+      <AlertDialog open={closePrompt} onOpenChange={setClosePrompt}>
+        <AlertDialogContent className="compose-close-prompt">
+          <AlertDialogHeader>
+            <AlertDialogTitle>保存这封邮件的草稿？</AlertDialogTitle>
+            <AlertDialogDescription>
+              邮件已经自动保存到草稿箱。选择「不保存」会删除这份草稿。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={closing}
+              onClick={() => void close(true)}
+            >
+              不保存
+            </Button>
+            <AlertDialogAction
+              disabled={closing}
+              onClick={() => void close(false)}
+            >
+              保存
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Dialog>
   );
 }
