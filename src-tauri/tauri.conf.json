@@ -23,8 +23,8 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; img-src 'self' data: blob: http: https:; font-src 'self' data: https:; style-src 'self' 'unsafe-inline'; connect-src ipc: http://ipc.localhost; frame-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'none'",
-      "capabilities": ["main"]
+      "capabilities": ["main", "mail-window", "compose-window"],
+      "csp": "default-src 'self'; img-src 'self' data: blob: http: https:; font-src 'self' data: https:; style-src 'self' 'unsafe-inline'; connect-src ipc: http://ipc.localhost; frame-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'none'"
     }
   },
   "bundle": {

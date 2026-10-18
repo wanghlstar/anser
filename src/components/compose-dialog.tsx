@@ -153,6 +153,12 @@ function isComposeControl(target: EventTarget | null) {
   );
 }
 
+// 写信窗口/悬浮还原条上的标题：按草稿主题前缀区分回复与转发。
+export function composeTitle(draft: Compose | null | undefined): string {
+  if (draft?.subject.startsWith("Re:")) return "回复邮件";
+  if (draft?.subject.startsWith("Fwd:")) return "转发邮件";
+  return "写邮件";
+}
 export function ComposeDialog({
   draft,
   onClose,
@@ -161,6 +167,7 @@ export function ComposeDialog({
   onBackground,
   stackIndex = 0,
   closeSignal,
+  nativeWindow = false,
 }: {
   draft: Compose | null;
   onClose: () => void;
@@ -172,6 +179,9 @@ export function ComposeDialog({
   stackIndex?: number;
   /** 外部（⌘W）请求关闭这封信：自增的序号，变化即触发关闭确认 */
   closeSignal?: number;
+  /** 跑在系统原生窗口里（Rust 建的 compose-window-*）：窗口壳——拖动、八角缩放、
+      自绘三灯、最大化/最小化——都归系统管，这里不再画，内容铺满整扇窗。 */
+  nativeWindow?: boolean;
 }) {
   const { askConfirmation, cancelConfirmation, confirmationDialog } =
     useConfirmation();
@@ -349,7 +359,16 @@ export function ComposeDialog({
   // 这里自己挂 document 监听，不用 Radix 的 onInteractOutside——那个只负责「别关闭草稿」，
   // 而且在 jsdom 里不触发，单测覆盖不到。注册时机在打开它的那次 pointerdown 之后，不会自伤。
   useEffect(() => {
-    if (!draft || minimized || sending || closing || closePrompt) return;
+    // 原生窗口本身就是系统窗口，点窗口外不该把信收起来。
+    if (
+      nativeWindow ||
+      !draft ||
+      minimized ||
+      sending ||
+      closing ||
+      closePrompt
+    )
+      return;
     const handlePointerDown = (event: PointerEvent) => {
       const target = event.target as Element | null;
       if (!target?.closest) return;
@@ -369,7 +388,15 @@ export function ComposeDialog({
     };
     document.addEventListener("pointerdown", handlePointerDown);
     return () => document.removeEventListener("pointerdown", handlePointerDown);
-  }, [draft, minimized, sending, closing, closePrompt, minimizeCompose]);
+  }, [
+    draft,
+    minimized,
+    sending,
+    closing,
+    closePrompt,
+    minimizeCompose,
+    nativeWindow,
+  ]);
   // 关闭这封信的请求来源：主窗口的原生 ⌘W（Rust 转成 closeSignal），
   // 以及能收键时的前端 ⌘W 兜底。都走同一个「保存 / 不保存 / 取消」确认。
   const requestCloseRef = useRef<() => void>(() => {});
@@ -392,15 +419,16 @@ export function ComposeDialog({
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [draft]);
-  // 视口变化后把浮动窗口拉回可见范围。
+  // 视口变化后把浮动窗口拉回可见范围（原生窗口由系统管，不参与）。
   useEffect(() => {
+    if (nativeWindow) return;
     const handleViewportResize = () => {
       if (geometryRef.current)
         commitGeometry(clampGeometry(geometryRef.current));
     };
     window.addEventListener("resize", handleViewportResize);
     return () => window.removeEventListener("resize", handleViewportResize);
-  }, [commitGeometry]);
+  }, [commitGeometry, nativeWindow]);
   // 工具条按「写信窗口自身宽度」而非视口决定是否只留图标，缩放后也能正确降级。
   useEffect(() => {
     const element = dialogElement.current;
@@ -872,11 +900,7 @@ export function ComposeDialog({
   }
   const format = value ? composeFormat(value) : "rich";
   const hasContent = !!value && hasDraftContent(value);
-  const composeLabel = draft?.subject.startsWith("Re:")
-    ? "回复邮件"
-    : draft?.subject.startsWith("Fwd:")
-      ? "转发邮件"
-      : "写邮件";
+  const composeLabel = composeTitle(draft);
   async function attach() {
     if (!native || isDemo()) {
       toast.info("请在桌面客户端中添加真实附件");
@@ -982,9 +1006,11 @@ export function ComposeDialog({
         ref={dialogElement}
         overlay={false}
         className={`compose-dialog translate-x-0 translate-y-0${
-          expanded ? " compose-expanded" : ""
-        }${!expanded && geometry ? " compose-floating" : ""}${
-          minimized ? " compose-minimized" : ""
+          nativeWindow
+            ? " compose-native"
+            : `${expanded ? " compose-expanded" : ""}${
+                !expanded && geometry ? " compose-floating" : ""
+              }${minimized ? " compose-minimized" : ""}`
         }${narrowToolbar ? " compose-narrow" : ""}`}
         style={
           !expanded && geometry
@@ -1012,7 +1038,8 @@ export function ComposeDialog({
           }
         }}
       >
-        {!expanded &&
+        {!nativeWindow &&
+          !expanded &&
           (["n", "s", "e", "w", "ne", "nw", "se", "sw"] as const).map((dir) => (
             <div
               key={dir}
@@ -1022,86 +1049,88 @@ export function ComposeDialog({
             />
           ))}
         <DialogHeader
-          onPointerDown={beginDrag}
-          onDoubleClick={handleHeaderDoubleClick}
+          onPointerDown={nativeWindow ? undefined : beginDrag}
+          onDoubleClick={nativeWindow ? undefined : handleHeaderDoubleClick}
         >
           <div className="compose-heading">
-            <div className="compose-lights">
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                className="compose-light compose-light-close"
-                aria-label={hasContent ? "保存草稿并关闭" : "舍弃空白邮件"}
-                disabled={sending || closing}
-                onClick={requestClose}
-              >
-                <svg
-                  viewBox="0 0 12 12"
-                  width={12}
-                  height={12}
-                  aria-hidden="true"
+            {!nativeWindow && (
+              <div className="compose-lights">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  className="compose-light compose-light-close"
+                  aria-label={hasContent ? "保存草稿并关闭" : "舍弃空白邮件"}
+                  disabled={sending || closing}
+                  onClick={requestClose}
                 >
-                  <path
-                    d="M4.2 4.2 7.8 7.8M7.8 4.2 4.2 7.8"
-                    stroke="currentColor"
-                    strokeWidth={1.15}
-                    strokeLinecap="round"
-                  />
-                </svg>
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                className="compose-light compose-light-min"
-                aria-label="最小化写信窗口"
-                onClick={minimizeCompose}
-              >
-                <svg
-                  viewBox="0 0 12 12"
-                  width={12}
-                  height={12}
-                  aria-hidden="true"
+                  <svg
+                    viewBox="0 0 12 12"
+                    width={12}
+                    height={12}
+                    aria-hidden="true"
+                  >
+                    <path
+                      d="M4.2 4.2 7.8 7.8M7.8 4.2 4.2 7.8"
+                      stroke="currentColor"
+                      strokeWidth={1.15}
+                      strokeLinecap="round"
+                    />
+                  </svg>
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  className="compose-light compose-light-min"
+                  aria-label="最小化写信窗口"
+                  onClick={minimizeCompose}
                 >
-                  <path
-                    d="M3.4 6H8.6"
-                    stroke="currentColor"
-                    strokeWidth={1.15}
-                    strokeLinecap="round"
-                  />
-                </svg>
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                className="compose-light compose-light-zoom"
-                aria-label={expanded ? "还原写信窗口" : "最大化写信窗口"}
-                onClick={toggleExpanded}
-              >
-                {/* 主窗口（原生 macOS 三灯）的素材：绿灯是两块对角三角，
+                  <svg
+                    viewBox="0 0 12 12"
+                    width={12}
+                    height={12}
+                    aria-hidden="true"
+                  >
+                    <path
+                      d="M3.4 6H8.6"
+                      stroke="currentColor"
+                      strokeWidth={1.15}
+                      strokeLinecap="round"
+                    />
+                  </svg>
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  className="compose-light compose-light-zoom"
+                  aria-label={expanded ? "还原写信窗口" : "最大化写信窗口"}
+                  onClick={toggleExpanded}
+                >
+                  {/* 主窗口（原生 macOS 三灯）的素材：绿灯是两块对角三角，
                     最大化时朝外、还原时朝内。 */}
-                <svg
-                  viewBox="0 0 12 12"
-                  width={12}
-                  height={12}
-                  aria-hidden="true"
-                >
-                  {expanded ? (
-                    <path
-                      d="M3.3 3.3V7L7 3.3ZM8.7 8.7V5L5 8.7Z"
-                      fill="currentColor"
-                    />
-                  ) : (
-                    <path
-                      d="M8.7 3.3V7L5 3.3ZM3.3 8.7V5L7 8.7Z"
-                      fill="currentColor"
-                    />
-                  )}
-                </svg>
-              </Button>
-            </div>
+                  <svg
+                    viewBox="0 0 12 12"
+                    width={12}
+                    height={12}
+                    aria-hidden="true"
+                  >
+                    {expanded ? (
+                      <path
+                        d="M3.3 3.3V7L7 3.3ZM8.7 8.7V5L5 8.7Z"
+                        fill="currentColor"
+                      />
+                    ) : (
+                      <path
+                        d="M8.7 3.3V7L5 3.3ZM3.3 8.7V5L7 8.7Z"
+                        fill="currentColor"
+                      />
+                    )}
+                  </svg>
+                </Button>
+              </div>
+            )}
             <DialogTitle>{composeLabel}</DialogTitle>
           </div>
           <DialogDescription className="sr-only">

@@ -49,6 +49,11 @@ struct AppState {
     /// 自己该显示哪封邮件；窗口销毁时清掉。
     mail_windows: Arc<Mutex<std::collections::HashMap<String, String>>>,
     mail_window_seq: Arc<std::sync::atomic::AtomicUsize>,
+    /// 写信窗口（独立原生窗口）的 label → `{draft, accounts}` 载荷。窗口前端启动时
+    /// 按 label 反查自己该编辑哪封草稿；窗口销毁时清掉，并把剩下的草稿 id 报给主窗口
+    /// （主窗口靠它判断「还有没有在写信」）。
+    compose_windows: Arc<Mutex<std::collections::HashMap<String, serde_json::Value>>>,
+    compose_window_seq: Arc<std::sync::atomic::AtomicUsize>,
 }
 /// 托盘右键菜单里需要反向更新勾选状态的菜单项。
 struct TrayState {
@@ -857,8 +862,28 @@ fn collect_mail(store: &Store, app: &tauri::AppHandle, only: Option<&str>) -> Re
     }
 }
 #[tauri::command]
-fn save_draft(state: tauri::State<AppState>, draft: Compose) -> Result<()> {
-    state.store.save_draft(&draft)
+fn save_draft(
+    window: tauri::Window,
+    state: tauri::State<AppState>,
+    draft: Compose,
+) -> Result<()> {
+    state.store.save_draft(&draft)?;
+    // 原生写信窗口存草稿时同步刷新登记：主窗口「继续写信」悬浮条上的主题要跟着变。
+    let label = window.label().to_string();
+    if label.starts_with("compose-window-") {
+        let value = serde_json::to_value(&draft).map_err(err)?;
+        let updated = match state.compose_windows.lock().map_err(err)?.get_mut(&label) {
+            Some(payload) => {
+                payload["draft"] = value;
+                true
+            }
+            None => false,
+        };
+        if updated {
+            emit_compose_windows(&window.app_handle(), &state);
+        }
+    }
+    Ok(())
 }
 #[tauri::command]
 fn list_drafts(state: tauri::State<AppState>) -> Result<Vec<Compose>> {
@@ -954,6 +979,185 @@ async fn open_mail_window(
 #[tauri::command]
 fn mail_window_mail(state: tauri::State<AppState>, label: String) -> Option<String> {
     state.mail_windows.lock().ok()?.get(&label).cloned()
+}
+
+/// 发给某一扇写信窗口的「请关闭自己」事件。**必须与主窗口收的
+/// `compose-close-requested` 用两个名字**：JS 里不带 options 的 `listen`
+/// 注册的目标是 `Any`，`emit_to(某个 label)` 的事件照样会进别的窗口的同名监听，
+/// 两边同名就会「主窗口收到 → 转给写信窗口 → 主窗口又收到」无限回环（实测 1 分钟
+/// 转了 100 万次，把主线程占死、写信窗口连弹确认的机会都没有）。
+const COMPOSE_WINDOW_CLOSE: &str = "compose-window-close";
+
+/// 写信窗口标签里的序号（`compose-window-3` → 3）：按开启顺序排窗口用。
+fn compose_label_seq(label: &str) -> Option<usize> {
+    label.strip_prefix("compose-window-")?.parse::<usize>().ok()
+}
+/// 写信窗口登记表的对外快照（按开启顺序）：label、正在编辑的草稿、是否在前台。
+/// 主窗口用它判断「还有没有在写信」、渲染「继续写信」悬浮条，也用来保护正在编辑的
+/// 草稿不被「清空草稿箱」删掉。
+fn compose_window_infos(
+    windows: &std::collections::HashMap<String, serde_json::Value>,
+    focused: impl Fn(&str) -> bool,
+) -> Vec<serde_json::Value> {
+    let mut labels: Vec<&String> = windows.keys().collect();
+    labels.sort_by_key(|label| compose_label_seq(label.as_str()));
+    labels
+        .into_iter()
+        .filter_map(|label| {
+            Some(serde_json::json!({
+                "label": label,
+                "draft": windows.get(label)?.pointer("/draft")?.clone(),
+                "focused": focused(label),
+            }))
+        })
+        .collect()
+}
+/// 写信窗口开、关、或前后台切换时，把登记快照同步给主窗口。
+fn emit_compose_windows(app: &tauri::AppHandle, state: &AppState) {
+    let infos = match state.compose_windows.lock() {
+        Ok(windows) => compose_window_infos(&windows, |label| {
+            app.get_webview_window(label)
+                .and_then(|window| window.is_focused().ok())
+                .unwrap_or(false)
+        }),
+        Err(_) => Vec::new(),
+    };
+    let _ = app.emit_to("main", "compose-windows-changed", infos);
+}
+/// 最后开的那扇写信窗口：主窗口在前台按 ⌘W 时优先关它（和「关最后打开的那封」一致）。
+fn latest_compose_label(
+    windows: &std::collections::HashMap<String, serde_json::Value>,
+) -> Option<String> {
+    windows
+        .keys()
+        .filter_map(|label| compose_label_seq(label).map(|seq| (seq, label.clone())))
+        .max_by_key(|(seq, _)| *seq)
+        .map(|(_, label)| label)
+}
+/// 主窗口收到 ⌘W、且当时有写信窗口时，由前端调这里把关闭请求转给写信窗口自己
+/// （原生窗口自己弹「保存 / 不保存 / 取消」）。
+#[tauri::command]
+fn close_latest_compose_window(
+    app: tauri::AppHandle,
+    state: tauri::State<AppState>,
+) -> Result<()> {
+    let label = {
+        let windows = state.compose_windows.lock().map_err(err)?;
+        latest_compose_label(&windows)
+    };
+    if let Some(label) = label {
+        let _ = app.emit_to(label.as_str(), COMPOSE_WINDOW_CLOSE, ());
+    }
+    Ok(())
+}
+/// 主窗口点「继续写信」：把那扇原生写信窗口抬回前台（最小化时先还原）。
+#[tauri::command]
+fn focus_compose_window(app: tauri::AppHandle, label: String) -> Result<()> {
+    if let Some(window) = app.get_webview_window(&label) {
+        let _ = window.unminimize();
+        window.set_focus().map_err(err)?;
+    }
+    Ok(())
+}
+/// 在一扇独立原生窗口里写这封信。同一封草稿只开一扇窗，重复调用聚焦原窗口；
+/// 草稿本身由主窗口拼好（回复/转发/签名都在那边算好），这里只负责开窗。
+#[tauri::command]
+async fn open_compose_window(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    draft: serde_json::Value,
+    accounts: serde_json::Value,
+) -> Result<String> {
+    let id = draft
+        .pointer("/id")
+        .and_then(|value| value.as_str())
+        .unwrap_or_default()
+        .to_string();
+    if !id.is_empty() {
+        if let Some(label) = state
+            .compose_windows
+            .lock()
+            .map_err(err)?
+            .iter()
+            .find(|(_, payload)| {
+                payload.pointer("/draft/id").and_then(|value| value.as_str())
+                    == Some(id.as_str())
+            })
+            .map(|(label, _)| label.clone())
+        {
+            if let Some(window) = app.get_webview_window(&label) {
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+                return Ok(label);
+            }
+        }
+    }
+    let seq = state
+        .compose_window_seq
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let label = format!("compose-window-{seq}");
+    let subject = draft
+        .pointer("/subject")
+        .and_then(|value| value.as_str())
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    let title = if subject.is_empty() {
+        "写邮件".to_string()
+    } else {
+        subject
+    };
+    let mut builder = tauri::WebviewWindowBuilder::new(
+        &app,
+        &label,
+        tauri::WebviewUrl::App("index.html".into()),
+    )
+    .title(title)
+    .inner_size(980.0, 720.0)
+    .min_inner_size(640.0, 420.0);
+    // 从主窗口位置逐层错开，避免连开几封完全叠在一起。
+    if let Some(main) = app.get_webview_window("main") {
+        if let Ok(position) = main.outer_position() {
+            let step = (seq % 6) as f64 * 28.0;
+            builder = builder.position(
+                position.x as f64 + 60.0 + step,
+                position.y as f64 + 60.0 + step,
+            );
+        }
+    }
+    builder.build().map_err(err)?;
+    state.compose_windows.lock().map_err(err)?.insert(
+        label.clone(),
+        serde_json::json!({ "draft": draft, "accounts": accounts }),
+    );
+    emit_compose_windows(&app, &state);
+    Ok(label)
+}
+/// 写信窗口启动时问「我在编辑哪封草稿、发件人有哪些」：label 由窗口自己上报。
+#[tauri::command]
+fn compose_window_draft(
+    state: tauri::State<AppState>,
+    label: String,
+) -> Option<serde_json::Value> {
+    state.compose_windows.lock().ok()?.get(&label).cloned()
+}
+/// 写信窗口里保存/发送/舍弃完，请求关掉这扇窗。先把登记摘掉再 close：
+/// CloseRequested 要靠「label 还在不在登记里」区分「用户按了 ⌘W」和「前端主动关」，
+/// 否则会被自己的拦截逻辑挡下来变成关不掉的窗口。
+#[tauri::command]
+fn close_compose_window(
+    app: tauri::AppHandle,
+    state: tauri::State<AppState>,
+    label: String,
+) -> Result<()> {
+    {
+        let mut windows = state.compose_windows.lock().map_err(err)?;
+        windows.remove(&label);
+    }
+    if let Some(window) = app.get_webview_window(&label) {
+        window.close().map_err(err)?;
+    }
+    Ok(())
 }
 #[tauri::command]
 fn prepare_forward_files(
@@ -2344,6 +2548,8 @@ pub fn run() {
                 compose_open: compose_open.clone(),
                 mail_windows: Arc::new(Mutex::new(std::collections::HashMap::new())),
                 mail_window_seq: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+                compose_windows: Arc::new(Mutex::new(std::collections::HashMap::new())),
+                compose_window_seq: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             });
             watch_dock_icon(app.handle().clone(), dock_enabled);
             #[cfg(target_os = "macos")]
@@ -2483,18 +2689,58 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            // 阅读窗口关掉后清掉 label → 邮件 id 的登记。
+            let label = window.label().to_string();
+            // 阅读/写信窗口关掉后清掉各自的登记。
             if let tauri::WindowEvent::Destroyed = event {
-                if window.label().starts_with("mail-window-") {
+                if label.starts_with("mail-window-") {
                     if let Some(state) = window.app_handle().try_state::<AppState>() {
                         if let Ok(mut windows) = state.mail_windows.lock() {
-                            windows.remove(window.label());
+                            windows.remove(&label);
                         }
+                    }
+                } else if label.starts_with("compose-window-") {
+                    if let Some(state) = window.app_handle().try_state::<AppState>() {
+                        if let Ok(mut windows) = state.compose_windows.lock() {
+                            windows.remove(&label);
+                        }
+                        emit_compose_windows(&window.app_handle(), &state);
                     }
                 }
                 return;
             }
-            if window.label() == "main" {
+            // 写信窗口的 ⌘W / 红灯：先转给窗口自己弹「保存 / 不保存 / 取消」。
+            // 前端确认后调 close_compose_window，那条路会先摘掉登记，所以这里只在
+            //「还在登记里」时拦下来，不会把窗口变成关不掉的。
+            if label.starts_with("compose-window-") {
+                match event {
+                    tauri::WindowEvent::CloseRequested { api, .. } => {
+                        let registered = window
+                            .app_handle()
+                            .try_state::<AppState>()
+                            .map(|state| {
+                                state
+                                    .compose_windows
+                                    .lock()
+                                    .map(|windows| windows.contains_key(&label))
+                                    .unwrap_or(false)
+                            })
+                            .unwrap_or(false);
+                        if registered {
+                            api.prevent_close();
+                            let _ = window.emit_to(&label, COMPOSE_WINDOW_CLOSE, ());
+                        }
+                    }
+                    // 写信窗口被盖住/回到前台：主窗口据此显示或收起「继续写信」悬浮条。
+                    tauri::WindowEvent::Focused(_) => {
+                        if let Some(state) = window.app_handle().try_state::<AppState>() {
+                            emit_compose_windows(&window.app_handle(), &state);
+                        }
+                    }
+                    _ => {}
+                }
+                return;
+            }
+            if label == "main" {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                     api.prevent_close();
                     // ⌘W：正在写信时先把写信窗口的关闭流程交给前端（弹
@@ -2505,7 +2751,9 @@ pub fn run() {
                         .compose_open
                         .load(std::sync::atomic::Ordering::Relaxed);
                     if composing {
-                        let _ = window.emit("compose-close-requested", ());
+                        let _ = window
+                            .app_handle()
+                            .emit_to("main", "compose-close-requested", ());
                         return;
                     }
                     use tauri_plugin_window_state::AppHandleExt;
@@ -2602,6 +2850,11 @@ pub fn run() {
             set_compose_open,
             open_mail_window,
             mail_window_mail,
+            open_compose_window,
+            compose_window_draft,
+            close_compose_window,
+            close_latest_compose_window,
+            focus_compose_window,
             prepare_forward_files,
             read_body_images,
             send_mail,

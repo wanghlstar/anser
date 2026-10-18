@@ -2065,6 +2065,36 @@ button.nav-collapse .collapse-chevron {
 .compose-dialog.compose-minimized {
   display: none !important;
 }
+/* 原生写信窗口（Rust 建的 compose-window-*）：窗口本身就是系统窗口，
+   拖动/缩放/三灯/最大化归 macOS 管，这里只把内容铺满整扇窗。
+   注意：这些 !important 是必要的——DialogContent 自带 fixed + 居中定位。 */
+.compose-dialog.compose-native {
+  position: fixed !important;
+  inset: 0 !important;
+  width: auto !important;
+  max-width: none !important;
+  height: auto !important;
+  max-height: none !important;
+  margin: 0 !important;
+  background: var(--background) !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  transform: none !important;
+  transition: none !important;
+}
+/* 没有自绘三灯了，标题不用再给灯让位（13px → 16px）。 */
+.compose-dialog.compose-native > [data-slot="dialog-header"] {
+  padding-left: 16px;
+}
+/* 原生写信窗口取不到草稿时的兜底版面（正常路径用不到）。 */
+.compose-window-error {
+  display: flex;
+  height: 100dvh;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
 /* 边角缩放热区。悬停在窗口内边缘（6px / 角 14px），不盖住正文与按钮。 */
 .compose-resize-handle {
   position: absolute;

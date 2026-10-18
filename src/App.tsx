@@ -57,6 +57,7 @@ import {
   CheckCheck,
   ChevronDown,
   ChevronRight,
+  ChevronUp,
   Cloud,
   FileText,
   Folder,
@@ -150,7 +151,7 @@ import {
 import { Toaster, toast } from "sonner";
 import { AccountDialog } from "./components/account-dialog";
 import { RulesPanel } from "./components/rules-panel";
-import { ComposeDialog } from "./components/compose-dialog";
+import { ComposeDialog, composeTitle } from "./components/compose-dialog";
 import { PendingSend } from "./components/pending-send";
 import { DraftsPanel } from "./components/drafts-panel";
 import { ContactsPanel } from "./components/contacts-panel";
@@ -261,6 +262,9 @@ function savedListMode(): "conversations" | "messages" {
 function queryScope(query: Query) {
   return JSON.stringify({ ...query, limit: 0 });
 }
+// 原生写信窗口的登记（Rust 的 compose-windows-changed 同步过来）：窗口 label、正在
+// 编辑的草稿、是否在前台（不在前台时主窗口底部显示「继续写信」悬浮条）。
+type NativeComposeWindow = { label: string; draft: Compose; focused: boolean };
 export default function App() {
   const updates = useAppUpdate();
   const { askConfirmation, confirmationDialog } = useConfirmation();
@@ -319,13 +323,29 @@ export default function App() {
     [demo, setDemo] = useState(isDemo()),
     [clearingDrafts, setClearingDrafts] = useState(false),
     [dark, setDark] = useState(localStorage.getItem("mail-theme") === "dark");
-  // 「当前写信」= 最后打开的那封：键盘守卫、更新弹窗等仍按「有没有写信窗口」判断。
+  // 「当前写信」= 最后打开的那封（应用内路径）：键盘守卫、更新弹窗等仍按
+  // 「有没有写信窗口」判断。原生写信窗口不在这份数组里，草稿 id 由 Rust 报过来。
   const draft = composes.length ? composes[composes.length - 1] : null;
-  // 每封邮件都是新开一个写信窗口（同 Foxmail）：互不覆盖，可各自最小化/最大化。
-  const openCompose = useCallback(
-    (next: Compose) => setComposes((list) => [...list, next]),
+  const [composeWindows, setComposeWindows] = useState<NativeComposeWindow[]>(
     [],
   );
+  // 有没有在写信：应用内浮动窗（浏览器预览/演示）与原生写信窗口都算。
+  const composing = !!draft || composeWindows.length > 0;
+  const accountsRef = useRef(data.accounts);
+  accountsRef.current = data.accounts;
+  // 每封邮件都是新开一个写信窗口（同 Foxmail）：互不覆盖，可各自最小化/最大化。
+  // 桌面版是真的系统窗口（Rust 建 WebviewWindow）：拖动/缩放/三灯/⌘W 全交给系统；
+  // 浏览器预览没有系统窗口，退回应用内浮动窗。
+  const openCompose = useCallback((next: Compose) => {
+    if (native) {
+      void invoke<string>("open_compose_window", {
+        draft: next,
+        accounts: accountsRef.current,
+      }).catch((e) => toast.error(String(e)));
+      return;
+    }
+    setComposes((list) => [...list, next]);
+  }, []);
   const closeCompose = useCallback(
     (id: string) => setComposes((list) => list.filter((d) => d.id !== id)),
     [],
@@ -343,7 +363,8 @@ export default function App() {
     }).catch((e) => toast.error(String(e)));
   }, []);
   // ⌘W：主窗口的原生「关闭窗口」在 Rust 侧被拦下（避免把整个窗口收进托盘），
-  // 改成通知前端先走写信窗口的关闭确认。只有真正在写信时才拦截。
+  // 改成通知前端先走写信窗口的关闭确认。只有真正在写信时才拦截——应用内浮动窗
+  // 与原生写信窗口都算「在写信」，所以上报的是 composing。
   const composesRef = useRef(composes);
   composesRef.current = composes;
   const composeCloseSeq = useRef(0);
@@ -352,11 +373,9 @@ export default function App() {
     n: number;
   } | null>(null);
   useEffect(() => {
-    if (!native || isDemo()) return;
-    void call("set_compose_open", { open: composes.length > 0 }).catch(
-      () => {},
-    );
-  }, [composes.length]);
+    if (!native) return;
+    void call("set_compose_open", { open: composing }).catch(() => {});
+  }, [composing]);
   useEffect(() => {
     if (!native) return;
     let cleanup = () => {};
@@ -365,7 +384,11 @@ export default function App() {
       const un = await listen("compose-close-requested", () => {
         const list = composesRef.current;
         const target = list[list.length - 1];
-        if (!target) return;
+        // 原生写信窗口不在这份数组里：让 Rust 转给最后开的那扇，由它自己弹确认。
+        if (!target) {
+          void invoke("close_latest_compose_window").catch(() => {});
+          return;
+        }
         composeCloseSeq.current += 1;
         setComposeClose({ id: target.id, n: composeCloseSeq.current });
       });
@@ -427,14 +450,14 @@ export default function App() {
   } | null>(null);
   const notificationGeneration = useRef(0);
   const notificationReading = useRef("");
-  const notificationContext = useRef({ page, search, draft, demo });
-  notificationContext.current = { page, search, draft, demo };
+  const notificationContext = useRef({ page, search, composing, demo });
+  notificationContext.current = { page, search, composing, demo };
   useNotificationMail(native && !demo, (token) => {
     const click = ++notificationGeneration.current;
     setNotificationToken({ token, click });
   });
   useEffect(() => {
-    if (!notificationToken || draft || demo) return;
+    if (!notificationToken || composing || demo) return;
     let live = true;
     const ticket = ++notificationGeneration.current;
     const scope = queryRef.current;
@@ -449,7 +472,7 @@ export default function App() {
           reading !== selectionRef.current ||
           context.page !== notificationContext.current.page ||
           context.search !== notificationContext.current.search ||
-          context.draft !== notificationContext.current.draft ||
+          context.composing !== notificationContext.current.composing ||
           context.demo !== notificationContext.current.demo
         )
           return;
@@ -502,7 +525,7 @@ export default function App() {
     return () => {
       live = false;
     };
-  }, [notificationToken, draft, demo]);
+  }, [notificationToken, composing, demo]);
   const grouped = query.listMode !== "messages";
   useEffect(() => {
     try {
@@ -707,6 +730,32 @@ export default function App() {
   useEffect(() => {
     void refresh();
   }, [query, refresh]);
+  // 原生写信窗口 ↔ 主窗口：窗口开关与前后台同步「有没有在写信」「哪扇不在前台」
+  // （主窗口据此显示「继续写信」悬浮条）；发送/定时成功刷新列表；
+  // 收起进倒计时时由主窗口接管 PendingSend（撤回也在这边重开窗口）。
+  useEffect(() => {
+    if (!native) return;
+    let active = true;
+    let cleanup = () => {};
+    void import("@tauri-apps/api/event").then(async ({ listen }) => {
+      const stops = await Promise.all([
+        listen<NativeComposeWindow[]>("compose-windows-changed", (event) =>
+          setComposeWindows(Array.isArray(event.payload) ? event.payload : []),
+        ),
+        listen("compose-changed", () => void refresh()),
+        listen<{ draft: Compose; seconds: number }>(
+          "compose-background",
+          (event) => setPendingSend(event.payload),
+        ),
+      ]);
+      if (!active) stops.forEach((stop) => stop());
+      else cleanup = () => stops.forEach((stop) => stop());
+    });
+    return () => {
+      active = false;
+      cleanup();
+    };
+  }, [refresh]);
   useEffect(() => {
     const timer = setTimeout(
       () => setQuery((q) => ({ ...q, search, limit: 200 })),
@@ -892,7 +941,7 @@ export default function App() {
         e.defaultPrevented ||
         e.isComposing ||
         e.repeat ||
-        draft ||
+        composing ||
         target?.closest(
           'input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="combobox"]',
         ) ||
@@ -978,7 +1027,7 @@ export default function App() {
   }, [
     compose,
     page,
-    draft,
+    composing,
     selected,
     data,
     detail,
@@ -1493,7 +1542,9 @@ export default function App() {
   async function clearDrafts(list: Compose[]) {
     if (clearingDrafts) return;
     const removable = list.filter(
-      (d) => !composes.some((open) => open.id === d.id),
+      (d) =>
+        !composes.some((open) => open.id === d.id) &&
+        !composeWindows.some((item) => item.draft.id === d.id),
     );
     if (!removable.length) {
       toast.info("没有可清空的草稿");
@@ -4060,7 +4111,7 @@ export default function App() {
                       accounts={data.accounts}
                       demo={demo}
                       scrollRef={readerRef}
-                      editorOpen={!!draft}
+                      editorOpen={composing}
                       onReply={(source, forward = false, all = false) =>
                         compose(source.mail, forward, all, source)
                       }
@@ -4303,7 +4354,38 @@ export default function App() {
           </DialogContent>
         </Dialog>
       )}
-      <UpdateDialog updates={updates} blocked={!!draft} />
+      {/* 原生写信窗口不在前台时，主窗口底部给一条「继续写信」：点它把写信窗口抬回前台，
+          回到前台（Rust 报 focused）后自动消失。样式沿用旧的悬浮写信窗还原条。 */}
+      {composeWindows
+        .filter((item) => !item.focused)
+        .map((item, index) => (
+          <div
+            key={item.label}
+            className="compose-restore-bar"
+            style={{ bottom: `calc(16px + ${index * 52}px)` }}
+          >
+            <span className="compose-restore-label">
+              {composeTitle(item.draft)}
+              {item.draft.subject.trim()
+                ? ` · ${item.draft.subject.trim()}`
+                : ""}
+            </span>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() =>
+                void invoke("focus_compose_window", {
+                  label: item.label,
+                }).catch((e) => toast.error(String(e)))
+              }
+            >
+              <ChevronUp size={14} />
+              继续写信
+            </Button>
+          </div>
+        ))}
+      <UpdateDialog updates={updates} blocked={composing} />
     </SidebarProvider>
   );
 }

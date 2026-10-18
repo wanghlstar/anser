@@ -3995,3 +3995,37 @@ fn local_archive_excludes_sent_copies_but_keeps_received_copies() {
     let folders: Vec<&str> = tree[0].folders.iter().map(|f| f.name.as_str()).collect();
     assert_eq!(folders, vec!["INBOX"]);
 }
+
+#[test]
+fn compose_window_registry_reports_open_drafts_and_the_latest_window() {
+    let mut windows = std::collections::HashMap::new();
+    let payload = |id: &str| serde_json::json!({ "draft": { "id": id }, "accounts": [] });
+    windows.insert("compose-window-2".to_string(), payload("b"));
+    windows.insert("compose-window-10".to_string(), payload("a"));
+    // 没有 draft.id 的登记不该混进「正在写信」的判定。
+    windows.insert("compose-window-3".to_string(), serde_json::json!({}));
+    // 快照按开启顺序给出 label + 草稿 + 是否在前台，没有草稿的登记不会混进来。
+    assert_eq!(
+        crate::compose_window_infos(&windows, |label| label == "compose-window-2"),
+        vec![
+            serde_json::json!({
+                "label": "compose-window-2",
+                "draft": { "id": "b" },
+                "focused": true
+            }),
+            serde_json::json!({
+                "label": "compose-window-10",
+                "draft": { "id": "a" },
+                "focused": false
+            }),
+        ]
+    );
+    // ⌘W 优先关序号最大的那扇（10 比 2 晚开），不是字典序。
+    assert_eq!(
+        crate::latest_compose_label(&windows).as_deref(),
+        Some("compose-window-10")
+    );
+    let empty = std::collections::HashMap::new();
+    assert!(crate::compose_window_infos(&empty, |_| false).is_empty());
+    assert_eq!(crate::latest_compose_label(&empty), None);
+}

@@ -72,6 +72,28 @@
 
 36. **jsdom 里对同一组件重新 `root.render()` 不会重跑 `useState` 的惰性初始化**，所以验证「第二扇窗按 stackIndex 错开」这类挂载期计算，必须改 `key` 让它真正重挂（App 里本来就是 `key={mail.id}`）；否则断言会拿到第一扇的旧几何。
 
+37. **新建原生窗口后不要调原生淡入**。`open_mail_window` 最初照抄了主窗口的 `fade_in_window(&window)`，结果建窗那一刻 runloop 还没就绪、动画不生效，窗口**永久停在 `alpha=0`**：进程里有窗口对象、`CGWindowList` 也能查到，但人眼完全看不到（这就是「窗口找不到」的真因，实测 `wins` 从 alpha 0.0 变 1.0）。原生窗口直接显示即可，要动效交给系统。
+
+38. **原生窗口必须把「应用内窗口壳」剥掉，否则会出现双份标题栏**。写信窗进了原生窗口后，组件里那套自绘三灯（红/黄/绿）与 macOS 原生标题栏同时存在，语义还各是一套（自绘黄灯＝收成底部细条）。做法：给 `ComposeDialog` 加 `nativeWindow` 开关，为真时不渲染三灯、8 个 `compose-resize-handle`、拖动/双击标题、还原条，也不挂「点窗口外自动最小化」与「视口 resize 重夹几何」两个 effect，只保留表单业务、`closeSignal`、Esc 关闭确认与 `narrowToolbar`。新加的 `.compose-native` 规则**必须带 `!important`** 才能压掉 `DialogContent` 自带的 `position: fixed` 居中、阴影与圆角（`.compose-dialog` 那几条本来就是 `!important`）。
+
+39. **「前端请求关原生窗口」与「系统 CloseRequested 拦截」会互相打架，必须用登记表解**。⌘W 要在原生窗口里弹「保存/不保存/取消」，就得在 `CloseRequested` 里 `prevent_close()`；但用户点完确认后前端调 `close_compose_window` 再 `window.close()`，又会被同一个拦截接住 → 窗口关不掉。解法：`close_compose_window` **先把 label 从登记表摘掉再 `close()`**，拦截条件写成「label 是否还在表里」。
+
+40. **跨窗的「正在写信」判定别用布尔，用 Rust 报的草稿 id 列表**。主窗口原来靠 `composes.length > 0` 判断有没有在写信（键盘守卫、通知跳过、更新弹窗拦截、清空草稿箱保护）；写信窗搬走后主窗不再持有这些窗口。改法：Rust 在建窗/销毁窗时 `emit_to("main", "compose-windows-changed", ids)`（ids 从登记表里取 `draft.id`），主窗存成 `composeIds`，判定统一用 `composing = !!draft || composeIds.length > 0`，清空草稿箱的排除项也并上 `composeIds`。
+
+41. **主窗口按 ⌘W 时，如果只有原生写信窗在开，得把请求转给它**。Rust 的原生「关闭窗口」菜单项在主窗被拦下（不用收进托盘），原逻辑是通知主窗前端去关应用内那封信；写信窗搬走后主窗里没有这个对象。新增 `close_latest_compose_window`：从登记表里取序号最大的 `compose-window-N`，`emit_to(那个 label, "compose-close-requested")`。另外注意 Rust 侧 `window.emit(...)` 是**向所有窗口广播**，会误触主窗里处理应用内写信窗的同一个监听，所以这类定向通知一律用 `emit_to(label, ...)`。
+
+42. **浏览器 / 演示模式 / 单测里没有原生窗口，写信窗要保留应用内浮窗外壳作为回退**。`openCompose` 只在 `native` 时 `invoke("open_compose_window")`，否则仍 `setComposes` 追加（jsdom 的 430 例前端测试跑的就是这条路）。所以 `ComposeDialog` 的浮动外壳代码与它的 37 例窗口管理测试**不删**——它们是非原生环境唯一的实现，只是应用打包后不再走。
+
+43. **锁屏状态下所有 UI 探针都会失效，只剩 `CGWindowList`**。`screencapture`（Screen Recording 权限）与 `osascript`/System Events（辅助功能权限）在锁屏时分别只能拍到壁纸+菜单栏、报 `-25211` 不允许辅助访问；自写 CGEvent 探针（`ax click/drag`）也打不到应用窗口。`wins`/`wins2`（`CGWindowListCopyWindowInfo`，无需权限）仍能读到窗口的 owner/id/layer/alpha/onscreen/bounds —— 所以锁屏时能核对的只有「窗口建出来了、尺寸/位置/alpha 对不对」，交互与截图必须等解锁。
+
+44. **`?` 不能直接套在 `Mutex::lock()` 的结果上去传引用**：`latest_compose_label(&state.compose_windows.lock().map_err(err)?)` 报 E0308（`?` 的结果被当成 `HashMap` 而不是 `MutexGuard`）。写成 `let label = { let windows = state.compose_windows.lock().map_err(err)?; latest_compose_label(&windows) };` —— 顺便让 guard 在 `emit_to` 之前就释放，避免持锁发事件。
+
+45. **`app.security.capabilities` 是白名单：写了列表，`capabilities/` 里没列进去的文件就是死文件**（tauri-utils `config.rs`：「By default (not set or empty list), all capability files from `./capabilities/` are included, by setting values in this entry, you have fine grained control over which capabilities are included.」）。我们原来是 `["main"]`，于是上一轮的 `mail-window.json` 与本轮的 `compose-window.json` **都没被加载**：文件躺在目录里、也被生成进 `gen/schemas/capabilities.json` 和构建产物 OUT_DIR，但运行期 ACL 里只有 `main`，新窗口的 `plugin:event|listen` / `emit_to` / `dialog:allow-open` 全被拒（`listen` 失败连拖拽附件都不好用，因为拖拽实现里用了 `listen`）。诊断靠 debug 构建（release 的 ACL 错误只有短句 `Command <cmd> not allowed by ACL`，debug 才打印明细）：`event.listen not allowed on window "compose-window-0", webview "compose-window-0", URL: local` / `allowed on: [windows: "main", URL: local]` / `referenced by: capability: main, permission: allow-listen` —— 窗口/webview 标签与 origin 都正确，只是表里没有这条 capability。修法：`"capabilities": ["main", "mail-window", "compose-window"]`。**坑：JSON 重复 key**——该文件在 `csp` 之后已有一行同样的 `"capabilities": ["main"]`，我新增的键成了重复键，serde_json 取后者，改动静默失效；改完用 `python3 -c` 数一下 key 出现次数。另注意：**上一轮阅读窗（mail-window）的 capability 也一直是失效的**（它的 `listen`/`emitTo` 从未生效，只是当时没测到），本轮一并修好。
+
+46. **跨窗同名事件 + 不带 options 的 `listen`（target 默认 `{kind:'Any'}`）会回环**。tauri-2.12 的 `match_any_or_filter` 是 `*target == EventTarget::Any || filter(...)`，所以「目标为 Any」的监听器会收到**任何** `emit_to` 的事件，包括发给别的窗口的。主窗与写信窗原都监听 `compose-close-requested`：Rust `emit_to(写信窗, …)` → 主窗监听器也触发 → `invoke("close_latest_compose_window")` → 再 `emit_to(写信窗, …)` → 死循环（实测 1 分钟写满 1,036,123 行 trace，主线程被占死、写信窗根本没机会弹确认框）。**规则：方向不同的事件用不同名字**（Rust→写信窗 = `compose-window-close`；Rust→主窗 = `compose-close-requested`），不要指望 `emit_to` 能隔离同名事件。（这也修正了第 41 条里「定向通知一律用 `emit_to` 就够」的认知：`emit_to` 只保证广播范围，不保证同名事件不串。）
+
+47. **「写信窗不在前台」的悬浮入口（继续写信）**：Rust 的登记表里带上 draft 快照，`compose-windows-changed` 的载荷从「id 列表」升级为 `{label, draft, focused}[]`（`compose_window_infos` 按 `compose-window-N` 的序号排序，`focused` 用 `get_webview_window(label).is_focused()` 现算）。写信窗的 `Focused` 窗口事件、以及 `save_draft`（签名加 `window: tauri::Window`，Tauri 自动注入，前端不用改；存库后把新 draft 写回登记表）都会重发该事件，于是「窗口回到前台 → 悬浮条自动消失」「自动保存 → 悬浮条主题实时更新」都是免费的。点击悬浮条走新命令 `focus_compose_window`（`unminimize()` + `set_focus()`）。前端沿用旧的 `.compose-restore-bar` 样式（语义改成「按未聚焦的写信窗各一条，用内联 `bottom: calc(16px + index * 52px)` 向上错开」），文案由导出的 `composeTitle(draft)` 生成（`Re:` → 回复邮件、`Fwd:` → 转发邮件、否则 写邮件）。
+
 ## 移植清单（上游基线 `v0.1.19`）
 
 **后端**

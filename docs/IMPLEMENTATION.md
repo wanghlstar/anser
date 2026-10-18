@@ -616,3 +616,44 @@ GitHub CI 和两架构发布工作流已推送；首次 Checks 已成功，Relea
 **⌘W 的关键点**：macOS 上 ⌘W 是原生菜单加速键（`PredefinedMenuItem::close_window`），在 `NSApplication` 层就被处理，WKWebView 收不到 `keydown`；`PredefinedMenuItem` 改不了加速键，而改默认菜单会连累已验收的 ⌘C/⌘V。所以走「Rust 拦 `CloseRequested` + 前端上报是否有写信窗口」：`AppState.compose_open: Arc<AtomicBool>` + 新命令 `set_compose_open(open)`，前端在 `composes.length` 变化时上报；`on_window_event` 的 `CloseRequested` 里 `prevent_close()` 后若在写信就 `window.emit("compose-close-requested")`（App 收到后给最后一封写信窗口发 `closeSignal` 序号），否则维持原来的 `save_window_state + hide()`。前端另留 `keydown` 兜底（将来能收到键的场合）。
 
 **验证**：Prettier / TypeScript / `check:ui` 通过；Vitest **51 文件 / 420 项**全绿（新增 4 条：取消保留草稿与窗口、不保存删草稿并关窗、前端 ⌘W 先弹确认、`closeSignal` 变化先弹确认）；`cargo test` **340 passed / 1 ignored**；`npm run build` 成功。真实浏览器（开发预览 + 演示模式）实测：设置主题后点红点 × → 弹出 `role="alertdialog"`，内容为「保存这封邮件的草稿？/ 邮件已经自动保存到草稿箱。选择「不保存」会删除这份草稿。」+ 取消 / 不保存 / 保存三按钮，写信窗仍在且未被最小化；点「取消」后弹层消失、写信窗保留；再点红点 × →「不保存」后写信窗与弹层一起消失。⌘W 与三按钮的最终行为待用户在装机版人工验收（浏览器里 ⌘W 会被浏览器自己吃掉，测不了）。
+
+## 阅读窗改为 Tauri 原生独立窗口（2026-10-18）
+
+用户反馈：「邮件列表双击/右键弹出的阅读窗口，只能是主窗口里的浮动窗，拖不出主窗口，也不能放到别的 App 旁边，希望像 Foxmail 那样是真窗口。」
+
+**真因**：阅读窗此前是**主窗口 webview 里的 DOM 浮动框**（复用写信窗那套外壳，见 RULES 32–35）。它只能在主窗口范围内绘制、只能浮在主窗口内容之上，⌘W 也得靠「Rust 拦 CloseRequested + 前端上报」绕一圈才能关掉。
+
+**改法**（提交 `3a2414c`）：
+
+- Rust 新增 `AppState.mail_windows`（label → 邮件 id）+ `open_mail_window(app, state, id, subject) -> Result<String>`：同一封邮件只开一扇（重复调用 `unminimize + set_focus`），label 为 `mail-window-{seq}`，原生标题栏标题=邮件主题（空则「无主题」），`760x640 / min 480x360`，从主窗口位置阶梯错开；`mail_window_mail(state, label)` 供窗口反查自己是哪封。`on_window_event` 的 `Destroyed` 里清掉登记。
+- 新增 `src-tauri/capabilities/mail-window.json`（`windows: ["mail-window-*"]`）。
+- 前端 `src/main.tsx` 按窗口 label 分流：`mail-window-*` 渲染新增的 `MailReaderWindow`，其余渲染 `App`。阅读窗按自己的 label 反查邮件 id 再取正文；回复/全部回复/转发/导出原始邮件/保存附件/邮件链接一律 `emitTo("main", "mail-window-action")`，由主窗口的 `mailWindowActionRef` 复用既有实现（写信窗、保存框全项目只留一份）。
+- **不再调用原生淡入**：建窗瞬间 runloop 未就绪，动画不生效会让窗口停在 `alpha=0`（用户「窗口找不到」的根因，见 RULES 37）。
+- 拖动/缩放/最大化/最小化/⌘W 全交系统，天然只作用于当前窗口；删除 `src/components/mail-window.tsx(+test)`，`index.css` 的 `.mail-window*` 换成 `.mail-reader*`。
+
+**验证**：门禁 tsc / Prettier / `check:ui` / Vitest 52 文件 425 例 / `cargo test` 340 passed 1 ignored / `npm run build` 全绿。真机（装机版）核对：阅读窗是独立 `AXWindow`（标题=邮件主题）、正文与工具条正常、可拖到主窗口之外并部分出屏、⌘W 只关该窗（主窗 ⌘W 仍收进托盘）、回复/转发等跨窗事件链可用。用户验收回「验证ok」。
+
+## 写信窗改为 Tauri 原生独立窗口（2026-10-18）
+
+用户在上一条验收后接着问「写信的窗口 能这么移动么」，并拍板：**只做「能移出主窗口」的最小版**、最小化/最大化**交给系统**。
+
+**真因**：写信窗与阅读窗此前是同一种东西——主窗口 webview 里的 DOM 浮动框（自绘三灯 + 八角缩放 + 黄灯收成底部细条），拖不出主窗口，⌘W 要绕 Rust 拦截。
+
+**改法**：
+
+- Rust `AppState` 新增 `compose_windows`（label → `{draft, accounts}` 载荷）与 `compose_window_seq`，新命令四个：`open_compose_window(draft, accounts)`（按 `draft.id` 去重、label `compose-window-{seq}`、标题=主题或「写邮件」、`980x720 / min 640x420`、从主窗阶梯错开、不调淡入）、`compose_window_draft(label)`、`close_compose_window(label)`（**先摘登记再 `close()`**，否则会被自己的 `CloseRequested` 拦住，见 RULES 39）、`close_latest_compose_window()`（主窗 ⌘W 转给最后开的那扇，见 RULES 41）。`on_window_event` 新增 `compose-window-*` 分支：`CloseRequested` 时只要 label 还在登记里就 `prevent_close()` + `emit_to(label, "compose-window-close")`（**与主窗的 `compose-close-requested` 分开命名，否则回环，见 RULES 46**）；`Destroyed` 时摘登记并向主窗 `emit_to("main", "compose-windows-changed", infos)`。
+- 新增 `src-tauri/capabilities/compose-window.json`、`src/components/compose-window.tsx`（主题 + Toaster + `compose_window_draft` 反查 + `compose-window-close` → `closeSignal` + 回传 `compose-changed` / `compose-background`）、`src/components/compose-window.test.tsx`（5 例）。`main.tsx` 分流加 `compose-window-` 一支。
+- `ComposeDialog` 加 `nativeWindow` 开关：为真时不渲染三灯、8 个缩放手柄、拖动/双击标题、还原条，也不挂「点窗外自动最小化」「视口 resize 重夹几何」，只留表单业务 + `closeSignal` + Esc 关闭确认（RULES 38）。新增 `.compose-native` CSS 让内容铺满原生窗口。
+- `App.tsx`：`openCompose` 在 `native` 时改走 `invoke("open_compose_window")`；新增 `composeWindows`（`{label, draft, focused}[]`）+ 三个跨窗监听（`compose-windows-changed` / `compose-changed` → `refresh()` / `compose-background` → `setPendingSend`）；「是否在写信」的判断统一改成 `composing = !!draft || composeWindows.length > 0`（通知跳过、键盘守卫、内嵌回复 `editorOpen`、更新弹窗 `blocked`、清空草稿箱保护，见 RULES 40）；主窗 ⌘W 的上报改报 `composing`，并在主窗没有应用内写信窗时 `invoke("close_latest_compose_window")`。
+
+**范围说明**：演示模式与浏览器预览（`native` 为假）仍走应用内浮动窗，浮窗外壳与其 37 例测试保留；只有打包后的桌面端走原生窗口（RULES 42）。
+
+**续（同日，capability 白名单 + 「继续写信」入口）**：
+
+- **capability 一直是死文件**：`tauri.conf.json` 的 `app.security.capabilities` 是**白名单**，原来是 `["main"]`，所以本轮新增的 `capabilities/compose-window.json` 与上一轮的 `capabilities/mail-window.json` 都没被加载——文件在目录里、也生成进了 `gen/schemas/capabilities.json`，但运行期 ACL 里只有 `main`，写信窗里 `plugin:event|listen`（以及 `emit_to`、`dialog:allow-open`）全被拒，拖拽附件也因此报「拖拽附件未就绪」。修法：`"capabilities": ["main", "mail-window", "compose-window"]`（该文件里原本已有一行同名的旧键，重复 JSON key 会被 serde_json 取后值，见 RULES 45）。debug 构建（`npm run desktop`）里写信窗自报 `listen=ok` 即修复。
+- **事件名按方向拆开**：Rust→写信窗改用新常量 `COMPOSE_WINDOW_CLOSE = "compose-window-close"`，主窗仍收 `compose-close-requested`（同名 + 不带 options 的 `listen`（target Any）会回环，见 RULES 46）。
+- **写信窗不在前台时的「继续写信」悬浮条**：Rust 登记表升级为带 draft 快照，`compose-windows-changed` 载荷变成 `{label, draft, focused}[]`（新增 `compose_label_seq` / `compose_window_infos` / `emit_compose_windows`），写信窗 `Focused` 事件与 `save_draft`（新增 `window: tauri::Window` 注入参数，存库后写回登记表）都重发该事件；新增命令 `focus_compose_window(label)`（`unminimize + set_focus`）。`App.tsx` 用 `composeWindows.filter((item) => !item.focused)` 渲染旧的 `.compose-restore-bar` 样式（文案来自 `compose-dialog.tsx` 新导出的 `composeTitle()`），点击即把写信窗拉回前台，回到前台后悬浮条自动消失（见 RULES 47）。
+
+**验证**：`npx tsc --noEmit` 无输出、Prettier `format:check` 通过、`check:ui` 通过、Vitest **53 文件 / 430 例**全绿、`cargo test` **341 passed / 1 ignored**（新增 `compose_window_registry_reports_open_drafts_and_the_latest_window`）、`npm run build` 成功（仅既存 >500kB 分包警告）。真机 UI 验收**待用户执行**（实现完成时机器处于锁屏状态，UI 探针与截图全部失效，只能读到窗口几何，见 RULES 43）：核对项为「写邮件 → 出现 `compose-window-0` 原生窗口（980x720、alpha 1.0、独立 AXWindow）、能拖到主窗之外/屏外、⌘W 弹保存/不保存/取消且窗口不关、发送或存草稿后主窗列表刷新、清空草稿箱不动正在编辑的草稿、主窗 ⌘W 仍先去关写信窗、阅读窗回归不坏」。
+
+**本轮（ACL 修复 + 悬浮条）门禁**：`npx prettier` / `npx tsc --noEmit` / `npm run check:ui` / Vitest **53 文件 430 例** / `cargo test` **341 passed, 1 ignored** / `npm run build` 全绿。debug 构建实测：写信窗自报 `listen=ok`，跨窗回环消失（诊断 trace 从 1,036,123 行降到 3 行）。装机验收待重打包后进行，增补核对项：「写信窗红灯（有内容弹保存/不保存/取消、空白静默关窗）、主窗 ⌘W 转发到写信窗、写信窗切到后台时主窗底部出现「继续写信」/点击后窗口回到前台且悬浮条消失/最小化后点击可还原、拖拽附件不再报 ACL 错误、阅读窗回归不坏（其 capability 本轮才真正生效）」。未提交（用户验收后按中文 `feat:` 提交）。
