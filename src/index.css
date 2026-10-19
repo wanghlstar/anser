@@ -1857,14 +1857,18 @@ button.nav-collapse .collapse-chevron {
   font-size: 12px;
   color: var(--muted);
 }
-[data-slot="card"]:has(> .mail-signature-layout),
+/* Collapsible asChild 会把 Card 的 data-slot 覆盖为 collapsible，
+   这里必须按 collapsible 根节点匹配，否则紧凑间距整条失效。 */
+[data-slot="collapsible"]:has(> .mail-signature-layout),
 .settings-scope-card {
   padding-top: 12px;
   padding-bottom: 12px;
 }
-[data-slot="card"]:has(> .mail-signature-layout) [data-slot="card-header"],
+[data-slot="collapsible"]:has(> .mail-signature-layout)
+  [data-slot="card-header"],
 .settings-scope-card [data-slot="card-header"],
-[data-slot="card"]:has(> .mail-signature-layout) [data-slot="card-content"],
+[data-slot="collapsible"]:has(> .mail-signature-layout)
+  [data-slot="card-content"],
 .settings-scope-card [data-slot="card-content"] {
   padding-top: 12px;
   padding-bottom: 12px;
@@ -4378,4 +4382,137 @@ button.nav-collapse .collapse-chevron {
   text-align: center;
   font-size: 12px;
   font-variant-numeric: tabular-nums;
+}
+
+/* 设置页：沿用现有卡片，但左侧分类导航固定、右侧内容区独立滚动 */
+.settings-workspace {
+  --settings-card-gap: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--settings-card-gap);
+  max-width: 1440px;
+  overflow: hidden;
+}
+.settings-workspace > .panel-heading {
+  margin-bottom: 0;
+}
+.settings-layout-container {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+.settings-layout {
+  height: 100%;
+  min-height: 0;
+  gap: 32px;
+}
+.settings-navigation {
+  flex-shrink: 0;
+  width: 176px;
+  align-self: flex-start;
+  gap: 6px;
+}
+.settings-navigation [data-slot="tabs-trigger"] {
+  min-height: 42px;
+  gap: 10px;
+  padding-inline: 12px;
+}
+.settings-panels {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  scrollbar-gutter: stable;
+  padding: 2px 8px 24px 2px;
+}
+.settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--settings-card-gap);
+  max-width: 1040px;
+  margin-inline: auto;
+}
+.settings-section[hidden] {
+  display: none;
+}
+.settings-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+  min-height: 64px;
+}
+.settings-section-heading h2 {
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.3px;
+}
+.settings-section-heading p {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.7;
+}
+.settings-section .settings-accounts,
+.settings-section .storage-tools {
+  gap: var(--settings-card-gap);
+  margin: 0;
+}
+.settings-section .storage-card,
+.settings-section .info-strip {
+  margin: 0;
+}
+.settings-layout[data-orientation="horizontal"] {
+  gap: 24px;
+}
+.settings-layout[data-orientation="horizontal"] .settings-navigation {
+  width: 100%;
+  height: auto;
+  justify-content: flex-start;
+  overflow-x: auto;
+  flex-shrink: 0;
+}
+.settings-layout[data-orientation="horizontal"]
+  .settings-navigation
+  [data-slot="tabs-trigger"] {
+  flex: 0 0 auto;
+  min-height: 38px;
+}
+
+/* 验收反馈：签名区整体左移、问候语预览压扁、收件范围横向三列 */
+[data-slot="collapsible"]:has(> .mail-signature-layout)
+  [data-slot="card-header"],
+[data-slot="collapsible"]:has(> .mail-signature-layout)
+  [data-slot="card-content"] {
+  padding-inline: 14px;
+}
+.mail-signature-layout {
+  padding: 12px 14px;
+}
+.mail-signature-columns {
+  grid-template-columns: minmax(200px, 230px) minmax(0, 1fr);
+  gap: 12px;
+}
+.greeting-preview-frame {
+  padding-block: 4px;
+}
+[data-slot="collapsible"]:has(> .mail-signature-layout)
+  .greeting-preview-frame
+  [data-slot="card-content"] {
+  padding: 4px 12px;
+}
+.greeting-preview-frame .mail-html-container {
+  margin: 0;
+}
+.inbox-scope-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px 16px;
+  align-items: center;
+}
+@media (max-width: 700px) {
+  .inbox-scope-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }

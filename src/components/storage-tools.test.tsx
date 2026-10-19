@@ -2,7 +2,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { StorageTools } from "./storage-tools";
+import { ArchiveTools, StorageTools } from "./storage-tools";
 import { enterDemo, leaveDemo, call } from "../lib/api";
 import * as api from "../lib/api";
 import { toast } from "sonner";
@@ -156,7 +156,7 @@ it("does not register a development preview as a broken login startup item", asy
   );
   expect(host.textContent).toContain("请在正式应用中开启开机自启");
 });
-it("keeps the switch card and the dropdown card on top, then two flat cards", async () => {
+it("keeps only the switch card and the dropdown card in preferences", async () => {
   await act(async () => root.render(<StorageTools />));
   const titlesOf = (root: Element) =>
     [
@@ -166,17 +166,14 @@ it("keeps the switch card and the dropdown card on top, then two flat cards", as
     "通知与启动",
     "间隔与外观",
   ]);
-  // 「外观」并入右卡后，下面两张卡整行平铺，不再分两列
-  expect(
-    [...host.querySelectorAll(".storage-tools > .settings-tool")].map(
-      (card) => card.querySelector("h3")?.textContent,
-    ),
-  ).toEqual(["存档校验", "活动与诊断"]);
+  // 存档校验已独立到「本地存档」分类，活动与诊断改为后台任务五卡
+  expect(host.textContent).not.toContain("存档校验");
+  expect(host.textContent).not.toContain("活动与诊断");
   expect(host.querySelector(".storage-tools-bottom")).toBeNull();
   expect(host.querySelector(".storage-tools-col")).toBeNull();
 });
 it("groups archive integrity under the archive tiering card", async () => {
-  await act(async () => root.render(<StorageTools />));
+  await act(async () => root.render(<ArchiveTools />));
   const tier = [...host.querySelectorAll(".settings-tool")].find(
     (card) => card.querySelector("h3")?.textContent === "存档校验",
   );
@@ -188,7 +185,7 @@ it("groups archive integrity under the archive tiering card", async () => {
     [
       ...host.querySelectorAll(".settings-tool > h3, .settings-tool-title h3"),
     ].map((h3) => h3.textContent),
-  ).toEqual(["通知与启动", "间隔与外观", "存档校验", "活动与诊断"]);
+  ).toEqual(["存档校验"]);
   expect(host.querySelector("h4")).toBeNull();
 });
 it("offers the send countdown options in the interval card and saves them", async () => {
@@ -289,7 +286,7 @@ it("saves the Dock icon switch immediately without touching the scale selection"
   ).toBe("大");
 });
 it("shows the archived total and the recent tier log under the tiering card", async () => {
-  await act(async () => root.render(<StorageTools />));
+  await act(async () => root.render(<ArchiveTools />));
   expect(host.textContent).toContain("已归档 3 封");
   const trigger = [...host.querySelectorAll("button")].find((b) =>
     b.textContent?.includes("最近归档记录"),
@@ -318,7 +315,7 @@ it("reloads the tier log after archiving now", async () => {
   );
   const logCalls = vi.spyOn(api, "call");
   const success = vi.spyOn(toast, "success").mockReturnValue(0);
-  await act(async () => root.render(<StorageTools />));
+  await act(async () => root.render(<ArchiveTools />));
   const before = logCalls.mock.calls.filter(
     ([command]) => command === "archive_tier_log",
   ).length;
@@ -342,7 +339,7 @@ it("hints that the external drive is unplugged when no archive total exists", as
         ? ({ total: null, entries: [] } as T)
         : original<T>(command, args),
   );
-  await act(async () => root.render(<StorageTools />));
+  await act(async () => root.render(<ArchiveTools />));
   expect(host.textContent).toContain("外置盘未连接");
   await act(async () =>
     [...host.querySelectorAll("button")]
@@ -390,45 +387,4 @@ it("saves the check interval, send countdown and sidebar scale with one button",
       }),
     },
   ]);
-});
-it("keeps diagnostics collapsed as a whole and only recent activity collapsed inside", async () => {
-  await act(async () => root.render(<StorageTools />));
-  const card = [...host.querySelectorAll(".settings-tool")].find(
-    (c) => c.querySelector("h3")?.textContent === "活动与诊断",
-  )!;
-  // 整行平铺：直接挂在 storage-tools 下，不再是分列布局
-  expect(card.parentElement?.classList.contains("storage-tools")).toBe(true);
-  // 外层默认折叠：五个小项都不渲染
-  expect(card.querySelector(".diagnostics-body")).toBeNull();
-  expect(card.textContent).not.toContain("服务器状态同步");
-  await act(async () =>
-    (
-      [...card.querySelectorAll("button")].find((b) =>
-        b.textContent?.includes("活动与诊断"),
-      ) as HTMLButtonElement
-    ).click(),
-  );
-  const body = card.querySelector(".diagnostics-body")!;
-  // 只取五个诊断行本身；子面板里可能还有自己的折叠块
-  const rows = [...body.children].filter((el) =>
-    el.matches('[data-slot="collapsible"]'),
-  );
-  expect(rows).toHaveLength(5);
-  // 展开后「最近活动」仍折叠，其余四项默认展开
-  expect(
-    rows
-      .find((r) => r.textContent?.includes("最近活动"))
-      ?.getAttribute("data-state"),
-  ).toBe("closed");
-  for (const label of [
-    "服务器状态同步",
-    "服务器文件夹操作",
-    "完整保存任务",
-    "目录来源检查",
-  ])
-    expect(
-      rows
-        .find((r) => r.textContent?.includes(label))
-        ?.getAttribute("data-state"),
-    ).toBe("open");
 });

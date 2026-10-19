@@ -54,6 +54,7 @@ import {
   HardDriveDownload,
   ArrowLeft,
   ArrowRight,
+  Check,
   CheckCheck,
   ChevronDown,
   ChevronRight,
@@ -110,7 +111,8 @@ import {
   SidebarProvider,
   SidebarTrigger,
 } from "./components/ui/sidebar";
-import { Card } from "./components/ui/card";
+import { Card, CardContent } from "./components/ui/card";
+import { Separator } from "./components/ui/separator";
 import { Badge } from "./components/ui/badge";
 import { Checkbox } from "./components/ui/checkbox";
 import {
@@ -156,7 +158,13 @@ import { PendingSend } from "./components/pending-send";
 import { DraftsPanel } from "./components/drafts-panel";
 import { ContactsPanel } from "./components/contacts-panel";
 import { OutboxPanel } from "./components/outbox-panel";
-import { StorageTools } from "./components/storage-tools";
+import { ArchiveTools, StorageTools } from "./components/storage-tools";
+import { SettingsLayout } from "./components/settings-layout";
+import { TaskPanelHeader } from "./components/task-panel-header";
+import { ArchiveJobsPanel } from "./components/archive-jobs";
+import { ServerOperations } from "./components/server-operations";
+import { FolderHealthPanel } from "./components/folder-health";
+import { DirectoryOperationsPanel } from "./components/server-copy";
 import { DeleteArchiveDialog } from "./components/delete-archive-dialog";
 import { RemoveAccountDialog } from "./components/remove-account-dialog";
 import {
@@ -297,6 +305,7 @@ export default function App() {
     [folderErrors, setFolderErrors] = useState<Record<string, string>>({}),
     [serverFolders, setServerFolders] = useState<RemoteFolder[]>([]),
     [page, setPage] = useState("mail"),
+    [settingsSection, setSettingsSection] = useState("accounts"),
     [sidebarOpen, setSidebarOpen] = useState(true),
     [selected, setSelected] = useState(""),
     [readerExpanded, setReaderExpanded] = useState(false),
@@ -1611,7 +1620,15 @@ export default function App() {
       }>("queue_archives", { ids, conversations });
       toast.success(
         `已安排 ${result.queued} 封补存，${result.alreadySaved} 封已有完整存档，${result.blocked} 封需处理`,
-        { action: { label: "查看任务", onClick: () => setPage("storage") } },
+        {
+          action: {
+            label: "查看任务",
+            onClick: () => {
+              setSettingsSection("tasks");
+              setPage("settings");
+            },
+          },
+        },
       );
     } catch (e) {
       toast.error(String(e));
@@ -2587,267 +2604,353 @@ export default function App() {
             <RulesPanel
               data={data}
               onChange={() => void refresh()}
-              onShowTasks={() => setPage("settings")}
+              onShowTasks={() => {
+                setSettingsSection("tasks");
+                setPage("settings");
+              }}
             />
           ) : page === "settings" || page === "storage" ? (
-            <section className="workspace-panel">
+            <section className="workspace-panel settings-workspace">
               <div className="panel-heading">
                 <div>
-                  <span className="eyebrow">
-                    {page === "settings"
-                      ? "MAKE YOURSELF AT HOME"
-                      : "YOURS TO KEEP"}
-                  </span>
+                  <span className="eyebrow">MAKE YOURSELF AT HOME</span>
                   <div className="page-title-row">
                     <SidebarTrigger
                       title="切换侧边栏"
                       aria-label="切换侧边栏"
                     />
-                    <h1>
-                      {page === "settings" ? "设置与账号" : "本地存档管理"}
-                    </h1>
+                    <h1>设置与账号</h1>
                   </div>
-                  <p>
-                    {page === "settings"
-                      ? "连接你的邮箱，在一个地方照顾好工作与生活。"
-                      : "服务器的保留期限，不再决定你的邮件能保存多久。"}
-                  </p>
+                  <p>管理邮箱、本地存档与日常使用偏好。</p>
                 </div>
-                {page === "settings" && (
-                  <Button onClick={() => setAccountDialog(true)}>
-                    <Plus size={16} />
-                    添加账号
-                  </Button>
-                )}
               </div>
-              {page === "settings" && (
-                <>
-                  <div className="settings-accounts">
-                    {data.accounts.map((a, i) => (
-                      <article className="account-card" key={a.id}>
-                        <span className={`account-avatar color-${i % 4}`}>
-                          {a.name[0]}
+              <Separator />
+              <SettingsLayout
+                value={settingsSection}
+                onValueChange={setSettingsSection}
+                accountCount={data.accounts.length}
+                accounts={
+                  <>
+                    <div className="settings-section-heading">
+                      <div>
+                        <h2>邮箱账号</h2>
+                        <p>管理已连接的邮箱，以及各账号的收取与保存方式。</p>
+                      </div>
+                      <Button onClick={() => setAccountDialog(true)}>
+                        <Plus size={16} />
+                        添加账号
+                      </Button>
+                    </div>
+                    <div className="settings-accounts">
+                      {data.accounts.map((a, i) => (
+                        <article className="account-card" key={a.id}>
+                          <span className={`account-avatar color-${i % 4}`}>
+                            {a.name[0]}
+                          </span>
+                          <div>
+                            <h3>
+                              {a.name}
+                              <Badge variant="secondary">
+                                {a.protocol.toUpperCase()}
+                              </Badge>
+                            </h3>
+                            <p>
+                              {a.email}{" "}
+                              <Badge variant="outline">
+                                默认：
+                                {a.saveLocally === false
+                                  ? "在线阅读"
+                                  : "本地留存"}
+                              </Badge>
+                            </p>
+                            <small>
+                              {a.error
+                                ? friendlyError(a.error)
+                                : !a.enabled
+                                  ? "账号已暂停"
+                                  : a.lastSync
+                                    ? `最近收取：${new Date(a.lastSync).toLocaleString("zh-CN")}`
+                                    : "已连接，等待首次收取"}
+                            </small>
+                          </div>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                title="账号操作"
+                              >
+                                <MoreHorizontal size={18} />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuGroup>
+                                <DropdownMenuItem
+                                  onClick={() => {
+                                    setEditingAccount(a);
+                                    setAccountDialog(true);
+                                  }}
+                                >
+                                  编辑账号配置
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  onClick={() => {
+                                    setRetentionIntro(false);
+                                    setRetentionAccount(a);
+                                  }}
+                                >
+                                  {a.protocol === "imap"
+                                    ? "文件夹保存范围"
+                                    : "本地保存设置"}
+                                </DropdownMenuItem>
+                                {a.protocol === "imap" && (
+                                  <DropdownMenuItem
+                                    onClick={() => setMappingAccount(a)}
+                                  >
+                                    特殊文件夹
+                                  </DropdownMenuItem>
+                                )}
+                                <DropdownMenuItem
+                                  onClick={() =>
+                                    void call("account_action", {
+                                      id: a.id,
+                                      remove: false,
+                                    })
+                                      .then(refresh)
+                                      .catch((e) => toast.error(String(e)))
+                                  }
+                                >
+                                  {a.enabled ? "暂停收取" : "启用收取"}
+                                </DropdownMenuItem>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem
+                                  variant="destructive"
+                                  onClick={() => setRemovingAccount(a)}
+                                >
+                                  移除账号…
+                                </DropdownMenuItem>
+                              </DropdownMenuGroup>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </article>
+                      ))}
+                    </div>
+                    {!data.accounts.length && (
+                      <div className="panel-empty">
+                        <MailIcon size={36} />
+                        <h3>从连接一个邮箱开始</h3>
+                        <p>支持 Gmail、Outlook、QQ、网易与自定义服务器。</p>
+                      </div>
+                    )}
+                    {!!data.accounts.length && (
+                      <>
+                        <MailSignatures accounts={data.accounts} />
+                        <InboxScope
+                          accounts={data.accounts}
+                          folders={data.remoteFolders ?? []}
+                          onSaved={() => void refresh()}
+                        />
+                      </>
+                    )}
+                  </>
+                }
+                archive={
+                  <>
+                    <div className="settings-section-heading">
+                      <div>
+                        <h2>本地存档</h2>
+                        <p>查看完整邮件的保存情况，管理位置与备份。</p>
+                      </div>
+                    </div>
+                    <Card className="storage-card">
+                      <div className="storage-card-header">
+                        <span>
+                          <ShieldCheck size={25} />
                         </span>
                         <div>
-                          <h3>
-                            {a.name}
-                            <Badge variant="secondary">
-                              {a.protocol.toUpperCase()}
-                            </Badge>
-                          </h3>
+                          <h3>完整保存，独立留存</h3>
                           <p>
-                            {a.email}{" "}
-                            <Badge variant="outline">
-                              默认：
-                              {a.saveLocally === false
-                                ? "在线阅读"
-                                : "本地留存"}
-                            </Badge>
+                            开启本地保存的账号留存完整正文与附件，已有存档不会随账号移除。
                           </p>
-                          <small>
-                            {a.error
-                              ? friendlyError(a.error)
-                              : !a.enabled
-                                ? "账号已暂停"
-                                : a.lastSync
-                                  ? `最近收取：${new Date(a.lastSync).toLocaleString("zh-CN")}`
-                                  : "已连接，等待首次收取"}
-                          </small>
                         </div>
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              title="账号操作"
-                            >
-                              <MoreHorizontal size={18} />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuGroup>
-                              <DropdownMenuItem
-                                onClick={() => {
-                                  setEditingAccount(a);
-                                  setAccountDialog(true);
-                                }}
-                              >
-                                编辑账号配置
-                              </DropdownMenuItem>
-                              <DropdownMenuItem
-                                onClick={() => {
-                                  setRetentionIntro(false);
-                                  setRetentionAccount(a);
-                                }}
-                              >
-                                {a.protocol === "imap"
-                                  ? "文件夹保存范围"
-                                  : "本地保存设置"}
-                              </DropdownMenuItem>
-                              {a.protocol === "imap" && (
-                                <DropdownMenuItem
-                                  onClick={() => setMappingAccount(a)}
-                                >
-                                  特殊文件夹
-                                </DropdownMenuItem>
-                              )}
-                              <DropdownMenuItem
-                                onClick={() =>
-                                  void call("account_action", {
-                                    id: a.id,
-                                    remove: false,
-                                  })
-                                    .then(refresh)
-                                    .catch((e) => toast.error(String(e)))
-                                }
-                              >
-                                {a.enabled ? "暂停收取" : "启用收取"}
-                              </DropdownMenuItem>
-                              <DropdownMenuSeparator />
-                              <DropdownMenuItem
-                                variant="destructive"
-                                onClick={() => setRemovingAccount(a)}
-                              >
-                                移除账号…
-                              </DropdownMenuItem>
-                            </DropdownMenuGroup>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </article>
-                    ))}
-                  </div>
-                  {!data.accounts.length && (
-                    <div className="panel-empty">
-                      <MailIcon size={36} />
-                      <h3>从连接一个邮箱开始</h3>
-                      <p>支持 Gmail、Outlook、QQ、网易与自定义服务器。</p>
+                        <Badge variant="secondary">按账号设置</Badge>
+                      </div>
+                      <div className="storage-summary">
+                        <div className="storage-metrics">
+                          <div>
+                            <strong>
+                              {data.stats.saved}
+                              <small> 封</small>
+                            </strong>
+                            <span>完整本地存档</span>
+                          </div>
+                          <div>
+                            <strong>{formatSize(data.stats.bytes)}</strong>
+                            <span>原始邮件大小</span>
+                          </div>
+                        </div>
+                        <div className="storage-actions">
+                          <Button
+                            variant="outline"
+                            onClick={() => void backup()}
+                          >
+                            <ArrowDownToLine size={15} />
+                            备份存档
+                          </Button>
+                          <Button
+                            variant="outline"
+                            onClick={() => void backup(true)}
+                          >
+                            <Archive size={15} />
+                            恢复备份
+                          </Button>
+                          <DeleteArchiveDialog
+                            onDeleted={() => {
+                              setSelected("");
+                              setDetail(null);
+                              void refresh();
+                            }}
+                          />
+                          <Button
+                            variant="ghost"
+                            onClick={() =>
+                              void call("open_data_folder").catch((e) =>
+                                toast.error(String(e)),
+                              )
+                            }
+                          >
+                            <FolderOpen size={15} />
+                            打开存储位置
+                          </Button>
+                        </div>
+                      </div>
+                      <p className="storage-path">{data.dataDir}</p>
+                      <div className="storage-actions">
+                        <Button
+                          variant="outline"
+                          onClick={() => void changeDataDir()}
+                        >
+                          <FolderOpen size={15} />
+                          更改存档位置…
+                        </Button>
+                        {dataDir && dataDir.source !== "default" && (
+                          <Button
+                            variant="ghost"
+                            onClick={() => void resetDataDir()}
+                          >
+                            恢复默认位置
+                          </Button>
+                        )}
+                        {dataDir && dataDir.source === "file" && (
+                          <Button
+                            variant="outline"
+                            onClick={() => void restartNow()}
+                          >
+                            立即重启生效
+                          </Button>
+                        )}
+                      </div>
+                      {dataDir && (
+                        <p className="storage-hint">
+                          当前位置来源：
+                          {dataDir.source === "env"
+                            ? "环境变量"
+                            : dataDir.source === "file"
+                              ? "配置文件"
+                              : "默认位置"}
+                          {dataDir.overridden &&
+                            "（环境变量覆盖中，界面设置暂不生效）"}
+                          {dataDir.source === "file" &&
+                            "，更改后需重启邮件生效"}
+                        </p>
+                      )}
+                    </Card>
+                    <ArchiveTools />
+                  </>
+                }
+                preferences={
+                  <>
+                    <div className="settings-section-heading">
+                      <div>
+                        <h2>应用偏好</h2>
+                        <p>设置通知、收取节奏与界面显示。</p>
+                      </div>
                     </div>
-                  )}
-                  {!!data.accounts.length && (
-                    <>
-                      <MailSignatures accounts={data.accounts} />
-                      <InboxScope
-                        accounts={data.accounts}
-                        folders={data.remoteFolders ?? []}
-                        onSaved={() => void refresh()}
-                      />
-                    </>
-                  )}
-                </>
-              )}
-              <Card className="storage-card">
-                <div className="storage-card-header">
-                  <span>
-                    <ShieldCheck size={25} />
-                  </span>
-                  <div>
-                    <h3>完整保存，独立留存</h3>
-                    <p>
-                      开启本地保存的账号留存完整正文与附件，已有存档不会随账号移除。
-                    </p>
-                  </div>
-                  <Badge variant="secondary">按账号设置</Badge>
-                </div>
-                <div className="storage-summary">
-                  <div className="storage-metrics">
-                    <div>
-                      <strong>
-                        {data.stats.saved}
-                        <small> 封</small>
-                      </strong>
-                      <span>完整本地存档</span>
+                    <StorageTools />
+                  </>
+                }
+                tasks={
+                  <>
+                    <div className="settings-section-heading">
+                      <div>
+                        <h2>后台任务</h2>
+                        <p>
+                          查看保存与同步进度，遇到问题时在这里检查最近活动。
+                        </p>
+                      </div>
                     </div>
-                    <div>
-                      <strong>{formatSize(data.stats.bytes)}</strong>
-                      <span>原始邮件大小</span>
+                    <Collapsible asChild>
+                      <Card>
+                        <TaskPanelHeader
+                          title="最近活动"
+                          description="查看邮件收取、发送、规则执行及本地存档的最近记录。"
+                          onRefresh={() => refresh()}
+                        />
+                        <CollapsibleContent asChild>
+                          <CardContent className="activity-list">
+                            {data.logs.length ? (
+                              data.logs.slice(0, 15).map((l, i) => (
+                                <p key={i}>
+                                  <Check size={13} />
+                                  {l}
+                                </p>
+                              ))
+                            ) : (
+                              <p>连接邮箱后，这里会显示收取和规则执行记录。</p>
+                            )}
+                          </CardContent>
+                        </CollapsibleContent>
+                      </Card>
+                    </Collapsible>
+                    <ArchiveJobsPanel defaultCollapsed />
+                    <ServerOperations defaultCollapsed />
+                    <FolderHealthPanel defaultCollapsed />
+                    <DirectoryOperationsPanel defaultCollapsed />
+                  </>
+                }
+                about={
+                  <>
+                    <div className="settings-section-heading">
+                      <div>
+                        <h2>关于雁信</h2>
+                        <p>版本信息、应用更新与运行说明。</p>
+                      </div>
                     </div>
-                  </div>
-                  <div className="storage-actions">
-                    <Button variant="outline" onClick={() => void backup()}>
-                      <ArrowDownToLine size={15} />
-                      备份存档
-                    </Button>
-                    <Button variant="outline" onClick={() => void backup(true)}>
-                      <Archive size={15} />
-                      恢复备份
-                    </Button>
-                    <DeleteArchiveDialog
-                      onDeleted={() => {
-                        setSelected("");
-                        setDetail(null);
-                        void refresh();
-                      }}
-                    />
-                    <Button
-                      variant="ghost"
-                      onClick={() =>
-                        void call("open_data_folder").catch((e) =>
-                          toast.error(String(e)),
-                        )
-                      }
-                    >
-                      <FolderOpen size={15} />
-                      打开存储位置
-                    </Button>
-                  </div>
-                </div>
-                <p className="storage-path">{data.dataDir}</p>
-                <div className="storage-actions">
-                  <Button
-                    variant="outline"
-                    onClick={() => void changeDataDir()}
-                  >
-                    <FolderOpen size={15} />
-                    更改存档位置…
-                  </Button>
-                  {dataDir && dataDir.source !== "default" && (
-                    <Button variant="ghost" onClick={() => void resetDataDir()}>
-                      恢复默认位置
-                    </Button>
-                  )}
-                  {dataDir && dataDir.source === "file" && (
-                    <Button variant="outline" onClick={() => void restartNow()}>
-                      立即重启生效
-                    </Button>
-                  )}
-                </div>
-                {dataDir && (
-                  <p className="storage-hint">
-                    当前位置来源：
-                    {dataDir.source === "env"
-                      ? "环境变量"
-                      : dataDir.source === "file"
-                        ? "配置文件"
-                        : "默认位置"}
-                    {dataDir.overridden &&
-                      "（环境变量覆盖中，界面设置暂不生效）"}
-                    {dataDir.source === "file" && "，更改后需重启邮件生效"}
-                  </p>
-                )}
-              </Card>
-              <StorageTools logs={data.logs} onRefresh={() => void refresh()} />
-              <div className="info-strip">
-                <Info size={17} />
-                <span>
-                  关闭窗口后继续收取；退出
-                  App、睡眠或断网时暂停。邮件须在服务器删除前完整下载。
-                </span>
-              </div>
-              {page === "settings" && <UpdateSettings updates={updates} />}
-              <div className="dev-note">
-                <span>
-                  雁信 {updates.version} ·{" "}
-                  {updates.preview ? "开发预览" : "Alpha"}
-                </span>
-                <Button
-                  variant="ghost"
-                  className="text-link"
-                  onClick={demoMode}
-                >
-                  {demo ? "退出演示" : "体验示例邮箱"}
-                  <ArrowRight size={14} />
-                </Button>
-              </div>
+                    <UpdateSettings updates={updates} />
+                    <div className="info-strip">
+                      <Info size={17} />
+                      <span>
+                        关闭窗口后继续收取；退出
+                        App、睡眠或断网时暂停。邮件须在服务器删除前完整下载。
+                      </span>
+                    </div>
+                    <div className="dev-note">
+                      <span>
+                        雁信 {updates.version} ·{" "}
+                        {updates.preview ? "开发预览" : "Alpha"}
+                      </span>
+                      <Button
+                        variant="ghost"
+                        className="text-link"
+                        onClick={demoMode}
+                      >
+                        {demo ? "退出演示" : "体验示例邮箱"}
+                        <ArrowRight size={14} />
+                      </Button>
+                    </div>
+                  </>
+                }
+              />
             </section>
           ) : draftsFolderView ? (
             <DraftsPanel

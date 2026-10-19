@@ -52,7 +52,7 @@ export function AccountDialog({
   useEffect(() => {
     if (!open) return;
     setAccount(editing ? { ...editing } : null);
-    setAdvanced(!!editing);
+    setAdvanced(false);
     setPassword("");
     setSmtpPassword("");
     setReauthorize(false);
@@ -297,6 +297,8 @@ export function AccountDialog({
                 variant="ghost"
                 className="advanced-toggle"
                 type="button"
+                aria-expanded={advanced}
+                aria-controls="account-advanced-fields"
                 onClick={() => setAdvanced(!advanced)}
               >
                 服务器与高级配置
@@ -306,7 +308,7 @@ export function AccountDialog({
                 />
               </Button>
               {advanced && (
-                <div className="advanced-fields">
+                <div className="advanced-fields" id="account-advanced-fields">
                   <div className="field-row">
                     <div className="field">
                       <Label>收件协议</Label>

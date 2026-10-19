@@ -145,7 +145,7 @@ it("lists the account folders and defaults an unconfigured account to the inbox"
   await expand();
   expect(host.textContent).toContain("全部收件箱");
   expect(host.textContent).toContain(
-    "选择哪些文件夹计入全部/未读视图；未配置时只含收件箱",
+    "收件箱始终计入全部/未读视图；再选择要合并的其他文件夹",
   );
   // 只列当前账号的目录，按角色排序，displayName 为空时回退原始 IMAP 名。
   expect(
@@ -154,6 +154,9 @@ it("lists the account folders and defaults an unconfigured account to the inbox"
       .filter((text) => text !== "配置账号"),
   ).toEqual(["收件箱", "Archive", "工作"]);
   expect(checked("收件箱")).toBe("true");
+  expect((checkbox("收件箱") as HTMLButtonElement).disabled).toBe(true);
+  // 勾选区是横向网格（左对齐，CSS 里三列），不再纵向堆叠。
+  expect(host.querySelector(".inbox-scope-grid")).not.toBeNull();
   expect(checked("工作")).toBe("false");
   expect(button("恢复默认")).toBeUndefined();
 });
@@ -185,7 +188,8 @@ it("restores the default scope of a configured account", async () => {
   await selectAccount("个人邮箱");
   await expand();
   expect(checked("归档")).toBe("true");
-  expect(checked("收件箱")).toBe("false");
+  // 收件箱是必选项，旧配置里没有它也会补上。
+  expect(checked("收件箱")).toBe("true");
   await click(button("恢复默认"));
   expect(mocks.call).toHaveBeenCalledWith("save_inbox_folders", {
     accountId: "personal",
@@ -202,7 +206,9 @@ it("loads each account's own configuration when switching accounts", async () =>
   await expand();
   await selectAccount("个人邮箱");
   expect(checked("归档")).toBe("true");
-  await click(checkbox("收件箱"));
+  expect(checked("收件箱")).toBe("true");
+  // 取消「归档」，制造未保存改动；收件箱必选、不可取消。
+  await click(checkbox("归档"));
   await selectAccount("工作邮箱");
   expect(checked("收件箱")).toBe("true");
   expect(checked("工作")).toBe("false");
@@ -210,7 +216,7 @@ it("loads each account's own configuration when switching accounts", async () =>
   await selectAccount("个人邮箱");
   // 切回后重新加载已保存配置，此前的未保存勾选不残留。
   expect(checked("归档")).toBe("true");
-  expect(checked("收件箱")).toBe("false");
+  expect(checked("收件箱")).toBe("true");
 });
 it("switches accounts while collapsed and updates the status line", async () => {
   // 折叠态下账号选择器仍可见可切换。

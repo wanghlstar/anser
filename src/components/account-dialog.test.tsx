@@ -52,6 +52,26 @@ describe("per-account local retention", () => {
   it("defaults new accounts to full local retention", () => {
     expect(makeAccount("qq").saveLocally).toBe(true);
   });
+  it("keeps server and advanced settings collapsed when editing", async () => {
+    await act(async () =>
+      root.render(
+        <AccountDialog
+          open
+          editing={account}
+          onOpenChange={() => {}}
+          onDone={() => {}}
+        />,
+      ),
+    );
+    const toggle = [...document.querySelectorAll("button")].find((b) =>
+      b.textContent?.includes("服务器与高级配置"),
+    )!;
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(document.querySelector(".advanced-fields")).toBeNull();
+    await act(async () => toggle.click());
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(document.querySelector(".advanced-fields")).not.toBeNull();
+  });
   it("persists online reading on edit and restores the switch when reopened", async () => {
     const done = vi.fn();
     const render = async (editing: Account) => {

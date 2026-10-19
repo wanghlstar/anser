@@ -54,11 +54,15 @@ export function InboxScope({
     .filter((f) => f.accountId === accountId)
     .sort(compareFolders);
   const configured = accounts.find((a) => a.id === accountId)?.inboxFolders;
-  const scope = configured?.length
-    ? new Set(configured)
-    : new Set(accountFolders.filter(isInbox).map((f) => f.name));
-  const selected = picked && loadedAccountId === accountId ? picked : scope;
+  const inboxNames = accountFolders.filter(isInbox).map((f) => f.name);
+  const scope = configured?.length ? new Set(configured) : new Set(inboxNames);
+  // 收件箱是必选项：旧配置里没有它时也补上，且不允许取消。
+  const selected = new Set(
+    picked && loadedAccountId === accountId ? picked : scope,
+  );
+  for (const name of inboxNames) selected.add(name);
   function toggle(name: string, checked: boolean) {
+    if (inboxNames.includes(name)) return;
     const next = new Set(selected);
     if (checked) next.add(name);
     else next.delete(name);
@@ -98,7 +102,7 @@ export function InboxScope({
         <CardHeader>
           <CardTitle>全部收件箱</CardTitle>
           <CardDescription>
-            选择哪些文件夹计入全部/未读视图；未配置时只含收件箱。
+            收件箱始终计入全部/未读视图；再选择要合并的其他文件夹。
           </CardDescription>
           <CardAction className="flex flex-wrap items-center gap-3">
             <Field className="w-56 max-w-full">
@@ -152,13 +156,13 @@ export function InboxScope({
         <CollapsibleContent id="inbox-scope-content" asChild>
           <CardContent className="flex flex-col gap-4">
             {accountFolders.length ? (
-              <FieldGroup className="gap-2">
+              <FieldGroup className="inbox-scope-grid">
                 {accountFolders.map((folder, index) => (
                   <Field key={folder.name} orientation="horizontal">
                     <Checkbox
                       id={`inbox-scope-folder-${index}`}
-                      checked={selected.has(folder.name)}
-                      disabled={busy}
+                      checked={isInbox(folder) || selected.has(folder.name)}
+                      disabled={busy || isInbox(folder)}
                       onCheckedChange={(checked) =>
                         toggle(folder.name, checked === true)
                       }

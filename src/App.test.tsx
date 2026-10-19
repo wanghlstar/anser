@@ -1667,9 +1667,11 @@ describe("inbox scope of the aggregate badges", () => {
     expect(host.textContent).toContain("未配置：只含收件箱");
     await click(expandScope());
     await click(scopeCheckbox("工作"));
-    await click(scopeCheckbox("收件箱"));
+    // 收件箱必选、默认不可取消；勾选「工作」后范围 = 收件箱 + 工作。
+    expect(scopeCheckbox("收件箱")?.getAttribute("aria-checked")).toBe("true");
+    expect((scopeCheckbox("收件箱") as HTMLButtonElement).disabled).toBe(true);
     await click(scopeButton("保存范围"));
-    expect(counts(nav("全部收件箱"))).toEqual(["5", "7"]);
+    expect(counts(nav("全部收件箱"))).toEqual(["10", "8"]);
     // 保存成功后卡片自动折叠，恢复默认前需重新展开。
     await click(expandScope());
     await click(scopeButton("恢复默认"));
@@ -1677,30 +1679,64 @@ describe("inbox scope of the aggregate badges", () => {
   });
 });
 
-it("shows activity and diagnostics in a card and keeps the about card last", async () => {
+it("organizes settings into sections and keeps background tasks in collapsible cards", async () => {
   await click(nav("设置与账号"));
   const section = host.querySelector("section.workspace-panel")!;
-  const diagnostics = section.querySelector(".diagnostics-card")!;
-  expect(diagnostics).not.toBeNull();
-  expect(diagnostics.textContent).toContain("活动与诊断");
-  // 外层默认折叠：五个小项都不渲染
-  expect(diagnostics.textContent).not.toContain("最近活动");
-  await click(
-    [...diagnostics.querySelectorAll("button")].find((b) =>
-      b.textContent?.includes("活动与诊断"),
-    )!,
-  );
-  expect(diagnostics.textContent).toContain("最近活动");
-  expect(diagnostics.textContent).toContain("服务器文件夹操作");
-  // 除「最近活动」外的四项默认展开，「目录来源检查」的异常提示直接可见
-  expect(diagnostics.textContent).toContain("异常目录暂停同步");
-  expect(section.querySelector(".storage-card")).not.toBeNull();
-  expect(section.querySelector(".storage-tools")).not.toBeNull();
-  expect(section.querySelector(".info-strip")).not.toBeNull();
-  // 关于与更新仍在 dev-note 之前。
-  const about = section.querySelector(".settings-about")!;
-  expect(about.textContent).toContain("关于与更新");
-  expect(about.nextElementSibling?.className).toContain("dev-note");
+  const tab = (label: string) =>
+    [...section.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(
+      (b) => b.textContent?.trim() === label,
+    )!;
+  const visible = () =>
+    [...section.querySelectorAll<HTMLElement>(".settings-section")].find(
+      (panel) => !panel.hidden,
+    )!;
+  // 默认停在邮箱账号
+  expect(visible().textContent).toContain("管理已连接的邮箱");
+  expect(visible().querySelector(".settings-accounts")).not.toBeNull();
+  // 本地存档：完整保存卡 + 存档校验合在同一分类
+  await click(tab("本地存档"));
+  expect(visible().querySelector(".storage-card")).not.toBeNull();
+  expect(visible().textContent).toContain("存档校验");
+  // 应用偏好：沿用我们自己的两张紧凑卡
+  await click(tab("应用偏好"));
+  expect(visible().querySelector(".storage-tools")).not.toBeNull();
+  expect(visible().textContent).toContain("通知与启动");
+  expect(visible().textContent).toContain("间隔与外观");
+  // 后台任务：五张独立卡，默认全部折叠，最近活动在最前
+  await click(tab("后台任务"));
+  expect(
+    [...visible().querySelectorAll('[aria-label^="展开或收起"]')].map((b) =>
+      b.getAttribute("aria-label"),
+    ),
+  ).toEqual([
+    "展开或收起最近活动",
+    "展开或收起完整保存任务",
+    "展开或收起服务器状态同步",
+    "展开或收起目录来源检查",
+    "展开或收起服务器文件夹操作",
+  ]);
+  for (const title of [
+    "完整保存任务",
+    "服务器状态同步",
+    "服务器文件夹操作",
+    "目录来源检查",
+    "最近活动",
+  ]) {
+    const trigger = visible().querySelector(
+      `[aria-label="展开或收起${title}"]`,
+    )!;
+    expect(trigger).not.toBeNull();
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+  }
+  expect(visible().textContent).toContain("异常目录暂停同步");
+  await click(visible().querySelector('[aria-label="展开或收起目录来源检查"]'));
+  expect(visible().textContent).toContain("暂无隔离的目录");
+  // 关于雁信：更新、运行说明与版本信息
+  await click(tab("关于雁信"));
+  expect(visible().querySelector(".settings-about")).not.toBeNull();
+  expect(visible().textContent).toContain("关于与更新");
+  expect(visible().querySelector(".info-strip")).not.toBeNull();
+  expect(visible().querySelector(".dev-note")).not.toBeNull();
 });
 
 it("collapses the primary sidebar navigation group with the arrow", async () => {

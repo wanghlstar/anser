@@ -1,15 +1,11 @@
 import { SelectField, SelectOption } from "@/components/ui/select-field";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState } from "react";
 import {
-  Activity,
-  Check,
-  ChevronRight,
-  Clock3,
-  LoaderCircle,
   AlertCircle,
-  RefreshCw,
   Bell,
+  Clock3,
   HardDrive,
+  LoaderCircle,
 } from "lucide-react";
 import { call, isDemo, native } from "@/lib/api";
 import type {
@@ -28,43 +24,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "./ui/collapsible";
-import { ArchiveJobsPanel } from "./archive-jobs";
-import { ServerOperations } from "./server-operations";
-import { FolderHealthPanel } from "./folder-health";
-import { DirectoryOperationsPanel } from "./server-copy";
 import { toast } from "sonner";
-
-/// 「活动与诊断」框内的一行：折叠展开后才渲染内容，
-/// 内层子面板的卡片边框由 CSS 压平，只留外框。
-/// 「最近活动」默认折叠，其余四项默认展开（沿用 0.1.5/0.1.6 的形态）。
-function DiagnosticRow({
-  label,
-  action,
-  children,
-  defaultOpen = false,
-}: {
-  label: string;
-  action?: ReactNode;
-  children: ReactNode;
-  defaultOpen?: boolean;
-}) {
-  return (
-    <Collapsible className="diagnostic-row" defaultOpen={defaultOpen}>
-      <div className="diagnostic-row-head">
-        <CollapsibleTrigger asChild>
-          <Button variant="ghost" size="sm" className="diagnostic-trigger">
-            <ChevronRight size={14} className="collapse-chevron" />
-            {label}
-          </Button>
-        </CollapsibleTrigger>
-        {action}
-      </div>
-      <CollapsibleContent className="diagnostic-content">
-        {children}
-      </CollapsibleContent>
-    </Collapsible>
-  );
-}
 
 function formatArchivedAt(value: string): string {
   const at = new Date(value);
@@ -76,13 +36,7 @@ function formatArchivedAt(value: string): string {
 // 发送倒计时可选档位；0 = 立即发送
 const SEND_COUNTDOWN_OPTIONS = [0, 3, 5, 10];
 
-export function StorageTools({
-  logs = [],
-  onRefresh = () => {},
-}: {
-  logs?: string[];
-  onRefresh?: () => void;
-}) {
+export function StorageTools() {
   const [preferences, setPreferences] = useState<Preferences>({
       syncIntervalMinutes: 5,
       newMailNotifications: true,
@@ -91,19 +45,14 @@ export function StorageTools({
     [interval, setInterval] = useState(5),
     [countdown, setCountdown] = useState(5),
     [ready, setReady] = useState(false),
-    [scale, setScale] = useState(1),
-    [tier, setTier] = useState<TierInfo | null>(null),
-    [tierLog, setTierLog] = useState<TierLog | null>(null),
-    [tierBusy, setTierBusy] = useState(false);
+    [scale, setScale] = useState(1);
   const [desktop, setDesktop] = useState<{
     autoStart: boolean;
     autoStartAvailable: boolean;
   } | null>(null);
   const [desktopBusy, setDesktopBusy] = useState(false);
   const [saving, setSaving] = useState(false),
-    [notifBusy, setNotifBusy] = useState(false),
-    [checking, setChecking] = useState(false),
-    [health, setHealth] = useState<ArchiveHealth | null>(null);
+    [notifBusy, setNotifBusy] = useState(false);
   useEffect(() => {
     let live = true;
     void call<Preferences>("get_preferences")
@@ -123,10 +72,6 @@ export function StorageTools({
         }
       })
       .catch((e) => toast.error(String(e)));
-    void call<TierInfo>("archive_tier_info")
-      .then(setTier)
-      .catch(() => setTier(null));
-    void loadTierLog();
     void call<{ autoStart: boolean; autoStartAvailable: boolean }>(
       "desktop_settings",
     )
@@ -180,100 +125,6 @@ export function StorageTools({
       setSaving(false);
     }
   }
-  async function pickExternalDir() {
-    if (isDemo()) {
-      toast.error("演示模式不支持选择目录");
-      return;
-    }
-    try {
-      const { open } = await import("@tauri-apps/plugin-dialog");
-      const picked = await open({
-        directory: true,
-        multiple: false,
-        defaultPath: tier?.externalDir || undefined,
-        title: "选择外置存档目录",
-      });
-      if (!picked || typeof picked !== "string") return;
-      await call("save_archive_tier_settings", {
-        externalDir: picked,
-        retentionDays: tier?.retentionDays ?? 30,
-        indexEnabled: tier?.indexEnabled ?? true,
-      });
-      setTier(await call<TierInfo>("archive_tier_info"));
-      void loadTierLog();
-      toast.success("外置存档目录已设置");
-    } catch (e) {
-      toast.error(String(e));
-    }
-  }
-  async function saveTier(patch: Partial<TierInfo>) {
-    setTierBusy(true);
-    try {
-      await call("save_archive_tier_settings", {
-        externalDir: patch.externalDir ?? tier?.externalDir ?? "",
-        retentionDays: patch.retentionDays ?? tier?.retentionDays ?? 30,
-        indexEnabled: patch.indexEnabled ?? tier?.indexEnabled ?? true,
-      });
-      setTier(await call<TierInfo>("archive_tier_info"));
-      toast.success("已保存");
-    } catch (e) {
-      toast.error(String(e));
-    } finally {
-      setTierBusy(false);
-    }
-  }
-  async function normalizeNames() {
-    setTierBusy(true);
-    try {
-      const n = await call<number>("normalize_archive_paths");
-      setTier(await call<TierInfo>("archive_tier_info"));
-      void loadTierLog();
-      toast.success(n ? `已规范 ${n} 封存档目录名` : "目录名均已是最新");
-    } catch (e) {
-      toast.error(String(e));
-    } finally {
-      setTierBusy(false);
-    }
-  }
-  async function recallTier() {
-    setTierBusy(true);
-    try {
-      const n = await call<number>("tier_recall");
-      setTier(await call<TierInfo>("archive_tier_info"));
-      void loadTierLog();
-      toast.success(n ? `已取回 ${n} 封到本地` : "没有需要取回的存档");
-    } catch (e) {
-      toast.error(String(e));
-    } finally {
-      setTierBusy(false);
-    }
-  }
-  async function loadTierLog() {
-    try {
-      setTierLog(await call<TierLog>("archive_tier_log"));
-    } catch {
-      setTierLog(null);
-    }
-  }
-  async function runTierNow() {
-    setTierBusy(true);
-    try {
-      const report = await call<{ moved: number; errors: string[] }>(
-        "tier_archives_now",
-      );
-      setTier(await call<TierInfo>("archive_tier_info"));
-      void loadTierLog();
-      toast.success(
-        report.errors.length
-          ? `归档完成，${report.errors.length} 个失败`
-          : `已归档 ${report.moved} 封`,
-      );
-    } catch (e) {
-      toast.error(String(e));
-    } finally {
-      setTierBusy(false);
-    }
-  }
   async function notifications(
     key: "newMailNotifications" | "sendResultNotifications",
     enabled: boolean,
@@ -325,17 +176,6 @@ export function StorageTools({
       toast.error(String(e));
     } finally {
       setDesktopBusy(false);
-    }
-  }
-  async function check() {
-    setChecking(true);
-    setHealth(null);
-    try {
-      setHealth(await call<ArchiveHealth>("archive_health"));
-    } catch (e) {
-      toast.error(String(e));
-    } finally {
-      setChecking(false);
     }
   }
   return (
@@ -479,212 +319,278 @@ export function StorageTools({
           <p>侧栏字号：调整左侧栏文字大小，立即生效，无需重启。</p>
         </Card>
       </div>
-      <Card className="settings-tool">
-        <div className="settings-tool-title">
-          <HardDrive size={18} />
-          <h3>存档校验</h3>
-        </div>
-        <div className="settings-tool-row">
+    </div>
+  );
+}
+
+export function ArchiveTools() {
+  const [tier, setTier] = useState<TierInfo | null>(null),
+    [tierLog, setTierLog] = useState<TierLog | null>(null),
+    [tierBusy, setTierBusy] = useState(false),
+    [checking, setChecking] = useState(false),
+    [health, setHealth] = useState<ArchiveHealth | null>(null);
+  useEffect(() => {
+    void call<TierInfo>("archive_tier_info")
+      .then(setTier)
+      .catch(() => setTier(null));
+    void loadTierLog();
+  }, []);
+  async function pickExternalDir() {
+    if (isDemo()) {
+      toast.error("演示模式不支持选择目录");
+      return;
+    }
+    try {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const picked = await open({
+        directory: true,
+        multiple: false,
+        defaultPath: tier?.externalDir || undefined,
+        title: "选择外置存档目录",
+      });
+      if (!picked || typeof picked !== "string") return;
+      await call("save_archive_tier_settings", {
+        externalDir: picked,
+        retentionDays: tier?.retentionDays ?? 30,
+        indexEnabled: tier?.indexEnabled ?? true,
+      });
+      setTier(await call<TierInfo>("archive_tier_info"));
+      void loadTierLog();
+      toast.success("外置存档目录已设置");
+    } catch (e) {
+      toast.error(String(e));
+    }
+  }
+  async function saveTier(patch: Partial<TierInfo>) {
+    setTierBusy(true);
+    try {
+      await call("save_archive_tier_settings", {
+        externalDir: patch.externalDir ?? tier?.externalDir ?? "",
+        retentionDays: patch.retentionDays ?? tier?.retentionDays ?? 30,
+        indexEnabled: patch.indexEnabled ?? tier?.indexEnabled ?? true,
+      });
+      setTier(await call<TierInfo>("archive_tier_info"));
+      toast.success("已保存");
+    } catch (e) {
+      toast.error(String(e));
+    } finally {
+      setTierBusy(false);
+    }
+  }
+  async function normalizeNames() {
+    setTierBusy(true);
+    try {
+      const n = await call<number>("normalize_archive_paths");
+      setTier(await call<TierInfo>("archive_tier_info"));
+      void loadTierLog();
+      toast.success(n ? `已规范 ${n} 封存档目录名` : "目录名均已是最新");
+    } catch (e) {
+      toast.error(String(e));
+    } finally {
+      setTierBusy(false);
+    }
+  }
+  async function recallTier() {
+    setTierBusy(true);
+    try {
+      const n = await call<number>("tier_recall");
+      setTier(await call<TierInfo>("archive_tier_info"));
+      void loadTierLog();
+      toast.success(n ? `已取回 ${n} 封到本地` : "没有需要取回的存档");
+    } catch (e) {
+      toast.error(String(e));
+    } finally {
+      setTierBusy(false);
+    }
+  }
+  async function loadTierLog() {
+    try {
+      setTierLog(await call<TierLog>("archive_tier_log"));
+    } catch {
+      setTierLog(null);
+    }
+  }
+  async function runTierNow() {
+    setTierBusy(true);
+    try {
+      const report = await call<{ moved: number; errors: string[] }>(
+        "tier_archives_now",
+      );
+      setTier(await call<TierInfo>("archive_tier_info"));
+      void loadTierLog();
+      toast.success(
+        report.errors.length
+          ? `归档完成，${report.errors.length} 个失败`
+          : `已归档 ${report.moved} 封`,
+      );
+    } catch (e) {
+      toast.error(String(e));
+    } finally {
+      setTierBusy(false);
+    }
+  }
+  async function check() {
+    setChecking(true);
+    setHealth(null);
+    try {
+      setHealth(await call<ArchiveHealth>("archive_health"));
+    } catch (e) {
+      toast.error(String(e));
+    } finally {
+      setChecking(false);
+    }
+  }
+  return (
+    <Card className="settings-tool">
+      <div className="settings-tool-title">
+        <HardDrive size={18} />
+        <h3>存档校验</h3>
+      </div>
+      <div className="settings-tool-row">
+        <span className="text-sm">
+          {tier?.externalDir
+            ? `外置存档：${tier.externalDir}`
+            : "未设置外置存档目录"}
+        </span>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => void pickExternalDir()}
+        >
+          {tier?.externalDir ? "更改…" : "选择目录…"}
+        </Button>
+      </div>
+      <div className="settings-tool-row">
+        <div className="settings-tool-inline">
+          <SelectField
+            aria-label="本地保留天数"
+            value={tier?.retentionDays ?? 30}
+            disabled={tierBusy}
+            onValueChange={(v) => void saveTier({ retentionDays: Number(v) })}
+          >
+            {[7, 14, 30, 90].map((n) => (
+              <SelectOption key={n} value={n}>
+                保留 {n} 天
+              </SelectOption>
+            ))}
+            <SelectOption value={0}>永久保留本地</SelectOption>
+          </SelectField>
           <span className="text-sm">
-            {tier?.externalDir
-              ? `外置存档：${tier.externalDir}`
-              : "未设置外置存档目录"}
+            {tierLog?.total != null
+              ? `已归档 ${tierLog.total.toLocaleString("zh-CN")} 封`
+              : "外置盘未连接"}
           </span>
+        </div>
+        <div className="settings-tool-actions">
           <Button
             variant="outline"
             size="sm"
-            onClick={() => void pickExternalDir()}
+            disabled={tierBusy || !tier?.externalDir}
+            onClick={() => void runTierNow()}
           >
-            {tier?.externalDir ? "更改…" : "选择目录…"}
+            {tierBusy ? "处理中…" : "立即归档"}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={tierBusy || !tier?.externalDir}
+            onClick={() => void recallTier()}
+          >
+            取回本地
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={tierBusy}
+            onClick={() => void normalizeNames()}
+          >
+            规范目录
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={checking}
+            onClick={() => void check()}
+          >
+            {checking && <LoaderCircle className="animate-spin" size={14} />}
+            校验存档
           </Button>
         </div>
-        <div className="settings-tool-row">
-          <div className="settings-tool-inline">
-            <SelectField
-              aria-label="本地保留天数"
-              value={tier?.retentionDays ?? 30}
-              disabled={tierBusy}
-              onValueChange={(v) => void saveTier({ retentionDays: Number(v) })}
-            >
-              {[7, 14, 30, 90].map((n) => (
-                <SelectOption key={n} value={n}>
-                  保留 {n} 天
-                </SelectOption>
-              ))}
-              <SelectOption value={0}>永久保留本地</SelectOption>
-            </SelectField>
-            <span className="text-sm">
-              {tierLog?.total != null
-                ? `已归档 ${tierLog.total.toLocaleString("zh-CN")} 封`
-                : "外置盘未连接"}
-            </span>
-          </div>
-          <div className="settings-tool-actions">
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={tierBusy || !tier?.externalDir}
-              onClick={() => void runTierNow()}
-            >
-              {tierBusy ? "处理中…" : "立即归档"}
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={tierBusy || !tier?.externalDir}
-              onClick={() => void recallTier()}
-            >
-              取回本地
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={tierBusy}
-              onClick={() => void normalizeNames()}
-            >
-              规范目录
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={checking}
-              onClick={() => void check()}
-            >
-              {checking && <LoaderCircle className="animate-spin" size={14} />}
-              校验存档
-            </Button>
-          </div>
-        </div>
-        <p>
-          收到超过保留天数的邮件，其本地存档会自动移到外置目录（按邮件日期计算，
-          随盘生成 index.html
-          索引，任何机器用浏览器打开即可检索）。未带外置盘时：
-          账户与近期邮件不受影响，打开旧邮件会提示连接外置盘。「校验存档」会核对本地原件与附件的完整性。
-          {tier && tier.pending > 0 && (
-            <>
-              {" "}
-              当前待归档 <strong>{tier.pending}</strong> 封。
-            </>
-          )}
-          {tier?.externalDir &&
-            !tier.externalReachable &&
-            "（外置盘当前未连接）"}
-        </p>
-        <Separator className="settings-tool-divider" />
-        <div className="settings-tool-row">
-          <span className="text-sm">
-            {checking
-              ? "正在校验原始邮件与附件…"
-              : health
-                ? `校验 ${health.healthy} / ${health.checked} 封通过`
-                : "尚未校验"}
-          </span>
-          {health && (
-            <small className="settings-tool-note">
-              最近校验：
-              {new Date(health.checkedAt).toLocaleString("zh-CN", {
-                hour12: false,
-              })}
-            </small>
-          )}
-        </div>
-        {isDemo() && <p>演示模式仅展示示例校验结果。</p>}
-        {health && health.problems.length > 0 && (
-          <div className="archive-problems" role="alert">
-            <p>
-              <AlertCircle size={14} /> {health.problems.length}{" "}
-              封需要检查，可从备份恢复
-            </p>
-            {health.problems.map((p) => (
-              <div key={p.mailId}>
-                <strong>{p.subject || "（无主题）"}</strong>
-                <span>{p.error}</span>
-              </div>
-            ))}
-          </div>
+      </div>
+      <p>
+        收到超过保留天数的邮件，其本地存档会自动移到外置目录（按邮件日期计算，
+        随盘生成 index.html 索引，任何机器用浏览器打开即可检索）。未带外置盘时：
+        账户与近期邮件不受影响，打开旧邮件会提示连接外置盘。「校验存档」会核对本地原件与附件的完整性。
+        {tier && tier.pending > 0 && (
+          <>
+            {" "}
+            当前待归档 <strong>{tier.pending}</strong> 封。
+          </>
         )}
-        <Collapsible>
-          <CollapsibleTrigger asChild>
-            <Button variant="ghost" size="sm" className="tier-log-trigger">
-              最近归档记录（{tierLog?.entries.length ?? 0}）
-            </Button>
-          </CollapsibleTrigger>
-          <CollapsibleContent>
-            <div className="tier-log-list">
-              {tierLog && tierLog.entries.length > 0 ? (
-                tierLog.entries.map((entry, i) => (
-                  <div
-                    key={`${entry.archivedAt}-${entry.subject}-${i}`}
-                    className="tier-log-item"
-                  >
-                    <span className="tier-log-date">
-                      {formatArchivedAt(entry.archivedAt)}
-                    </span>
-                    <span className="tier-log-subject">
-                      {entry.subject || "（无主题）"}
-                    </span>
-                    <span className="tier-log-sender">{entry.sender}</span>
-                  </div>
-                ))
-              ) : (
-                <p>暂无归档记录</p>
-              )}
+        {tier?.externalDir && !tier.externalReachable && "（外置盘当前未连接）"}
+      </p>
+      <Separator className="settings-tool-divider" />
+      <div className="settings-tool-row">
+        <span className="text-sm">
+          {checking
+            ? "正在校验原始邮件与附件…"
+            : health
+              ? `校验 ${health.healthy} / ${health.checked} 封通过`
+              : "尚未校验"}
+        </span>
+        {health && (
+          <small className="settings-tool-note">
+            最近校验：
+            {new Date(health.checkedAt).toLocaleString("zh-CN", {
+              hour12: false,
+            })}
+          </small>
+        )}
+      </div>
+      {isDemo() && <p>演示模式仅展示示例校验结果。</p>}
+      {health && health.problems.length > 0 && (
+        <div className="archive-problems" role="alert">
+          <p>
+            <AlertCircle size={14} /> {health.problems.length}{" "}
+            封需要检查，可从备份恢复
+          </p>
+          {health.problems.map((p) => (
+            <div key={p.mailId}>
+              <strong>{p.subject || "（无主题）"}</strong>
+              <span>{p.error}</span>
             </div>
-          </CollapsibleContent>
-        </Collapsible>
-      </Card>
-      {/* 外层默认折叠：五个诊断行都不渲染；展开后「最近活动」仍折叠，其余四项默认展开 */}
-      <Card className="settings-tool diagnostics-card">
-        <Collapsible className="diagnostics-collapsible" defaultOpen={false}>
-          <div className="settings-tool-title">
-            <CollapsibleTrigger asChild>
-              <Button variant="ghost" size="sm" className="diagnostics-trigger">
-                <Activity size={18} />
-                <h3>活动与诊断</h3>
-                <ChevronRight size={14} className="collapse-chevron" />
-              </Button>
-            </CollapsibleTrigger>
-          </div>
-          <CollapsibleContent>
-            <div className="diagnostics-body">
-              <DiagnosticRow
-                label="最近活动"
-                action={
-                  <Button variant="ghost" size="sm" onClick={onRefresh}>
-                    <RefreshCw size={14} />
-                    刷新
-                  </Button>
-                }
-              >
-                <div className="activity-list">
-                  {logs.length ? (
-                    logs.slice(0, 15).map((l, i) => (
-                      <p key={i}>
-                        <Check size={13} />
-                        {l}
-                      </p>
-                    ))
-                  ) : (
-                    <p>连接邮箱后，这里会显示收取和规则执行记录。</p>
-                  )}
+          ))}
+        </div>
+      )}
+      <Collapsible>
+        <CollapsibleTrigger asChild>
+          <Button variant="ghost" size="sm" className="tier-log-trigger">
+            最近归档记录（{tierLog?.entries.length ?? 0}）
+          </Button>
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          <div className="tier-log-list">
+            {tierLog && tierLog.entries.length > 0 ? (
+              tierLog.entries.map((entry, i) => (
+                <div
+                  key={`${entry.archivedAt}-${entry.subject}-${i}`}
+                  className="tier-log-item"
+                >
+                  <span className="tier-log-date">
+                    {formatArchivedAt(entry.archivedAt)}
+                  </span>
+                  <span className="tier-log-subject">
+                    {entry.subject || "（无主题）"}
+                  </span>
+                  <span className="tier-log-sender">{entry.sender}</span>
                 </div>
-              </DiagnosticRow>
-              <DiagnosticRow label="服务器状态同步" defaultOpen>
-                <ServerOperations />
-              </DiagnosticRow>
-              <DiagnosticRow label="服务器文件夹操作" defaultOpen>
-                <DirectoryOperationsPanel />
-              </DiagnosticRow>
-              <DiagnosticRow label="完整保存任务" defaultOpen>
-                <ArchiveJobsPanel />
-              </DiagnosticRow>
-              <DiagnosticRow label="目录来源检查" defaultOpen>
-                <FolderHealthPanel />
-              </DiagnosticRow>
-            </div>
-          </CollapsibleContent>
-        </Collapsible>
-      </Card>
-    </div>
+              ))
+            ) : (
+              <p>暂无归档记录</p>
+            )}
+          </div>
+        </CollapsibleContent>
+      </Collapsible>
+    </Card>
   );
 }

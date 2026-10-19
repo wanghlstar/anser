@@ -305,7 +305,7 @@ export function MailSignatures({ accounts }: { accounts: Account[] }) {
                         问候语预览
                       </FieldLabel>
                       <Card
-                        className="min-w-0"
+                        className="greeting-preview-frame min-w-0"
                         role="region"
                         aria-labelledby="greeting-preview-label"
                       >
