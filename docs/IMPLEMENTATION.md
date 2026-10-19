@@ -750,3 +750,32 @@ GitHub CI 和两架构发布工作流已推送；首次 Checks 已成功，Relea
 - **提交规范化**：原检查点提交 `0672f93`（把「设置页重排源码 + 上游评估文档」混在一笔、消息为 `checkpoint:`）在**未推送**状态下拆为两笔中文规范提交——`6afe0d1`（`feat:` 设置页紧凑重排 + 诊断外层折叠，仅 `src/components/storage-tools.*`、`src/App.test.tsx`、`src/index.css`）+ `689d183`（`docs:` 上游 0.1.20/0.1.21 移植评估、全量版本比较脚本、规则与交接）。拆分用 `git rebase -i` 停在 `0672f93` 后 `reset --mixed` 重提，拆分前后工作树一致（`git diff --stat backup-before-split HEAD` 为空）。
 - **回滚点不变**：tag `checkpoint-2026-10-19-settings-compact` 仍指向 `0672f93`（拆分后该提交只由 tag 引用）；`git revert 0672f93` / `git reset --hard 2d357d4` 照旧可用。
 - 分支 `feat/port-upstream-a` 领先 `origin/feat/port-upstream-a`（`2d357d4`）**3 笔**（`6afe0d1` / `689d183` / `0b39e33`），**未推送**；备份分支 `backup-before-split` 指向拆分前的 `ac8a57a`。
+
+## B 线批次 0.5：补齐许可证家族（2026-10-19）
+
+用户选定 B 线（同步上游）**从批次 0.5 起**，并对「许可证怎么补」选择 **「原样照搬上游」**（保留上游 `Anser contributors` 版权行，零改写）。先做只读缺口核对，再落地。
+
+**缺口核对结论**（`npm run upstream:matrix` 的「本地缺」清单里，本批只有许可证家族是真的缺）：
+
+- **真缺**：`LICENSE`、`NOTICE`、`docs/LICENSING.md`、`docs/licenses/shadcn-ui-MIT.txt`、`package.json` 的 `"license"`、`src-tauri/Cargo.toml` 的 `license-file`。
+- **已有、逐字节相同**：`THIRD_PARTY_NOTICES.md`（290 行，与上游 `331e05c` diff 为空）、`src-tauri/vendor/imap-proto/{LICENSE-APACHE,LICENSE-MIT,NOM_LICENSE}`。
+- **第 53 条说的「疑等价误报」确认是等价**，不是缺失：`archive_location.rs`(452)/`archive-location.tsx`/`archive-integrity.tsx` 对应我们 `lib.rs` 的 `archive_tier_info`/`save_archive_tier_settings`/`normalize_archive_paths`/`tier_recall`/`archive_tier_log`/`archive_health` + `store.rs` 的 `archive_roots`/`refresh_archive_roots` + `storage-tools.tsx` 的「外置存档目录」「存档校验」；`mail-filters.tsx`(137) 对应我们 `App.tsx:2990-3090` 的筛选 DropdownMenu + 独立 `mail-date-filter.tsx`。
+- **`rule_runs.rs`(1159→1299) / `rule-runs.tsx`(235) 真缺，但归批次 3**：上游在 v0.1.19 与 v0.1.21 都同时有 `rule_operations.rs`(432→433) 与 `rule_runs.rs`，两者是不同概念——`rule_runs.rs` 是「一条规则最多 8 个顺序动作 + 崩溃后续跑」的引擎（`rule_runs` 表、`RuleRun.observed` 状态快照、启动时把 `running` 重置为 `queued`），我们只有单动作的 `rule_operations.rs`（**695 行**，已自我分叉加入 `inbox_scope`/`trusted_sources`）与 `rule-executions.tsx`。`rules.rs` 上游 690 / 本地 176 是唯一「核心功能真偏薄」，一并留给批次 3。
+
+**落地改动**（共 10 处）：
+
+1. 新增 4 个上游原文文件（sha256 与上游一致）：`LICENSE`(3951 字节)、`NOTICE`(1435)、`docs/LICENSING.md`(2680)、`docs/licenses/shadcn-ui-MIT.txt`(1063)。
+2. `package.json` 加 `"license": "SEE LICENSE IN LICENSE"`；`src-tauri/Cargo.toml` 加 `license-file = "../LICENSE"`（`cargo metadata` 读出 `license_file: ../LICENSE`）。
+3. `src-tauri/tauri.conf.json` 的 `bundle` 段补上游那 4 条 `resources` 映射，使许可文件**随 App 交付**（缺口核对时发现我们**没有** `resources` 键，只补仓库文件等于没发给用户）。
+4. `README.md` 补上游的 `## 使用许可` 段（个人自用免费／企业统一部署与商业集成需授权／指向 `LICENSE` 与 `docs/LICENSING.md`）。
+5. `docs/DEVELOPMENT_STATUS.md` 删掉已失效的「项目开源许可证：仓库根目录未发现项目 LICENSE，vendor 许可证不等于项目许可证」条目。
+
+**验证**
+
+- 新增 4 文件 vs 上游 `331e05c:...`：`diff` 全 0 行、sha256 全同。
+- 门禁：`npm run format:check`、`npm run check:ui`、`npx vitest run`（53 文件 / **432 例**）、`npm run test:desktop`（18 例）、`npm run build`、`cargo test --manifest-path src-tauri/Cargo.toml`（**343 passed / 1 ignored**）全绿。
+- **打包验证**：`npx tauri build --bundles app --config '{"bundle":{"createUpdaterArtifacts":false}}'`（用 `--config` 关掉更新产物，避免覆盖 11:32 那对 `雁信.app.tar.gz`/`.sig`），产出 `src-tauri/target/release/bundle/macos/雁信.app`（30.92 MiB）。改前的包 `Contents/Resources/` **只有 `icon.icns`**，改后为 `LICENSE`/`NOTICE`/`LICENSING.md`/`licenses/shadcn-ui-MIT.txt`，三方 sha256（仓库原文 = 包内副本 = 上游原文）全部一致。`NOTICE` 里写的 `licenses/shadcn-ui-MIT.txt in App resources` 由此成立。
+- 注意：本地 `雁信.app.tar.gz`/`.sig` 仍是 11:32 的旧包（未含许可文件）；`/Applications/雁信.app` 装机版同为旧包，需重装才含许可文件。
+- **待用户验收，未提交。**
+
+**其他已确认事实**：上游 `LICENSE` 从 v0.1.19 到 v0.1.21 未变（blob `7d806ab7…`）；上游 `package.json` 为 `anser` 0.1.21、我们为 `yanxin` 0.2.0；上游 `Cargo.toml` tauri features 含 `devtools`，我们没有（不动）。
