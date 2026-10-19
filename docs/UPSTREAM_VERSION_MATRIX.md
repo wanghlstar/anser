@@ -1,6 +1,8 @@
 # 上游全量版本比较（脚本生成物）
 
-由 `node scripts/upstream-matrix.mjs` 生成，逐上游版本对照本仓库 HEAD；启发式判定，仅用于找候选，逐项结论仍需人工核对。
+由 `node scripts/upstream-matrix.mjs --local=checkpoint-2026-10-19-settings-compact` 生成，逐上游版本对照本地 ref；启发式判定，仅用于找候选，逐项结论仍需人工核对。
+
+- 本地基准 ref：`checkpoint-2026-10-19-settings-compact`
 
 - 上游版本数：22（v0.1.0 → v0.1.21）
 - 对照范围：排除上游 docs/.github/Casks/锁文件
@@ -220,3 +222,131 @@
 - 本地缺：src/components/settings-layout.tsx (79)
 - 本地缺：src/components/task-panel-header.test.tsx (163)
 - 本地缺：src/components/task-panel-header.tsx (88)
+
+## 双树比对：`checkpoint-2026-10-19-settings-compact` ↔ `upstream/tags/v0.1.21`
+
+`git diff --name-status <本地 ref> <上游 tag>`：两棵树直接比，不依赖共同祖先。「上游独有」= 待移植候选；「本地独有」= 我们自研；「改名候选」= 可解释部分「本地缺」误报。
+
+- 上游独有 **52** 个（其他 13、Rust 9、前端 30）
+- 本地独有 **29** 个（其他 1、Rust 2、前端 26）
+- 双方都有但内容不同 **116** 个
+- 疑似改名对应 **0** 组
+
+### 上游独有（待移植候选）
+
+- LICENSE
+- NOTICE
+- preview/index.html
+- scripts/check-preview.mjs
+- scripts/homebrew.mjs
+- scripts/homebrew.node-test.mjs
+- scripts/mac-ci-signing.mjs
+- scripts/mac-print.node-test.mjs
+- scripts/mac-signing-secrets.mjs
+- scripts/release-draft.mjs
+- scripts/release-draft.node-test.mjs
+- scripts/signing/anser-codesign.crt
+- scripts/signing/identity.json
+- src-tauri/examples/keychain-migrate.rs
+- src-tauri/src/archive_location.rs
+- src-tauri/src/credentials.rs
+- src-tauri/src/mail_images.rs
+- src-tauri/src/mail_styles.rs
+- src-tauri/src/proxy.rs
+- src-tauri/src/rule_runs.rs
+- src-tauri/src/translation.rs
+- src-tauri/src/update_history.rs
+- src/components/archive-integrity.tsx
+- src/components/archive-location.test.tsx
+- src/components/archive-location.tsx
+- src/components/compose-forward-files.test.tsx
+- src/components/mail-filters.tsx
+- src/components/mail-translation-settings.test.tsx
+- src/components/mail-translation-settings.tsx
+- src/components/network-proxy-settings.tsx
+- src/components/remote-folder-list.test.tsx
+- src/components/rule-runs.test.tsx
+- src/components/rule-runs.tsx
+- src/components/settings-layout.tsx
+- src/components/task-panel-header.test.tsx
+- src/components/task-panel-header.tsx
+- src/components/translatable-mail-body.test.tsx
+- src/components/translatable-mail-body.tsx
+- src/lib/demo-outbox.test.ts
+- src/lib/demo-storage.ts
+- src/lib/mail-image-decorations.test.ts
+- src/lib/mail-image-resources.ts
+- src/lib/mail-translation.test.ts
+- src/lib/mail-translation.ts
+- src/lib/preview-api.test.ts
+- src/lib/preview-bridge.ts
+- src/lib/release-history.ts
+- src/lib/release-notes.ts
+- src/lib/rich-body.test.ts
+- src/lib/rich-image-size.test.ts
+- src/lib/translation-activity.test.ts
+- src/preview-main.tsx
+
+### 本地独有（自研 / 上游没走的路）
+
+- scripts/upstream-matrix.mjs
+- src-tauri/capabilities/compose-window.json
+- src-tauri/capabilities/mail-window.json
+- src/components/compose-attachments.test.tsx
+- src/components/compose-attachments.tsx
+- src/components/compose-window.test.tsx
+- src/components/compose-window.tsx
+- src/components/drafts-panel.tsx
+- src/components/inbox-scope.test.tsx
+- src/components/inbox-scope.tsx
+- src/components/mail-reader-window.test.tsx
+- src/components/mail-reader-window.tsx
+- src/components/move-to-folder-menu.tsx
+- src/components/pending-send.test.tsx
+- src/components/pending-send.tsx
+- src/components/remove-account-dialog.test.tsx
+- src/components/remove-account-dialog.tsx
+- src/components/rich-image-zoom.tsx
+- src/components/rules-dialog-layout.test.ts
+- src/components/scroll-pane.test.tsx
+- src/components/scroll-pane.tsx
+- src/components/ui/button-group.tsx
+- src/lib/fonts.ts
+- src/lib/greeting-paragraph.test.ts
+- src/lib/greeting-paragraph.ts
+- src/lib/indented-paragraph.test.ts
+- src/lib/indented-paragraph.ts
+- src/lib/mail-menu.test.ts
+- src/lib/mail-menu.ts
+
+### 改名候选
+
+### 双方不同：行数差最大的 25 个
+
+| 文件                                         | 上游行数 | 本地行数 | 差   |
+| -------------------------------------------- | -------- | -------- | ---- |
+| src-tauri/src/lib.rs                         | 1674     | 3085     | 1411 |
+| src-tauri/src/tests.rs                       | 2702     | 4093     | 1391 |
+| src/App.tsx                                  | 3088     | 4435     | 1347 |
+| src-tauri/src/store.rs                       | 1219     | 2112     | 893  |
+| src/index.css                                | 3775     | 4381     | 606  |
+| src/components/compose-dialog.tsx            | 1117     | 1718     | 601  |
+| src/components/compose-dialog.test.tsx       | 450      | 1022     | 572  |
+| src-tauri/src/rules.rs                       | 690      | 176      | 514  |
+| src/components/storage-tools.tsx             | 209      | 690      | 481  |
+| src/components/storage-tools.test.tsx        | 118      | 434      | 316  |
+| src/lib/compose-format.test.ts               | 201      | 477      | 276  |
+| src/components/rich-editor.test.tsx          | 248      | 517      | 269  |
+| src-tauri/src/rule_operations.rs             | 433      | 695      | 262  |
+| src/App.test.tsx                             | 2518     | 2270     | 248  |
+| src/components/app-updates.test.tsx          | 395      | 166      | 229  |
+| src/components/app-updates.tsx               | 581      | 364      | 217  |
+| src/components/rules-panel.test.tsx          | 430      | 224      | 206  |
+| src/components/mail-attachments.tsx          | 119      | 318      | 199  |
+| src/components/mail-content.tsx              | 213      | 408      | 195  |
+| src-tauri/src/paging.rs                      | 1100     | 919      | 181  |
+| src/components/mail-content-loading.test.tsx | 262      | 90       | 172  |
+| src/components/mail-attachments.test.tsx     | 107      | 269      | 162  |
+| src-tauri/src/archive.rs                     | 515      | 667      | 152  |
+| src-tauri/src/productivity.rs                | 271      | 399      | 128  |
+| src/components/mail-signatures.test.tsx      | 109      | 229      | 120  |

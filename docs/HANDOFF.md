@@ -11,19 +11,19 @@
 
 **当前状态（两件事）**
 
-① 工作树里有一轮未提交的改动——「设置与账号」页重排。第一版装机后用户反馈了三条：①「活动与诊断」要整卡默认折叠、内层只折叠「最近活动」、其余四项展开 ②「已归档 N 封」并进「保留 N 天」那一行 ③顶卡恢复紧凑（四个开关横排一行、三个下拉同行）并把「侧边栏字号」改「侧栏字号」。三条都已改完，并在开发预览里量过几何（数据见 docs/IMPLEMENTATION.md 的「同日修订」小节），**等用户再次验收**。仍在工作树里未提交，要整轮丢弃随时 `git checkout -- <文件>`。
+① 刚提交的「设置与账号」页重排（检查点提交 `0672f93` + tag `checkpoint-2026-10-19-settings-compact`，**已装机，等你验收**）。第一版装机后用户反馈了三条：①「活动与诊断」要整卡默认折叠、内层只折叠「最近活动」、其余四项展开 ②「已归档 N 封」并进「保留 N 天」那一行 ③顶卡恢复紧凑（四个开关横排一行、三个下拉同行）并把「侧边栏字号」改「侧栏字号」。三条都已改完，开发预览里量过几何（数据见 docs/IMPLEMENTATION.md 的「同日修订」小节），`/Applications/雁信.app` 里就是这一版（0.2.0，PID 61892 起于 2026-10-19 11:32）。要整轮退回：`git reset --hard 2d357d4` 或 `git revert 0672f93`。
 
 ② 刚做完**上游同步与移植评估**（只改文档，没动业务代码）。结论：上游自我们移植基线（上游 v0.1.19 = 037d7aa）以来只有两个实质提交 —— `3d48afc`（0.1.20：邮件工作流 + 规则条件/状态快照 + 未读口径 + Dock 角标）与 `1229985`（0.1.21：设置五分类导航 + 后台任务卡片反馈）；另发现**旧清单缺口**：上游 0.1.15–0.1.18 从未评估（含**大模型逐段双语翻译**）。逐项可合并性、建议批次、待决策项全在 **docs/UPSTREAM_REVIEW_0_1_20_0_1_21.md**。
 
-开工先做五件事，然后向我确认**两条工作线**怎么排：**A 同步上游**（按批次把上游 0.1.20/0.1.21 与 0.1.15–0.1.18 缺口的可合并项搬过来）、**B 个性化实现**（我们自己要的界面/行为改动与自研功能，需求由我描述，**不要自行发明需求**）。
+**优先级已定：先定本地界面，再同步上游。** 开工先做五件事，然后向我确认两条工作线怎么排：**A 本地界面 / 个性化实现**（我们自己要的界面与行为改动、自研功能，需求由我描述，**不要自行发明需求**）、**B 同步上游**（按批次搬上游 0.1.20/0.1.21 与 0.1.15–0.1.18 缺口的可合并项，排在 A 之后）。
 
 1. 读 AGENTS.md（项目长期约定：UI 铁律、真实收发范围、上游 cherry-pick 策略）与 docs/HANDOFF.md（交给你的这份）。
-2. 读 docs/IMPLEMENTATION.md 最后三节（「设置页重排」「同日修订」「上游同步与 0.1.20/0.1.21 移植评估」）+ docs/RULES_PORT_UPSTREAM.md 的关键发现 37–52（原生窗、ACL 白名单、跨窗事件、主窗铺满、设置页排布、tag/清单两个坑）。
-3. 读 docs/UPSTREAM_REVIEW_0_1_20_0_1_21.md（上游评估：逐项对照表、批次 0–7、4 个待决策项）与 docs/UPSTREAM_VERSION_MATRIX.md（全量版本比较：上游哪些文件本地确实没有）；要复核缺口就重跑 npm run upstream:matrix（上游 tag 在 refs/upstream/tags/*）。
+2. 读 docs/IMPLEMENTATION.md 最后四节（「设置页重排」「同日修订」「上游同步与 0.1.20/0.1.21 移植评估」「上游全量版本比较脚本」）+ docs/RULES_PORT_UPSTREAM.md 的关键发现 37–53（原生窗、ACL 白名单、跨窗事件、主窗铺满、设置页排布、tag/清单两个坑、矩阵脚本口径）。
+3. 读 docs/UPSTREAM_REVIEW_0_1_20_0_1_21.md（上游评估：逐项对照表、批次 0–7、4 个待决策项；**第十一节是以检查点 tag 为基准的双树比对结论**）与 docs/UPSTREAM_VERSION_MATRIX.md（逐版本对照 + 双树比对原始清单）；要复核就重跑 npm run upstream:matrix --local=<tag>（上游 tag 在 refs/upstream/tags/*）。
 4. 跑 git status / git log --oneline -6 / git tag -l | tail，核对工作树与 tag 对得上。**tag 有同名不同物**：v0.1.19/v0.1.20/v0.1.21 是上游的，v0.1.5–v0.1.9、v0.2.0 是我们的（用 `git log -1 --format="%an %s" <tag>` 认作者）。
 5. 需要跑起来看效果时优先 npm run desktop；之前起过一个后台 dev server（PID 73584，端口 1420，可能还活着），浏览器里已进演示模式并停在「设置与账号」页，可直接复用来量设置页几何。
 
-先问我这三件事再动手：**a)** 本轮设置页重排是继续收尾（我验收 → 你提交）还是推倒重来；**b)** 上游同步从哪一批开始（评估文档第七节给了批次 0–7，其中批次 0.5 = 补 LICENSE/NOTICE + 人工核 rule_runs/archive-* 是否真缺）；**c)** 个性化这条线这次要做什么。另外评估文档第八节有 4 个必须我先定的取舍：后台任务「五张独立卡」还是「一张卡外层折叠」、未读口径是否改成「全部邮件」、发送记录是否改成按最近更新时间倒序、要不要做双语翻译。
+先问我这三件事再动手：**a)** 本轮设置页重排的验收结论（通过／要改哪里）；**b)** 本地界面这条线这次要改什么（先做这条）；**c)** 上游同步从哪一批开始（评估文档第七节给了批次 0–7，其中批次 0.5 = 补 LICENSE/NOTICE + 人工核 rule_runs/archive-* 是否真缺；排在本地界面之后）。另外评估文档第八节有 4 个必须我先定的取舍：后台任务「五张独立卡」还是「一张卡外层折叠」、未读口径是否改成「全部邮件」、发送记录是否改成按最近更新时间倒序、要不要做双语翻译。
 
 背景（已提交、打成 0.2.0 Alpha）：①列表按账号收取 ②阅读窗改 Tauri 原生独立窗口 ③写信窗改原生独立窗口 +「继续写信」悬浮入口 ④主窗「铺满」状态跨重启 + 阅读窗「查看邮件」悬浮入口。
 
@@ -37,16 +37,16 @@
 
 ## 二、当前基线
 
-- 仓库 `/Users/wanghlstar/Mytools/anser`，分支 `feat/port-upstream-a`，工作树干净以外只有本轮未提交改动；`origin` 已同步到 `2d357d4`。
+- 仓库 `/Users/wanghlstar/Mytools/anser`，分支 `feat/port-upstream-a`；本轮已提交为检查点 `0672f93`（tag `checkpoint-2026-10-19-settings-compact`，**未推 origin**，`origin/main` 仍在 `2d357d4`）。
 - 发布：**0.2.0（Alpha 预发布通道）**——注解 tag `v0.2.0` 已推 origin，`docs/releases/v0.2.0.md` 为说明；`release.yml` 建 Release 时带 `--prerelease`，GitHub 的 `releases/latest` 仍指向上一版正式版 **0.1.9**，已装用户不会被自动升级。
 - **发布收尾未完成**：推 tag 时看到 Actions「Release macOS #6 / v0.2.0」状态 queued，之后没再核实（本机没装 `gh`）。新会话可打开 `https://github.com/wanghlstar/anser/actions` 看两架构构建是否成功、`/releases` 看草稿 Release 是否带 Pre-release 徽标且含 `Yanxin_0.2.0_{aarch64,x86_64}.dmg`、`app.tar.gz`、`.sig`、`latest.json`，再决定是否手动发布草稿；顺手确认 `releases/latest/download/latest.json` 仍指向 0.1.9。
-- **上游**：`upstream/main` = **`331e05c`**（上游 0.1.21，2026-10-19 fetch）；我们的移植基线是上游 `v0.1.19`（`037d7aa`）。上游自那以后只有两个实质提交：0.1.20 `3d48afc`、0.1.21 `1229985`；另有旧清单缺口 0.1.15–0.1.18（含大模型双语翻译）。评估见 `docs/UPSTREAM_REVIEW_0_1_20_0_1_21.md`。**注意 tag 同名不同物**：`v0.1.19/v0.1.20/v0.1.21` 是上游的，`v0.1.5–v0.1.9`、`v0.2.0` 是我们的。`HEAD` 与 `upstream/main` 无共同祖先，上游改动只能逐块搬，不能 cherry-pick。**全量版本比较**：`npm run upstream:matrix` → 生成 `docs/UPSTREAM_VERSION_MATRIX.md`（逐版本对照「本地缺/本地偏薄」，首轮结论见评估文档第十节）；上游 tag 在独立命名空间 `refs/upstream/tags/*`，一次性抓取 `git fetch upstream '+refs/tags/*:refs/upstream/tags/*' --no-tags`。
+- **上游**：`upstream/main` = **`331e05c`**（上游 0.1.21，2026-10-19 fetch）；我们的移植基线是上游 `v0.1.19`（`037d7aa`）。上游自那以后只有两个实质提交：0.1.20 `3d48afc`、0.1.21 `1229985`；另有旧清单缺口 0.1.15–0.1.18（含大模型双语翻译）。评估见 `docs/UPSTREAM_REVIEW_0_1_20_0_1_21.md`。**注意 tag 同名不同物**：`v0.1.19/v0.1.20/v0.1.21` 是上游的，`v0.1.5–v0.1.9`、`v0.2.0` 是我们的。`HEAD` 与 `upstream/main` 无共同祖先，上游改动只能逐块搬，不能 cherry-pick。**全量版本比较**：`npm run upstream:matrix` → 生成 `docs/UPSTREAM_VERSION_MATRIX.md`（逐版本对照「本地缺/本地偏薄」，首轮结论见评估文档第十节）；`--local=<tag>` 可指定基准并额外生成「双树比对」段，已跑过 `checkpoint-2026-10-19-settings-compact ↔ 上游 v0.1.21`：上游独有 52 / 本地独有 29 / 双方不同 116，归类见评估文档第十一节。上游 tag 在独立命名空间 `refs/upstream/tags/*`，一次性抓取 `git fetch upstream '+refs/tags/*:refs/upstream/tags/*' --no-tags`。
 - 最近提交：`2d357d4` docs 交接文档与上游基线同步 → `fe6e600` release 0.2.0 版本号与发布说明 → `1a72a62` ci 发布流水线改走 Alpha 预发布通道 → `233f529` feat 主窗铺满状态跨重启、阅读窗悬浮入口 → `8bce831` feat 写信窗原生 → `3a2414c` feat 阅读窗原生 → `80b42de` feat 列表按账号收取、关闭确认与 ⌘W、浮动阅读窗。
 - tag：`v0.2.0`（最新正式发布 tag）、`v0.1.9`（上一版正式）；快照 tag `checkpoint-2026-10-18-compose-window`、`checkpoint-2026-10-17-port-upstream-a`、`baseline-2026-10-16`。
 - 门禁基线：`npx tsc -b`、`npm run format:check`（覆盖 src / scripts / `.github/workflows/*.yml` / `package*.json` / `src-tauri/*.json`）、`npm run check:ui`、`npx vitest run` = **53 文件 / 432 例**、`npm run test:desktop` = 18、`npm run build` 全绿；Rust 本轮未改（上次 `cargo test` = 343 passed / 1 ignored，共 344 例）。
 - 装机：`/Applications/雁信.app`（替换后 `codesign --verify --strict` 通过）里是**本轮第一版**设置页重排（PID 75638，早于「同日修订」）；要验收修订版得重新 `npm run desktop:build` 装机。
 
-### 未提交改动（设置页重排一轮 + 上游记录若干文件）
+### 本轮改动（已提交为检查点 `0672f93` + tag `checkpoint-2026-10-19-settings-compact`）
 
 **A. 设置页重排那轮（业务改动，等验收）**：`src/components/storage-tools.tsx`、`src/components/storage-tools.test.tsx`、`src/index.css`、`src/App.test.tsx`、`docs/IMPLEMENTATION.md`（同轮小节 + 「同日修订」小节）、`AGENTS.md`（UI 铁律里那条设置页分组约定已按最终形态改写）。
 

@@ -202,3 +202,22 @@
 - **B 疑似等价（改名/重写过，需人工核）**：`archive_location.rs`+`archive-location.tsx`+`archive-integrity.tsx`（我们的存档位置与「校验存档」在 App.tsx / storage-tools.tsx 里）、`mail-filters.tsx`（我们的筛选弹层）、`credentials.rs`（我们的钥匙串实现）、`preview/`+`preview-bridge.ts`（我们的演示模式）、以及若干纯测试文件（`compose-forward-files.test.tsx`、`rich-body.test.ts`、`rich-image-size.test.ts`、`remote-folder-list.test.tsx`、`demo-outbox.test.ts`）。
 - **C 不跟**：`scripts/homebrew*`、`scripts/release-draft*`、`mac-*signing*`/`scripts/signing/*`（上游发布基建）、上游 `docs/`。
 - **D 行数偏薄但多为测试**：`app-updates.test.tsx`(395/166，与更新说明相关)、`mail-content-loading.test.tsx`(262/90)、`remote-folders.test.ts`(158/59)、`rich-body.ts`(103/61)、`demo-rules.test.ts`(107/64)、`rules-panel.test.tsx`(430/224)；核心功能只有 `rules.rs`（690/176）真偏薄。
+
+## 十一、以检查点 tag 为基准的双树比对（2026-10-19）
+
+基准：本地 `checkpoint-2026-10-19-settings-compact`（`0672f93`）↔ 上游 `v0.1.21`（`1229985`）。生成：`node scripts/upstream-matrix.mjs --local=checkpoint-2026-10-19-settings-compact`（脚本第二段，两棵树直接比，不依赖共同祖先）。原始清单在 `docs/UPSTREAM_VERSION_MATRIX.md`。
+
+| 项             | 数量                           | 含义                                         |
+| -------------- | ------------------------------ | -------------------------------------------- |
+| 上游独有       | 52（其他 13、Rust 9、前端 30） | 待移植候选                                   |
+| 本地独有       | 29（前端 26、Rust 2、其他 1）  | 我们自研，上游没有                           |
+| 双方都有但不同 | 116                            | 将来需逐块合并                               |
+| 疑似改名对应   | 0                              | 上游缺项里没有能自动配对的改名，必须人工归类 |
+
+**上游独有分簇**：① 双语翻译（`translation.rs` 1689、`mail-translation.ts` 627、`translatable-mail-body.tsx`、`mail-translation-settings.tsx` 606 + 测试）② 规则运行记录（`rule_runs.rs` 1299、`rule-runs.tsx`）③ 设置五分类与后台任务（`settings-layout.tsx`、`task-panel-header.tsx`）④ 全局代理与凭据（`proxy.rs`、`network-proxy-settings.tsx`、`credentials.rs`、`keychain-migrate.rs`）⑤ 更新历史（`update_history.rs`、`release-history.ts`、`release-notes.ts`）⑥ 附件图片与样式（`mail_images.rs`、`mail_styles.rs`、`mail-image-resources.ts`）⑦ 需人工核的疑似等价（`archive_location.rs`+`archive-location.tsx`+`archive-integrity.tsx`、`mail-filters.tsx`——我们的存档位置与「校验存档」在 App.tsx / storage-tools.tsx 里，筛选在自研弹层里）⑧ 不跟（`preview/*`、homebrew/签名脚本、`release-draft*`；其中 **`LICENSE`/`NOTICE` 建议补**）。
+
+**本地独有（同步上游时别被覆盖）**：原生写信窗与阅读窗（`compose-window.tsx`、`mail-reader-window.tsx`、`capabilities/compose-window.json`、`capabilities/mail-window.json`）、待发送与草稿面板（`pending-send.tsx`、`drafts-panel.tsx`）、收件箱范围（`inbox-scope.tsx`）、邮件菜单（`mail-menu.ts`）、问候语与缩进段落（`greeting-paragraph.ts`、`indented-paragraph.ts`）、写信附件、移动菜单、删除账号弹窗、图片缩放、字体、`scroll-pane`、`button-group`。
+
+**双方不同里行数差最大者**（我们领先 → 上游领先）：`lib.rs` 3085/1674、`tests.rs` 4093/2702、`App.tsx` 4435/3088、`store.rs` 2112/1219、`index.css` 4381/3775、`compose-dialog.tsx` 1718/1117、`rule_operations.rs` 695/433（我们更大）；**上游领先**的只有 `rules.rs` 690/176（最大真差距）、`app-updates.tsx` 581/364、`paging.rs` 1100/919，其余多为测试文件（`rules-panel.test.tsx` 430/224、`mail-content-loading.test.tsx` 262/90）。
+
+**结论**：本地界面这条线先做没问题（上游 0.1.21 的设置结构即便搬来，也要与我们的 `storage-tools.tsx` 四卡形态和原生窗口共存）；将来同步上游时真正的功能缺口是**翻译、规则运行记录、代理/凭据、更新历史**四块，`rules.rs` 必须逐块人工合并（176 行 vs 上游 690 行），`archive-*` 与 `mail-filters` 先人工核对是否已有等价实现。

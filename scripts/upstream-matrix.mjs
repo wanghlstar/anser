@@ -22,6 +22,10 @@ const includeAll = args.includes("--all");
 const thinRatio = Number(
   (args.find((a) => a.startsWith("--thin-ratio=")) ?? "").split("=")[1] ?? 0.6,
 );
+const localRef =
+  (args.find((a) => a.startsWith("--local=")) ?? "").split("=")[1] || "HEAD";
+const upstreamArg =
+  (args.find((a) => a.startsWith("--upstream=")) ?? "").split("=")[1] || "";
 
 // 上游仓库自身基建、上游文档、锁文件不进对照表（我们本来就不跟）。
 const SKIP = [
@@ -58,11 +62,11 @@ function lines(ref, path) {
 }
 
 function localLines(path) {
-  return lines("HEAD", path);
+  return lines(localRef, path);
 }
 
 function existsLocally(path) {
-  return tryGit("cat-file", "-e", `HEAD:${path}`) !== null;
+  return tryGit("cat-file", "-e", `${localRef}:${path}`) !== null;
 }
 
 function versionKey(name) {
@@ -162,9 +166,11 @@ const out = [];
 out.push("# 上游全量版本比较（脚本生成物）");
 out.push("");
 out.push(
-  "由 `node scripts/upstream-matrix.mjs` 生成，逐上游版本对照本仓库 HEAD；" +
+  `由 \`node scripts/upstream-matrix.mjs --local=${localRef}\` 生成，逐上游版本对照本地 ref；` +
     "启发式判定，仅用于找候选，逐项结论仍需人工核对。",
 );
+out.push("");
+out.push(`- 本地基准 ref：\`${localRef}\``);
 out.push("");
 out.push(
   `- 上游版本数：${tags.length}（${tags[0].split("/").pop()} → ${tags[tags.length - 1].split("/").pop()}）`,
@@ -213,6 +219,92 @@ for (const r of rows) {
   out.push(`### ${r.name}（${r.head}）`);
   for (const m of r.missing) out.push(`- 本地缺：${m}`);
   for (const t of r.thin) out.push(`- 本地偏薄：${t}`);
+}
+// 双树比对：本地 ref（建议传 tag）↔ 上游 tag，两棵树直接比，不依赖共同祖先。
+const upstreamRef = upstreamArg || tags[tags.length - 1];
+const treeDiff = git(
+  "diff",
+  "--name-status",
+  "--find-renames=50%",
+  localRef,
+  upstreamRef,
+)
+  .trim()
+  .split("\n")
+  .filter(Boolean)
+  .map((l) => l.split("\t"));
+
+const upOnly = [];
+const localOnly = [];
+const renamed = [];
+const bothDiffer = [];
+for (const cols of treeDiff) {
+  const status = cols[0];
+  if (status === "A") {
+    if (!skipped(cols[1])) upOnly.push(cols[1]);
+  } else if (status === "D") {
+    if (!skipped(cols[1])) localOnly.push(cols[1]);
+  } else if (status.startsWith("R")) {
+    renamed.push(`${cols[1]} → ${cols[2]}`);
+  } else if (!skipped(cols[cols.length - 1])) {
+    bothDiffer.push(cols[cols.length - 1]);
+  }
+}
+
+const ranked = bothDiffer
+  .map((path) => {
+    const up = lines(upstreamRef, path);
+    const lo = lines(localRef, path);
+    return { path, up, lo, delta: Math.abs(lo - up) };
+  })
+  .filter((r) => r.up >= 0 && r.lo >= 0)
+  .sort((a, b) => b.delta - a.delta);
+
+function grouped(list) {
+  const counts = new Map();
+  for (const p of list) {
+    const key = bucket(p);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return [...counts].map(([key, n]) => `${key} ${n}`).join("、");
+}
+
+const MAX_UP = 120;
+const MAX_LOCAL = 60;
+out.push("");
+out.push(`## 双树比对：\`${localRef}\` ↔ \`${upstreamRef}\``);
+out.push("");
+out.push(
+  "`git diff --name-status <本地 ref> <上游 tag>`：两棵树直接比，不依赖共同祖先。" +
+    "「上游独有」= 待移植候选；「本地独有」= 我们自研；「改名候选」= 可解释部分「本地缺」误报。",
+);
+out.push("");
+out.push(`- 上游独有 **${upOnly.length}** 个（${grouped(upOnly)}）`);
+out.push(`- 本地独有 **${localOnly.length}** 个（${grouped(localOnly)}）`);
+out.push(`- 双方都有但内容不同 **${bothDiffer.length}** 个`);
+out.push(`- 疑似改名对应 **${renamed.length}** 组`);
+out.push("");
+out.push("### 上游独有（待移植候选）");
+out.push("");
+for (const p of upOnly.slice(0, MAX_UP)) out.push(`- ${p}`);
+if (upOnly.length > MAX_UP) out.push(`- …其余 ${upOnly.length - MAX_UP} 项`);
+out.push("");
+out.push("### 本地独有（自研 / 上游没走的路）");
+out.push("");
+for (const p of localOnly.slice(0, MAX_LOCAL)) out.push(`- ${p}`);
+if (localOnly.length > MAX_LOCAL)
+  out.push(`- …其余 ${localOnly.length - MAX_LOCAL} 项`);
+out.push("");
+out.push("### 改名候选");
+out.push("");
+for (const r of renamed) out.push(`- ${r}`);
+out.push("");
+out.push("### 双方不同：行数差最大的 25 个");
+out.push("");
+out.push("| 文件 | 上游行数 | 本地行数 | 差 |");
+out.push("| --- | --- | --- | --- |");
+for (const r of ranked.slice(0, 25)) {
+  out.push(`| ${r.path} | ${r.up} | ${r.lo} | ${r.delta} |`);
 }
 out.push("");
 process.stdout.write(out.join("\n"));

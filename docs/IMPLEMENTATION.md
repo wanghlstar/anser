@@ -741,3 +741,4 @@ GitHub CI 和两架构发布工作流已推送；首次 Checks 已成功，Relea
 - 新增 `scripts/upstream-matrix.mjs` + `npm run upstream:matrix`：逐上游版本（v0.1.0→v0.1.21）对照本地 HEAD，输出 `docs/UPSTREAM_VERSION_MATRIX.md`（总览表、本地缺失清单、本地偏薄清单、逐版本明细）。
 - 首轮结果：漏项集中在 **0.1.2–0.1.9**（`src-tauri/src/rule_runs.rs` 1159 行、`rule-runs.tsx`(235)、`archive_location.rs`(452)+`archive-location.tsx`(217)+`archive-integrity.tsx`(84)、`LICENSE`/`NOTICE`）与 **0.1.15–0.1.18**（`proxy.rs`、`mail_images.rs`(310)、`mail_styles.rs`(231)、`translation.rs` 1444→1689）；`src-tauri/src/rules.rs`（上游 690 / 本地 176）是唯一的「核心功能本地偏薄」。
 - 限制：判定按路径同名 + 行数比例（阈值写在脚本头部），改名或重写过的功能会误报「本地缺」（如 `archive-*` 对应我们 App.tsx 里的存档位置与「校验存档」），逐项结论仍需人工归类。
+- 追加「双树比对」段：`--local=<ref>` 指定本地基准（默认 `HEAD`），并新增一节 `git diff --name-status <本地 ref> <上游 tag>`（两棵树直接比，不依赖共同祖先）。以检查点 tag `checkpoint-2026-10-19-settings-compact` ↔ 上游 `v0.1.21` 生成：上游独有 **52**（其他 13、Rust 9、前端 30）、本地独有 **29**（原生窗、待发送/草稿、收件范围等自研）、双方不同 **116**、自动改名对应 **0**。人工归类与结论见 `docs/UPSTREAM_REVIEW_0_1_20_0_1_21.md` 第十一节。
