@@ -37,14 +37,14 @@
 
 ## 二、当前基线
 
-- 仓库 `/Users/wanghlstar/Mytools/anser`，分支 `feat/port-upstream-a`；本轮已提交为检查点 `0672f93`（tag `checkpoint-2026-10-19-settings-compact`，**未推 origin**，`origin/main` 仍在 `2d357d4`）。
+- 仓库 `/Users/wanghlstar/Mytools/anser`，分支 `feat/port-upstream-a`；本轮设置页重排已验收，已拆为 `6afe0d1`(feat) + `689d183`(docs)（拆分自检查点 `0672f93`；tag `checkpoint-2026-10-19-settings-compact` 仍指向 `0672f93` 作回滚点），**未推 origin**（`origin/feat/port-upstream-a` 仍在 `2d357d4`，本地领先 3 笔）。
 - 发布：**0.2.0（Alpha 预发布通道）**——注解 tag `v0.2.0` 已推 origin，`docs/releases/v0.2.0.md` 为说明；`release.yml` 建 Release 时带 `--prerelease`，GitHub 的 `releases/latest` 仍指向上一版正式版 **0.1.9**，已装用户不会被自动升级。
 - **发布收尾未完成**：推 tag 时看到 Actions「Release macOS #6 / v0.2.0」状态 queued，之后没再核实（本机没装 `gh`）。新会话可打开 `https://github.com/wanghlstar/anser/actions` 看两架构构建是否成功、`/releases` 看草稿 Release 是否带 Pre-release 徽标且含 `Yanxin_0.2.0_{aarch64,x86_64}.dmg`、`app.tar.gz`、`.sig`、`latest.json`，再决定是否手动发布草稿；顺手确认 `releases/latest/download/latest.json` 仍指向 0.1.9。
 - **上游**：`upstream/main` = **`331e05c`**（上游 0.1.21，2026-10-19 fetch）；我们的移植基线是上游 `v0.1.19`（`037d7aa`）。上游自那以后只有两个实质提交：0.1.20 `3d48afc`、0.1.21 `1229985`；另有旧清单缺口 0.1.15–0.1.18（含大模型双语翻译）。评估见 `docs/UPSTREAM_REVIEW_0_1_20_0_1_21.md`。**注意 tag 同名不同物**：`v0.1.19/v0.1.20/v0.1.21` 是上游的，`v0.1.5–v0.1.9`、`v0.2.0` 是我们的。`HEAD` 与 `upstream/main` 无共同祖先，上游改动只能逐块搬，不能 cherry-pick。**全量版本比较**：`npm run upstream:matrix` → 生成 `docs/UPSTREAM_VERSION_MATRIX.md`（逐版本对照「本地缺/本地偏薄」，首轮结论见评估文档第十节）；`--local=<tag>` 可指定基准并额外生成「双树比对」段，已跑过 `checkpoint-2026-10-19-settings-compact ↔ 上游 v0.1.21`：上游独有 52 / 本地独有 29 / 双方不同 116，归类见评估文档第十一节。上游 tag 在独立命名空间 `refs/upstream/tags/*`，一次性抓取 `git fetch upstream '+refs/tags/*:refs/upstream/tags/*' --no-tags`。
 - 最近提交：`2d357d4` docs 交接文档与上游基线同步 → `fe6e600` release 0.2.0 版本号与发布说明 → `1a72a62` ci 发布流水线改走 Alpha 预发布通道 → `233f529` feat 主窗铺满状态跨重启、阅读窗悬浮入口 → `8bce831` feat 写信窗原生 → `3a2414c` feat 阅读窗原生 → `80b42de` feat 列表按账号收取、关闭确认与 ⌘W、浮动阅读窗。
 - tag：`v0.2.0`（最新正式发布 tag）、`v0.1.9`（上一版正式）；快照 tag `checkpoint-2026-10-18-compose-window`、`checkpoint-2026-10-17-port-upstream-a`、`baseline-2026-10-16`。
 - 门禁基线：`npx tsc -b`、`npm run format:check`（覆盖 src / scripts / `.github/workflows/*.yml` / `package*.json` / `src-tauri/*.json`）、`npm run check:ui`、`npx vitest run` = **53 文件 / 432 例**、`npm run test:desktop` = 18、`npm run build` 全绿；Rust 本轮未改（上次 `cargo test` = 343 passed / 1 ignored，共 344 例）。
-- 装机：`/Applications/雁信.app`（替换后 `codesign --verify --strict` 通过）里是**本轮第一版**设置页重排（PID 75638，早于「同日修订」）；要验收修订版得重新 `npm run desktop:build` 装机。
+- 装机：`/Applications/雁信.app` = **0.2.0**（PID 61892，2026-10-19 11:32 起），即「同日修订」后的形态，**用户已验收通过**（装机版第一版 PID 75638 早于修订，已作废）。
 
 ### 本轮改动（已提交为检查点 `0672f93` + tag `checkpoint-2026-10-19-settings-compact`）
 
@@ -147,7 +147,7 @@ swift ax.swift dump 9 | grep "AXGroup t=写邮件"
 
 ## 六、待办与下一步
 
-1. **先定本轮设置页重排的去向**：用户在装机版第一版上给的三条反馈已改完（外层折叠、紧凑排布、封数并进下拉行、字号改名），改动在工作树里未提交。验收方式二选一：① 起 `npm run desktop` 开发预览让他看；② 要在装机版上看就跑 `npm run desktop:build`（约 5 分钟）重新替换 `/Applications/雁信.app`。通过后按中文 `feat:`/`docs:` 分两笔提交（源码 + 文档）。
+1. ~~先定本轮设置页重排的去向~~ **已完成**：用户验收通过；已按中文 `feat:`/`docs:` 拆为两笔提交（`6afe0d1` 源码 + `689d183` 文档），回滚点 tag `checkpoint-2026-10-19-settings-compact` 仍在 `0672f93`。**A 线（本地界面）本轮暂不修改**，直接进第 2 条上游移植。
 2. **上游移植（评估已完成，等用户定取舍）**：读 `docs/UPSTREAM_REVIEW_0_1_20_0_1_21.md`。建议批次：0 收尾本轮设置页重排 → 1 纯新增（Dock 未读角标、TaskPanelHeader 组件）→ 2 设置五分类导航（`settings-layout.tsx` + App.tsx 重组 + 后台任务五卡）→ 3 规则条件与首次匹配状态快照 → 4 解析迁移（cc/优先级头块回填）→ 5 邮件工作流对齐（取消恢复编辑、排序待定）→ 6 未读口径（若用户要）→ 7 双语翻译（若用户要）。评估文档第八节有 4 个必须用户先定的取舍。
 3. **0.2.0 发布收尾**：核实 Actions 两架构构建与草稿 Release（DMG / app.tar.gz / sig / latest.json），再手动发布草稿；确认 `releases/latest` 仍指向 0.1.9。
 4. 已记录但暂缓（见 `RULES_PORT_UPSTREAM.md` 末尾）：通知横幅优先级与可靠性；阅读器图片自定义菜单与左键选中（需原生 `WKUIDelegate`）；服务器删除永久阻塞时待删邮件一直隐藏；更新说明 Markdown 渲染（现为纯文本）；全局网络代理。

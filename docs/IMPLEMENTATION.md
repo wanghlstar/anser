@@ -742,3 +742,11 @@ GitHub CI 和两架构发布工作流已推送；首次 Checks 已成功，Relea
 - 首轮结果：漏项集中在 **0.1.2–0.1.9**（`src-tauri/src/rule_runs.rs` 1159 行、`rule-runs.tsx`(235)、`archive_location.rs`(452)+`archive-location.tsx`(217)+`archive-integrity.tsx`(84)、`LICENSE`/`NOTICE`）与 **0.1.15–0.1.18**（`proxy.rs`、`mail_images.rs`(310)、`mail_styles.rs`(231)、`translation.rs` 1444→1689）；`src-tauri/src/rules.rs`（上游 690 / 本地 176）是唯一的「核心功能本地偏薄」。
 - 限制：判定按路径同名 + 行数比例（阈值写在脚本头部），改名或重写过的功能会误报「本地缺」（如 `archive-*` 对应我们 App.tsx 里的存档位置与「校验存档」），逐项结论仍需人工归类。
 - 追加「双树比对」段：`--local=<ref>` 指定本地基准（默认 `HEAD`），并新增一节 `git diff --name-status <本地 ref> <上游 tag>`（两棵树直接比，不依赖共同祖先）。以检查点 tag `checkpoint-2026-10-19-settings-compact` ↔ 上游 `v0.1.21` 生成：上游独有 **52**（其他 13、Rust 9、前端 30）、本地独有 **29**（原生窗、待发送/草稿、收件范围等自研）、双方不同 **116**、自动改名对应 **0**。人工归类与结论见 `docs/UPSTREAM_REVIEW_0_1_20_0_1_21.md` 第十一节。
+
+## 设置页重排验收通过并规范化提交（2026-10-19）
+
+用户验收：**通过**——装机版 `/Applications/雁信.app` = 0.2.0（PID 61892，2026-10-19 11:32 起）即「同日修订」后的形态。**A 线（本地界面）本轮暂不修改**；**B 线（同步上游）**按用户要求「风险从低到高」推进，先出分析比对报告再由用户选批次（见 `docs/UPSTREAM_REVIEW_0_1_20_0_1_21.md` 第七节批次 0–7 与第八节 4 个待决策项）。
+
+- **提交规范化**：原检查点提交 `0672f93`（把「设置页重排源码 + 上游评估文档」混在一笔、消息为 `checkpoint:`）在**未推送**状态下拆为两笔中文规范提交——`6afe0d1`（`feat:` 设置页紧凑重排 + 诊断外层折叠，仅 `src/components/storage-tools.*`、`src/App.test.tsx`、`src/index.css`）+ `689d183`（`docs:` 上游 0.1.20/0.1.21 移植评估、全量版本比较脚本、规则与交接）。拆分用 `git rebase -i` 停在 `0672f93` 后 `reset --mixed` 重提，拆分前后工作树一致（`git diff --stat backup-before-split HEAD` 为空）。
+- **回滚点不变**：tag `checkpoint-2026-10-19-settings-compact` 仍指向 `0672f93`（拆分后该提交只由 tag 引用）；`git revert 0672f93` / `git reset --hard 2d357d4` 照旧可用。
+- 分支 `feat/port-upstream-a` 领先 `origin/feat/port-upstream-a`（`2d357d4`）**3 笔**（`6afe0d1` / `689d183` / `0b39e33`），**未推送**；备份分支 `backup-before-split` 指向拆分前的 `ac8a57a`。
