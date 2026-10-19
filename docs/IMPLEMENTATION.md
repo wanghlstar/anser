@@ -679,3 +679,65 @@ GitHub CI 和两架构发布工作流已推送；首次 Checks 已成功，Relea
 **③ 文档同步**：`docs/HANDOFF.md` 整体重写为 0.2.0 基线（四项改动的实现要点、发布命令、新的踩雷摘要 1–49、待办）；`AGENTS.md` 的「上游基线」清单按实际代码核对更新——原清单已过期（写「0.1.12 的完整富文本写信未移植」，实际 `c8b3b38` 已落地；0.1.11 的原附件转发与五项邮件快捷键也已在 `51e4d8a` 精简移植、`c8b3b38` 走 `forwardSource`，快捷键动作在 `src/lib/mail-shortcuts.ts` 里真的接线并在 `App.tsx` 使用），现改为「已移植到 0.1.19，逐项清单以 `docs/RULES_PORT_UPSTREAM.md` 为准；仍未移植只剩更新说明 Markdown 渲染与全局网络代理」。
 
 **门禁**：`npm run release:check` / `npm run format:check`（含 workflows、package*.json、src-tauri json）/ `npx tsc -b` / `cargo check` / `npm run test:desktop` 18 / `npx vitest run` **53 文件 430 例** / `cargo test` **343 passed, 1 ignored** 全绿。提交为中文 `ci:` / `release:` / `docs:` 三笔，随后推 `v0.2.0` tag 触发流水线（Alpha 预发布草稿，需在 GitHub 上核验 DMG / app.tar.gz / sig / latest.json 后手动发布）。
+
+## 设置页重排：开关一卡、下拉一卡、下部整行平铺（2026-10-19）
+
+用户要求：①「开机自启」搬回「系统通知」（"都是 选中与否"）②「外观」的侧边栏字号下拉搬进「后台检查」（"都是下拉"）③这两张卡对齐，并问卡名要不要改 ④「存档校验」整行平铺 ⑤「活动与诊断」整行平铺、默认全折叠 ⑥改完装机，装好打开即可（用户离开，稍后自行测试反馈）。
+
+**卡片重排**（`src/components/storage-tools.tsx`）
+
+- 左卡「系统通知」→ **「通知与启动」**（Bell 图标 + `.settings-tool-title`，与右卡头部等高）：新邮件通知 / 发送结果通知 / Dock 图标 / **开机自启**（`#auto-start` 从右卡搬来，说明文字也一并搬回，含「开发预览依赖前端服务…」与演示模式提示）。
+- 右卡「后台检查」→ **「间隔与外观」**：三个下拉改成「标签左、控件右」同构行——后台检查标签 + 后台检查间隔、延时发送 + 延时发送选择、侧边栏字号 + 字号选择；**保存按钮合并成一个**（`save()` 一次写 `syncIntervalMinutes` / `sendCountdownSeconds` / `sidebarScale` 并设 `--nav-scale`，toast 文案改「设置已保存」，`saveScale()` 删除），没改动时按钮禁用。
+- 「外观」卡随之取消；「存档校验」「活动与诊断」从两列改为直接挂在 `.storage-tools` 下的整行平铺卡（顺序：存档校验 → 活动与诊断，诊断留在最后）。诊断五行仍是 `Collapsible` 默认折叠（Radix 不传 `defaultOpen` 即关闭），已在行外注明。
+- 卡名建议（已按建议改，若要回退只动两处 `h3`）：`系统通知 → 通知与启动`、`后台检查 → 间隔与外观`（备选「通知与系统」/「检查与显示」）。
+
+**CSS**（`src/index.css`）
+
+- 删除 `.storage-tools-bottom`、`.storage-tools-col`（含 `:last-child` 拉伸）与已无用的 `.settings-tool-selects`；`.settings-tool-switches` 从三列网格改单列 `gap: 12px`。
+- 新增：`.storage-tools-top .settings-tool { justify-content: flex-start }`、`.storage-tools-top .settings-tool-row { min-height: 36px }`、`.settings-tool-row .select-field { min-width: 96px }`、`.settings-tool-actions`（存档校验一行里的多个动作按钮成组靠右，不再被 `space-between` 拆散）。对齐原理见 `RULES_PORT_UPSTREAM.md` 第 50 条。
+
+**验证**
+
+- 开发预览（`npm run dev` + 浏览器）量几何：两顶卡等高 445px，四行 `top` 依次 908 / 956 / 1004 / 1052（两卡完全重合）；三个下拉左边缘齐 845；无横向溢出（`scrollWidth == innerWidth`）。本机 `browser.screenshot` 不可用，只能量坐标。
+- 测试更新：`storage-tools.test.tsx` 16 例（改卡片名与结构断言，新增「一次保存三项」与「活动与诊断整行平铺且默认全折叠」两例）；`App.test.tsx` 的诊断用例未动仍过。
+- 门禁：`npm run format:check`、`npx tsc -b`、`npm run check:ui`、`npx vitest run`（53 文件 / **432 例**）、`npm run test:desktop` 18、`npm run build` 全绿；本轮未动 Rust。
+- 装机：`/Applications/雁信.app`（PID 75638）已替换并打开，等用户验收。**未提交**。
+
+### 同日修订：按验收反馈恢复紧凑、诊断外层折叠（2026-10-19）
+
+用户看过装机版后给了三条反馈，全部按下述口径改掉（仍是同一轮未提交改动）：
+
+**① 「活动与诊断」外层默认折叠**（`保留卡片外壳`，用户选）：`DiagnosticRow` 增加 `defaultOpen`；卡片里套一层 `Collapsible defaultOpen={false}`，卡头标题改成 `CollapsibleTrigger`（`Activity` 图标仍在最左，右边跟 `ChevronRight.collapse-chevron`），折叠时**五个小项一个都不渲染**（Radix 会卸载 `CollapsibleContent`）。展开后：「最近活动」保持折叠，其余四项（服务器状态同步 / 服务器文件夹操作 / 完整保存任务 / 目录来源检查）**默认展开** —— 即回到 0.1.5/0.1.6「高级与诊断」的形态（那版是外层折叠区 + 四个平铺卡）。`.diagnostic-content` 的左缩进 6px 去掉（`padding: 4px 0 8px`），五个子面板左缘与行头齐头、宽度一致。
+
+**② 「存档校验」的封数并进下拉那一行**：删掉原来独立的「已归档 N 封 / 外置盘未连接」行，改用 `.settings-tool-inline` 把「保留 N 天」下拉与该文案裹在同一行（间距 8px），四个动作按钮仍靠右。
+
+**③ 顶卡恢复紧凑、字号改名**：「间隔与外观」的三个下拉合成一行（`.settings-tool-selects` 恢复，**不写文字标签**，含义靠卡底说明），合并后的保存按钮同排靠右；`aria-label` 与卡底说明的「侧边栏字号」统一改 **「侧栏字号」**。「通知与启动」四个开关横排一行（`.settings-tool-switches` 改 `flex: 0 0 auto` + `justify-content: space-between`，不写 `repeat(4, 1fr)`，见 `RULES_PORT_UPSTREAM.md` 第 51 条）；`.storage-tools-top` 改成 `1.3fr 1fr`（**左卡加宽**，用户选）以容纳四组开关的自然宽度。上一轮的逐行对齐手段（`.storage-tools-top .settings-tool { justify-content: flex-start }`、`.settings-tool-row { min-height: 36px }`）全部撤销；窄窗口（`max-width: 1279px`）开关退成两行两列。
+
+**验证**（`browser.evaluate` 量几何，本机 `browser.screenshot` 不可用）
+
+- 模拟默认窗口 1380（顶卡容器 1022px）：左卡 571 / 右卡 439（`1.3fr : 1fr`），两卡等高 225px；四个开关同处 `y=908`（一行，标签均单行，`label` 高 14px），四组自然宽度 112 / 126 / 108 / 98 = 444px，左卡内宽 543px，余量约 97px；三个下拉（304px）与保存按钮同排，保存右缘贴齐卡右缘。
+- 窄窗口（视口 1000px）：开关两行两列（`y=921/948`，cell 153px），无横向溢出；顶卡 349 / 269。
+- `存档校验`：下拉 `x=341`、文案「已归档 3 封」`x=447`（间距 8px、中心线一致），动作按钮组 `x=605` 同排。
+- `活动与诊断`：默认 `bodyPresent=false`（卡高 62px）；展开后 5 行都在（`最近活动` closed，其余四项 open），四行内容与内层子卡片左缘均为 341px、宽度均为 600px。
+- 测试更新：`storage-tools.test.tsx` 一例改名重写为「外层整体折叠 + 内层只有最近活动折叠」（取 `.diagnostics-body` 的直接子元素判定 `data-state`，子面板自带的折叠块不算），三处 `aria-label` 改「侧栏字号」；`App.test.tsx` 的诊断用例改成先点开外层，「异常目录暂停同步」不再需要手动展开那一行。
+- 门禁：`npm run format:check`、`npx tsc -b`、`npm run check:ui`、`npx vitest run`（53 文件 / **432 例**）、`npm run build` 全绿（改完 CSS 后重新构建并 grep 产物，确认 `.diagnostics-collapsible` / `.settings-tool-inline` / `.settings-tool-selects` / `.settings-tool-switches` 新规则都在 `dist/assets/index-*.css` 里）；本轮未动 Rust。**待用户再次验收，未提交**。
+
+## 上游同步与 0.1.20 / 0.1.21 移植评估（2026-10-19）
+
+用户要求「先记录、同步上游、分析哪些可以合并，然后去新会话实现」。本轮**只同步与评估，未改任何业务代码**（设置页重排那轮仍原样挂在工作树里未提交）。
+
+- 同步：`git fetch upstream --tags --prune`，`upstream/main` 由 `30d65a7` 推进到 **`331e05c`**；新增分支 `upstream/codex/issue-1-improvements` 与 tag `v0.1.20`(`eb80fa4`)、`v0.1.21`(`1229985`)。fetch 时 `v0.1.5`–`v0.1.9` 因**同名不同物**被拒（本地这几个是我们的发布 tag）——记入 `RULES_PORT_UPSTREAM.md` 第 52 条。
+- 结论：上游自我们基线（上游 `v0.1.19` = `037d7aa`）以来只有两个实质提交 —— `3d48afc`（0.1.20：邮件工作流 + 规则条件/状态快照 + 未读口径 + Dock 角标，42 文件 +3361 −648）与 `1229985`（0.1.21：设置五分类导航 + 后台任务卡片反馈，23 文件 +1095 −535）；其余是 Homebrew 配方移入主仓库与 release 记录（不跟）。
+- 同时发现**旧移植清单缺口**：上游 0.1.15–0.1.18 从未评估（全局代理、原生邮件链接、**大模型逐段双语翻译** 1444+267 行、邮件图片/字体）。
+- 完整逐项对照、建议批次（批次 0 先收尾本轮设置页重排 → … → 批次 7 双语翻译）与 4 个待用户决策项，见新文档 **`docs/UPSTREAM_REVIEW_0_1_20_0_1_21.md`**。
+- `HEAD` 与 `upstream/main` **没有共同祖先**（历史已重写为单一初始提交 `432f441`），因此上游改动一律按 `git show <sha>:<path>` / `git diff` 逐块搬，**不能 `cherry-pick`**。
+
+## 上游全量版本比较脚本（2026-10-19）
+
+起因：用户问「怎么做个全量的版本比较」——0.1.2–0.1.9 当年是选择性同步，漏了什么没人说得清，而人记的清单已经漏过 0.1.15–0.1.18。做法：
+
+- 上游 tag 与我们的发布 tag 同名不同物，先把上游那半套抓进独立命名空间（不覆盖 `v0.1.0–v0.1.9`）：
+  `git fetch upstream '+refs/tags/*:refs/upstream/tags/*' --no-tags`
+- 新增 `scripts/upstream-matrix.mjs` + `npm run upstream:matrix`：逐上游版本（v0.1.0→v0.1.21）对照本地 HEAD，输出 `docs/UPSTREAM_VERSION_MATRIX.md`（总览表、本地缺失清单、本地偏薄清单、逐版本明细）。
+- 首轮结果：漏项集中在 **0.1.2–0.1.9**（`src-tauri/src/rule_runs.rs` 1159 行、`rule-runs.tsx`(235)、`archive_location.rs`(452)+`archive-location.tsx`(217)+`archive-integrity.tsx`(84)、`LICENSE`/`NOTICE`）与 **0.1.15–0.1.18**（`proxy.rs`、`mail_images.rs`(310)、`mail_styles.rs`(231)、`translation.rs` 1444→1689）；`src-tauri/src/rules.rs`（上游 690 / 本地 176）是唯一的「核心功能本地偏薄」。
+- 限制：判定按路径同名 + 行数比例（阈值写在脚本头部），改名或重写过的功能会误报「本地缺」（如 `archive-*` 对应我们 App.tsx 里的存档位置与「校验存档」），逐项结论仍需人工归类。

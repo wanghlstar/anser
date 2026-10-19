@@ -17,6 +17,7 @@
     "check:ui": "node scripts/check-ui.mjs",
     "release:check": "node scripts/release-assets.mjs verify",
     "release:secrets": "node scripts/release-secrets.mjs",
+    "upstream:matrix": "node scripts/upstream-matrix.mjs",
     "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\" \"scripts/*.mjs\" \".github/workflows/*.yml\" \"package*.json\" \"src-tauri/*.json\" \"src-tauri/capabilities/*.json\""
   },
   "dependencies": {

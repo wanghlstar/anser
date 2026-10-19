@@ -7,7 +7,7 @@
 - 中文名：雁信；英文名：Anser。技术栈为 React / TypeScript / shadcn/ui / Tauri 2 / Rust / SQLite。
 - **本仓库（`wanghlstar/anser`）是继续维护的活跃仓库。** 已废弃的旧仓库 `wanghlstar/yanxin` 固定在 0.1.5 不再变动，与它相关的链接、端点一律不要再用。
 - `origin` = `git@github.com:wanghlstar/anser.git`（唯一发布目标）；`upstream` = `https://github.com/ansermail/anser.git`（**上游，后续要同步它的加固与新功能**）。
-- **上游基线**：本地 0.1.5 基线最后同步到的上游节点是 `da3b667`（上游 0.1.12）。此后按需 cherry-pick 移植：0.1.9/0.1.10 的实时加固（IDLE NOOP 补查、QQ 回执只读核对、跨时区排序）、FTS5 trigram 候选索引、SQL cursor 分页与阅读邻居直查、日期范围筛选；0.1.11 的表格头保留（thead/th）、原附件转发、五项邮件快捷键；0.1.13 的单封邮件打印；0.1.14 的通知点击定位、正文图片加载超时重试；以及 **0.1.19 的草稿自有附件体系与富文本写信（Tiptap，`ff76ee4` 后端 + `c8b3b38` 前端）**。逐项移植清单、参考接口与分支提交清单一律以 `docs/RULES_PORT_UPSTREAM.md` 为准。**仍未移植**：更新说明 Markdown 渲染（现为纯文本 `whitespace-pre-wrap`）、全局网络代理（暂不做）。
+- **上游基线**：本地 0.1.5 基线最后同步到的上游节点是 `da3b667`（上游 0.1.12）。此后按需 cherry-pick 移植：0.1.9/0.1.10 的实时加固（IDLE NOOP 补查、QQ 回执只读核对、跨时区排序）、FTS5 trigram 候选索引、SQL cursor 分页与阅读邻居直查、日期范围筛选；0.1.11 的表格头保留（thead/th）、原附件转发、五项邮件快捷键；0.1.13 的单封邮件打印；0.1.14 的通知点击定位、正文图片加载超时重试；以及 **0.1.19 的草稿自有附件体系与富文本写信（Tiptap，`ff76ee4` 后端 + `c8b3b38` 前端）**。逐项移植清单、参考接口与分支提交清单一律以 `docs/RULES_PORT_UPSTREAM.md` 为准。**上游已同步到 `331e05c`（上游 0.1.21，2026-10-19 fetch）**：0.1.15–0.1.18 此前从未进清单（全局代理、邮件图片字体、**大模型逐段双语翻译**、翻译校验），0.1.20（邮件工作流 + 规则条件/状态快照 + 未读口径 + Dock 角标）与 0.1.21（设置五分类导航 + 后台任务卡片反馈）的逐项可合并性、建议批次与待用户决策项，一律见 `docs/UPSTREAM_REVIEW_0_1_20_0_1_21.md`。**仍未移植**：更新说明 Markdown 渲染（现为纯文本 `whitespace-pre-wrap`）、全局网络代理（暂不做）、双语翻译（待用户决定）。**tag 认作者**：`v0.1.19/v0.1.20/v0.1.21` 是上游的，`v0.1.5–v0.1.9`、`v0.2.0` 是我们的；上游 tag 另有独立命名空间 `refs/upstream/tags/*`（一次性 `git fetch upstream '+refs/tags/*:refs/upstream/tags/*' --no-tags`）。**全量版本比较**跑 `npm run upstream:matrix` → `docs/UPSTREAM_VERSION_MATRIX.md`（口径与误报坑见 `docs/RULES_PORT_UPSTREAM.md` 第 53 条）。
 - 同步上游时按需 cherry-pick 单个提交并逐个消化冲突，不要直接 merge `upstream/main`：本地有 Dock 开关、存档分层、全部收件箱范围、问候语三段式、首行缩进真实空格等自有功能，与上游同需求的实现是两套代码，直接合并会大面积冲突。
 - 开工先检查 `git status`、当前分支及 origin；保留已有未提交工作。阶段提交应对应实际完成范围，未验收的工作分支不能作为完成代码混入正式发布。
 - 项目结构：`src/components/` 为业务界面，`src/components/ui/` 为 shadcn 组件，`src/lib/` 为前端数据/格式逻辑，`src-tauri/src/` 为协议、存档及后台任务，`scripts/` 为构建/发布检查，`.github/workflows/` 为流水线。
@@ -21,6 +21,7 @@
 - 日期选择用 `Calendar` + `Popover`；时间选择用 shadcn `Select`。禁止在业务界面使用原生 `date` / `time` / `datetime-local` 选择器。
 - 自动补全用 `Command` + `Popover`，禁止原生 `datalist` 或自行绘制建议菜单。
 - `src/components/ui/` 中官方组件内部的原生元素属于正常实现；业务代码中的 HTML 语义结构、邮件正文 iframe、富文本编辑内容不属于另造 UI 组件。
+- 设置与账号页按控件类型分组：开关类一张卡（新邮件通知 / 发送结果通知 / Dock 图标 / 开机自启，四组**横排一行**，顶卡列宽 `1.3fr : 1fr`）、下拉类一张卡（后台检查间隔 / 延时发送 / 侧栏字号，**同行并排、不写文字标签**、保存按钮同排靠右）；「存档校验」的保留天数下拉与「已归档 N 封」同一行；「活动与诊断」**外层默认折叠**，展开后「最近活动」折叠、其余四项默认展开。排布前的宽度核对见 `docs/RULES_PORT_UPSTREAM.md` 第 51 条。
 - 修改 UI 后运行 `npm run check:ui`、相关交互测试及 `npm run build`，在开发预览中检查效果。
 
 ## 开发预览

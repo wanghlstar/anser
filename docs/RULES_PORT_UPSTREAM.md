@@ -98,7 +98,19 @@
 
 49. **原生阅读窗「不在前台」的悬浮入口**：`mail_windows` 登记表从「label → 邮件 id」升级为「label → `{id, subject}`」快照，新增 `mail_label_seq` / `mail_window_infos` / `emit_mail_windows`（事件 `mail-windows-changed`，`emit_to("main", …)`），阅读窗的 `Focused` / `Destroyed` 与 `mail_window_mail` 都会重发（窗口回到前台 → 悬浮条自动消失）。点击走新命令 `focus_mail_window(label)`（`unminimize()` + `set_focus()`）。前端与「继续写信」共用 `.compose-restore-bar`，`bottom: calc(16px + (composeUnfocusedCount + index) * 52px)` 让两类条目沿同一条堆叠往上排。**没有新增 capability**：`focus_mail_window` 是 app 命令不是 plugin 命令，不走 ACL；`mail-windows-changed` 只发给 `main`（主窗早有 `core:event:allow-listen`）；阅读窗自己的 `capabilities/mail-window.json` 已在 `app.security.capabilities` 白名单里（第 45 条修好的）。
 
+50. **顶部两卡「逐行对齐」靠统一行高 + `flex-start`，不能留 `space-between`**：`align-items: stretch` 只保证两卡等高，卡内 `justify-content: space-between` 会把多出来的高度摊到**每一行之间**，于是两卡的行高、行距各不相同（实测左卡行距 40px、右卡 48px，第二行起就越错越远）。做法：顶卡 `justify-content: flex-start`（多余高度留在卡底）+ 行统一 `min-height: 36px`（与 `.select-field` 的自然高度一致）+ 两边的行间距都取 12px（卡 gap 与开关组 gap）。改完用 `browser.evaluate` 量每行 `getBoundingClientRect().top` 逐行核对（本机 `browser.screenshot` 不可用，别靠肉眼）。整行平铺的卡直接挂在 `.storage-tools` 下（原来的 `.storage-tools-bottom` / `.storage-tools-col` 两列布局已删）。
+
+51. **「逐行对齐」与「紧凑」互斥，控件数量不等时要先量真实宽度再定排布**：第 50 条那套（单列 + 统一行高）能对齐，但把两卡撑到 445px 高；用户看过装机版后要求回到紧凑形态 —— 开关横排一行、三个下拉同行、去掉文字标签。**先量再排**：四个「标签 + 开关」的自然宽度 112 / 126 / 108 / 98（合计 444px），默认窗口 1380 时单卡内宽只有 471px，等宽两卡放不下（组间距 14px → 486px，第四组掉第二行）；顶卡改 `1.3fr 1fr` 后左卡内宽 543px 才有余量。**别用 `repeat(4, 1fr)` 等分网格**：每格分到 108px 时「新邮件通知」「发送结果通知」会被折成两行 —— `label` 高度 14 → 28px，但盒子 `scrollWidth == clientWidth`、没有溢出，**光查溢出查不出来，必须量 `label` 的 `height`**。开关组用 `flex: 0 0 auto` + 容器 `justify-content: space-between`（组内自然宽度，多出来的宽度摊在组间），窄窗口整组换行；`@media (max-width: 1279px)` 退成 `flex: 0 0 calc(50% - 7px)` 两行两列。子面板折叠形态也别自己发明：用户要的「活动与诊断」是 **0.1.5/0.1.6 的「高级与诊断」**——外层折叠区默认关闭（折叠时 `CollapsibleContent` 被卸载，五个小项一个都不渲染），展开后「最近活动」折叠、其余四项展开；`Collapsible` 的 `defaultOpen` 是**逐行**给，不要行行都省。
+
+52. **上游同步的两个坑：tag 同名不同物、移植清单会漏版本**。① `git fetch upstream --tags` 时 `v0.1.5`–`v0.1.9` 被拒（`would clobber existing tag`）——本地 `v0.1.5`(`432f441` 完结基线)…`v0.1.9`(`9e1e8e0`) 是**我们自己的**发布 tag，上游另有一套同名 tag（不同提交）；而 `v0.1.19/v0.1.20/v0.1.21` 是**上游**的 tag。看到 `v0.1.x` 先 `git log -1 --format="%an %s" <tag>` 认作者，别默认是自己发的。② 本文件与 `AGENTS.md` 的「上游基线」写法让上游 **0.1.15–0.1.18** 直接从清单里消失了（全局代理、原生邮件链接、**大模型逐段双语翻译** 1444+267 行、邮件图片/字体），一直到看上游截图才发现有「大模型翻译」这个功能我们完全没有。**规则：同步时按上游 tag 列表逐个核对（`git tag -l 'v0.1.*'` + `git log v<旧的>..upstream/main`），不能只看自己的清单；清单本身也要写明它覆盖到哪个 tag 为止。** 另：本仓库历史是重写过的单一初始提交 `432f441`，与 `upstream/main` **无共同祖先**（`git merge-base` 无输出），所以上游改动一律 `git show <sha>:<path>` / `git diff` 逐块搬，**`cherry-pick` 不可用**。评估记录见 `docs/UPSTREAM_REVIEW_0_1_20_0_1_21.md`。
+
+53. **全量版本比较的做法（不靠人记清单）**。① 上游 tag 与我们的同名，先把上游那半套抓进独立命名空间：`git fetch upstream '+refs/tags/*:refs/upstream/tags/*' --no-tags`（本地 `refs/tags/v0.1.0–v0.1.9` 是我们的，上游的只在 `refs/upstream/tags/*`）。② 跑 `npm run upstream:matrix`（`scripts/upstream-matrix.mjs`），逐上游版本（v0.1.0→v0.1.21）对照本地 HEAD，输出 `docs/UPSTREAM_VERSION_MATRIX.md`：总览表 + 本地缺 / 本地偏薄 / 本地更大三档。③ 判定是启发式（路径同名 + 行数比例），只用来找候选：**改名或重写过的功能会误报「本地缺」**（例：上游 `archive_location.rs`/`archive-integrity.tsx` 其实对应我们 App.tsx 里的存档位置与「校验存档」），逐项结论必须人工归类。④ 首轮结果证实漏项集中在 **0.1.2–0.1.9**（`rule_runs.rs` 1159 行、`rule-runs.tsx`、`archive_location.rs`+`archive-location.tsx`+`archive-integrity.tsx`、`LICENSE`/`NOTICE`）与 **0.1.15–0.1.18**（`proxy.rs`、`mail_images.rs`、`mail_styles.rs`、`translation.rs`）；`src-tauri/src/rules.rs` 上游 690 行 / 本地 176 行是唯一的「核心功能本地偏薄」。
+
 ## 移植清单（上游基线 `v0.1.19`）
+
+> 2026-10-19 更新：上游 `upstream/main` 已同步到 **`331e05c`（上游 0.1.21）**。本清单仍是**已移植**基线（上游 `v0.1.19` = `037d7aa`）；
+> 0.1.20 / 0.1.21 的可合并性与建议批次、以及**旧清单缺口 0.1.15–0.1.18（含大模型双语翻译）**，
+> 一律见 `docs/UPSTREAM_REVIEW_0_1_20_0_1_21.md`。tag 提醒：`v0.1.19/v0.1.20/v0.1.21` 是**上游**的，`v0.1.5–v0.1.9`、`v0.2.0` 是**我们的**。
 
 **后端**
 
