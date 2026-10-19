@@ -815,3 +815,47 @@ GitHub CI 和两架构发布工作流已推送；首次 Checks 已成功，Relea
 **发现一处该补的校验（未做）**：上游 `release.yml` 会 `test -s` 断言包内四个许可文件，我们批次 0.5 配了 `bundle.resources` 但 CI 不校验，补 4 行 `test -s` 即可防回归。
 
 **交接**：因用户要把 opencode 降级到 v1（读不到 v2 会话），`docs/HANDOFF.md` 已整体重写为自包含版本；`docs/RULES_PORT_UPSTREAM.md` 追加第 55 条（workflow 差异与不可照搬项）。
+
+## 设置二级导航与后台任务五卡（2026-10-19）
+
+用户对 B 线下一批给定三点：①设置「按上游二级导航，内部我们的组合优先」；②规则先做条件扩展 + 首次匹配快照（顺序动作引擎后置）；③旧待决策项只选「后台任务改为上游五张独立卡」（未读口径与发送记录排序保持现状，双语翻译继续挂起）。
+
+**设置页结构**
+
+- 新增 `src/components/settings-layout.tsx`（照搬上游：shadcn `Tabs` 纵向/横向切换，容器 `< 900px` 时由 `ResizeObserver` 自动换成顶部导航；`forceMount + hidden` 保持各分类挂载，切换分类不丢未保存输入，切换后内容区回到顶部）。
+- 五个分类按我们自己的内容归位：**邮箱账号** = 账号卡片 + 签名 + 收件范围；**本地存档** = 完整保存卡 + 存档校验；**应用偏好** = 通知与启动 + 间隔与外观；**后台任务** = 五张独立卡；**关于雁信** = 更新、运行说明与版本。页头改为「设置与账号 / 管理邮箱、本地存档与日常使用偏好。」，「添加账号」移入邮箱账号分类标题右侧。
+- `storage-tools.tsx` 拆成 `StorageTools`（仅顶部两张偏好卡）与 `ArchiveTools`（存档校验卡），原「活动与诊断」整卡删除；规则页与 `queueArchives` 的「查看任务」改为跳到后台任务分类。
+
+**后台任务五卡**
+
+- 新增 `src/components/task-panel-header.tsx` + `task-panel-header.test.tsx`（照搬上游：标题/说明/箭头整块是折叠触发器，右侧独立刷新；刷新至少 600ms 可见、防重复点击、卸载清理计时器、失败 toast）。
+- `archive-jobs` / `server-operations` / `folder-health` / `server-copy` 四个面板新增 `defaultCollapsed`，统一改用 `TaskPanelHeader`；折叠时内容不渲染（`CollapsibleContent`），但面板本身保持挂载与轮询。`server-copy` 保留我们卡内的「任务（N）」二级折叠。
+- App 的第五张卡是「最近活动」（最近 15 条日志，默认折叠，刷新走主列表 `refresh`）。
+
+**样式**
+
+- `index.css` 新增设置工作区：`.settings-workspace`（flex 纵向、`max-width:1440px`、`overflow:hidden`）、`.settings-navigation`（宽 176px，横向时满宽可滚）、`.settings-panels`（`flex:1` + 独立滚动）、`.settings-section`（`max-width:1040px`、分类间距 24px）、分类标题与 `storage-tools/storage-card/info-strip` 的边距归零。
+
+**验证**
+
+- 门禁：`npm run check:ui`、`npm run format:check`、`npx tsc --noEmit`、`npx vitest run`（54 文件 / **436 例**）、`npm run test:desktop`（18 例）、`npm run build` 全绿；产物 `dist/assets/index-*.css` 已 grep 到 `.settings-workspace` / `.settings-navigation` / `.settings-panels` 规则。
+- 开发预览（Playwright + Chrome，1380×900）：左侧导航 176px，内容区 813px，分类最大宽 792px，无横向溢出；应用偏好两张卡 441 / 339px（`1.3fr : 1fr`）；后台任务五卡默认全部 `aria-expanded=false`，展开与每卡刷新可用；820px 宽自动切为顶部导航（`data-orientation=horizontal`，导航 539px），仍无横向溢出。
+- 切换分类后未保存的「侧栏字号 = 大」仍保留；控制台无错误。
+- 本轮未动 Rust；规则批次尚未开始。**待用户验收，未提交。**
+
+### 验收反馈修订（2026-10-19）
+
+用户看过装机/开发预览后提了五点，均已处理：
+
+1. **后台任务顺序**：「最近活动」移到第一张，其余顺序不变（完整保存任务 → 服务器状态同步 → 目录来源检查 → 服务器文件夹操作）。
+2. **签名区左移并压扁问候语预览**：签名卡的表头/内容横向内边距 `24px → 14px`，左栏 `260px → 230px`、列间距 `16px → 12px`；问候语预览卡上下内边距压到 4px、内容区 4px、清掉 `mail-html-container` 的外边距，实测预览高度 **138px → 82px**。同时修掉一个既有死规则：`MailSignatures` 用 `Collapsible asChild` 包 `Card`，Radix 会把根节点的 `data-slot` 覆盖为 `collapsible`，所以原来按 `[data-slot="card"]:has(> .mail-signature-layout)` 写的紧凑间距从未生效；改成 `[data-slot="collapsible"]:has(> .mail-signature-layout)` 后表头/内容间距才真正落地。
+3. **全部收件箱勾选横向三列**：勾选区改为 `.inbox-scope-grid`（3 列、左对齐、`8px/16px` 间距，窄于 700px 退两列）；**收件箱始终选中且不可取消**（`disabled`），旧配置里没有 INBOX 时也会在前端补齐并在保存时带上。
+4. **账号配置高级默认折叠**：编辑账号时不再 `setAdvanced(!!editing)`，改为每次打开都 `false`；开关补 `aria-expanded` / `aria-controls`。
+5. **「不必点箭头就能展开」确认**：`TaskPanelHeader` 的标题与说明整块都是折叠触发器（箭头只是视觉提示），刷新按钮独立，点标题/说明任意位置都能展开或收起。
+
+**验证**
+
+- 门禁：`check:ui`、`format:check`、`tsc --noEmit`、`vitest`（54 文件 / **437 例**）、`test:desktop` 18、`build` 全绿；产物 CSS 已 grep 到 `.mail-signature-layout{padding:12px 14px}`、`.inbox-scope-grid{grid-template-columns:repeat(3,…)}` 与 700px 两列降级。
+- 浏览器实测（1380×900）：后台任务首卡为「最近活动」；签名内容左缘 560 → 551px、问候语预览高 82px；账号配置「服务器与高级配置」`aria-expanded=false` 且无 `.advanced-fields`；无控制台错误。
+- 收件箱勾选的三列布局由 `inbox-scope.test.tsx` 断言 `.inbox-scope-grid` 与收件箱 `disabled`，保存范围含 INBOX；App 用例同步改为「收件箱 + 工作」= `10 / 8`。
+- **仍待用户验收，未提交。**

@@ -217,3 +217,7 @@ c8b3b38 feat: 移植上游富文本写信编辑器（前端）
 - 服务器删除被永久阻塞时，待删邮件会一直隐藏；考虑加「阻塞时重新露出」兜底。
 - B 类：更新说明 Markdown 渲染、富文本增量（本轮已并入富文本移植）。
 - C 类：全局网络代理（暂不做）。
+
+56. **设置分类导航可以照搬上游，但分类内部要按本地组合归位；后台任务卡移植时别把内容留在折叠区外**。`settings-layout.tsx` 本身可直接用（纵向/横向 `Tabs` + `ResizeObserver < 900px` + `forceMount + hidden` 保留未保存输入），但内容必须重排：我们的 `StorageTools` 原本是「通知与启动 / 间隔与外观 / 存档校验 / 活动与诊断」四卡，本批拆成 `StorageTools`（前两卡）与 `ArchiveTools`（存档校验），「活动与诊断」不再作为一张卡，而是后台任务分类里的五张独立卡（完整保存任务 / 服务器状态同步 / 服务器文件夹操作 / 目录来源检查 / 最近活动）。移植 `TaskPanelHeader` 时：① 刷新按钮至少 600ms 可见且**不延迟发布新数据**，重复点击要防抖；② 四个面板新增 `defaultCollapsed`，`CardContent` 必须包进 `CollapsibleContent`（`archive-jobs` 连 `CardFooter` 一起包），否则折叠只收标题、内容仍露在外面；③ 折叠只影响渲染，面板的挂载与轮询不能停；④ 本地 `server-copy` 卡内还保留一层「任务（N）」折叠（上游已去掉），移植上游的面板测试时要先点开内层再断言。⑤ 写测试注意 `forceMount + hidden`：所有分类都在 DOM 里，`section.textContent` 会命中隐藏分类，断言「当前分类」要用 `.settings-section:not([hidden])` 或 `!panel.hidden` 取可见面板。
+
+57. **`Collapsible asChild` 会把 `Card` 的 `data-slot` 覆盖成 `collapsible`，按 `[data-slot="card"]` 写的样式会静默失效**。`MailSignatures` / `InboxScope` 都是 `<Collapsible asChild><Card>…`，Radix 把 props 合并到 Card 根节点后，`data-slot="card"` 被 `data-slot="collapsible"` 顶掉。表现是签名卡「紧凑间距」规则（`padding-top/bottom:12px`）一直没生效、卡片显得很高。修法：按折叠根节点匹配 `[data-slot="collapsible"]:has(> .mail-signature-layout)`，内容区（`CollapsibleContent asChild` + `CardContent`）的 `data-slot` 同样会变成 `collapsible-content`，需要直接给业务类（如 `.mail-signature-layout`）写 padding。另：问候语预览要压扁时，注意 `[data-slot="collapsible"]:has(...) [data-slot="card-content"]`（0,3,0）会压过 `.greeting-preview-frame [data-slot="card-content"]`（0,2,0），覆盖规则要把 `:has()` 带上或改用更高特异性。
