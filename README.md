@@ -39,6 +39,12 @@ _所有展示截图均来自浏览器演示模式，使用项目内置的虚构�
 
 ![按主题自动归入本地文件夹的示例规则](docs/screenshots/rules-demo.png)
 
+## 使用许可
+
+**个人自用免费，包含处理自己的工作邮件；企业统一部署、商业集成或销售需另行授权。**
+
+项目源码公开，采用 [Anser Personal Use License](LICENSE)，不是允许不受限商业使用的 MIT/Apache/GPL 许可。[使用边界与商业授权说明](docs/LICENSING.md)。第三方依赖保留原许可。
+
 ## 下载与安装
 
 1. 前往 [Releases](https://github.com/wanghlstar/anser/releases) 下载最新版 DMG。
