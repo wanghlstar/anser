@@ -776,6 +776,42 @@ GitHub CI 和两架构发布工作流已推送；首次 Checks 已成功，Relea
 - 门禁：`npm run format:check`、`npm run check:ui`、`npx vitest run`（53 文件 / **432 例**）、`npm run test:desktop`（18 例）、`npm run build`、`cargo test --manifest-path src-tauri/Cargo.toml`（**343 passed / 1 ignored**）全绿。
 - **打包验证**：`npx tauri build --bundles app --config '{"bundle":{"createUpdaterArtifacts":false}}'`（用 `--config` 关掉更新产物，避免覆盖 11:32 那对 `雁信.app.tar.gz`/`.sig`），产出 `src-tauri/target/release/bundle/macos/雁信.app`（30.92 MiB）。改前的包 `Contents/Resources/` **只有 `icon.icns`**，改后为 `LICENSE`/`NOTICE`/`LICENSING.md`/`licenses/shadcn-ui-MIT.txt`，三方 sha256（仓库原文 = 包内副本 = 上游原文）全部一致。`NOTICE` 里写的 `licenses/shadcn-ui-MIT.txt in App resources` 由此成立。
 - 注意：本地 `雁信.app.tar.gz`/`.sig` 仍是 11:32 的旧包（未含许可文件）；`/Applications/雁信.app` 装机版同为旧包，需重装才含许可文件。
-- **待用户验收，未提交。**
+- **已验收并提交**：`73b9a28`（许可文件与配置）+ `dfabcc7`（本节文档记录与关键发现 54）。
 
 **其他已确认事实**：上游 `LICENSE` 从 v0.1.19 到 v0.1.21 未变（blob `7d806ab7…`）；上游 `package.json` 为 `anser` 0.1.21、我们为 `yanxin` 0.2.0；上游 `Cargo.toml` tauri features 含 `devtools`，我们没有（不动）。
+
+## B 线范围与排序定稿、workflow 差异核对（2026-10-19）
+
+用户对 `docs/UPSTREAM_REVIEW_0_1_20_0_1_21.md` 第七节批次表逐条给了结论。**本轮只改文档，不动业务代码**；同时回答了「workflow 有不同么」。
+
+**用户原话**
+
+> 1a Dock 未读角标 可做可不做，我们已经做了 托盘，优先级最低
+> 1b 没太明白是做什么
+> 2 设置的风格要做，但是要结合我们自己的个性化重新设计
+> 3 要做，规则参考上游 ，源头一样，只是我们落后，加了 规则处理的部分
+> 后面 的 等上面完成了， 再安排计划
+> 另外 workflow 有不同么
+
+**定稿**
+
+- **1a Dock 未读角标**：挂起，最低优先（托盘已有未读数 `tray.set_title`）。
+- **1b `TaskPanelHeader`**：已解释——它只是上游「后台任务五张独立卡」的卡头（标题折叠 + 每卡刷新，最短转 600ms、去重、卸载防 setState、失败 toast），本身不是独立功能。我们不采纳五卡，**暂不做**。
+- **2 设置**：要做，但**不照搬上游五分类**，要「结合我们的个性化重新设计」。这是下一批（A 线第 1 项），开工前必须先问清「个性化」具体指什么。
+- **3 规则**：要做，**参考上游**。上游是 `rules.rs`(690) + `rule_runs.rs`(1299，顺序动作引擎)，我们是 `rules.rs`(176) + `rule_operations.rs`(695，单动作，已分叉 `inbox_scope`/`trusted_sources`) + `rule-executions.tsx`——所以是补能力，不是覆盖。
+- **原批次 4–7**：等前两项完成后再排。
+- 对应用户要求，`docs/UPSTREAM_REVIEW_0_1_20_0_1_21.md` 新增**第十二节**（排序定稿 + workflow 差异），第七节顶部加指针说明排序已被取代。
+
+**workflow 差异**（`ci.yml` + `release.yml` 之外，上游另有 3 个）
+
+| 文件                | 结论                                                                                                                                              |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ci.yml`            | 仅 rustfmt：上游阻塞、我们 advisory                                                                                                               |
+| `release.yml`       | 并发组、跳过已发布版本的实现、签名方式（上游自家 Apple 证书 vs 我们 tauri-action 默认）、发布方式（内联 `gh` + `--prerelease` vs `release-draft.mjs`） |
+| `homebrew.yml`      | 上游自家 tap，**不跟**                                                                                                                            |
+| `preview.yml`       | 上游 Pages 预览，**不跟**                                                                                                                         |
+| `signing-check.yml` | 上游固定证书回归，**不跟**                                                                                                                        |
+
+**发现一处该补的校验（未做）**：上游 `release.yml` 会 `test -s` 断言包内四个许可文件，我们批次 0.5 配了 `bundle.resources` 但 CI 不校验，补 4 行 `test -s` 即可防回归。
+
+**交接**：因用户要把 opencode 降级到 v1（读不到 v2 会话），`docs/HANDOFF.md` 已整体重写为自包含版本；`docs/RULES_PORT_UPSTREAM.md` 追加第 55 条（workflow 差异与不可照搬项）。
