@@ -1683,18 +1683,20 @@ it("shows activity and diagnostics in a card and keeps the about card last", asy
   const diagnostics = section.querySelector(".diagnostics-card")!;
   expect(diagnostics).not.toBeNull();
   expect(diagnostics.textContent).toContain("活动与诊断");
+  // 外层默认折叠：五个小项都不渲染
+  expect(diagnostics.textContent).not.toContain("最近活动");
+  await click(
+    [...diagnostics.querySelectorAll("button")].find((b) =>
+      b.textContent?.includes("活动与诊断"),
+    )!,
+  );
   expect(diagnostics.textContent).toContain("最近活动");
   expect(diagnostics.textContent).toContain("服务器文件夹操作");
-  expect(diagnostics.textContent).not.toContain("异常目录暂停同步");
+  // 除「最近活动」外的四项默认展开，「目录来源检查」的异常提示直接可见
+  expect(diagnostics.textContent).toContain("异常目录暂停同步");
   expect(section.querySelector(".storage-card")).not.toBeNull();
   expect(section.querySelector(".storage-tools")).not.toBeNull();
   expect(section.querySelector(".info-strip")).not.toBeNull();
-  await click(
-    [...diagnostics.querySelectorAll("button")].find((b) =>
-      b.textContent?.includes("目录来源检查"),
-    )!,
-  );
-  expect(diagnostics.textContent).toContain("异常目录暂停同步");
   // 关于与更新仍在 dev-note 之前。
   const about = section.querySelector(".settings-about")!;
   expect(about.textContent).toContain("关于与更新");

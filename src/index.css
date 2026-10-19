@@ -1652,34 +1652,28 @@ button.nav-collapse .collapse-chevron {
   gap: 12px;
   margin: 12px 0;
 }
-/* 顶部两卡同排、上下拉伸等高 */
+/* 顶部两卡同排：左卡放四个开关，右卡放三个下拉与保存，左宽右窄；
+   两卡等高，但不再逐行对齐 */
 .storage-tools-top {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1.3fr 1fr;
   gap: 12px;
   align-items: stretch;
-}
-/* 下方两列自然高度；仅「活动与诊断」增长以与右列「存档校验」底对齐 */
-.storage-tools-bottom {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-  align-items: stretch;
-}
-.storage-tools-col {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  min-width: 0;
-}
-/* 下方两列的末卡都随列高增长，使「活动与诊断」与「存档校验」底边对齐 */
-.storage-tools-bottom .storage-tools-col > :last-child {
-  flex-grow: 1;
 }
 .diagnostics-card {
   justify-content: flex-start;
 }
-/* 「活动与诊断」外框：内部各子面板折叠成行，展开才渲染 */
+/* 「活动与诊断」外层默认折叠，展开后内部各子面板折叠成行、展开才渲染 */
+.diagnostics-collapsible {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.diagnostics-trigger {
+  justify-content: flex-start;
+  gap: 8px;
+  padding: 0;
+}
 .diagnostics-body {
   display: flex;
   flex-direction: column;
@@ -1697,8 +1691,9 @@ button.nav-collapse .collapse-chevron {
   font-size: 12px;
   color: var(--muted);
 }
+/* 展开后的内容与行头左缘齐头，五个子面板宽度一致 */
 .diagnostic-content {
-  padding: 4px 0 8px 6px;
+  padding: 4px 0 8px;
 }
 /* 压平内层子面板的卡片边框，只保留外框 */
 .diagnostics-card .diagnostics-body [data-slot="card"] {
@@ -1755,12 +1750,19 @@ button.nav-collapse .collapse-chevron {
   justify-content: space-between;
   gap: 10px;
 }
-/* 同行并排的下拉：两个选择器靠左相邻，保存按钮仍在最右 */
+/* 同行并排的下拉：三个选择器靠左相邻，保存按钮仍在最右 */
 .settings-tool-selects {
   display: flex;
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+/* 保留天数下拉与「已归档 N 封」同一行相邻 */
+.settings-tool-inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
 .settings-tool-row .select-field {
   border: 1px solid var(--border);
@@ -1769,6 +1771,14 @@ button.nav-collapse .collapse-chevron {
   padding: 7px;
   color: var(--foreground);
   font-size: 12px;
+  min-width: 96px;
+}
+/* 一行里的多个动作按钮成组靠右，不再被 space-between 拆散 */
+.settings-tool-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 .tier-log-trigger {
   justify-content: flex-start;
@@ -1811,14 +1821,21 @@ button.nav-collapse .collapse-chevron {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* 四个开关横排一行（左卡内宽约 550px，容纳四组的自然宽度）；
+   窄窗口整组换成两行两列，不把标签文字折行 */
 .settings-tool-switches {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
   gap: 8px 14px;
 }
-@media (max-width: 1150px) {
-  .settings-tool-switches {
-    grid-template-columns: 1fr;
+.settings-tool-switches > .settings-tool-row {
+  flex: 0 0 auto;
+}
+@media (max-width: 1279px) {
+  .settings-tool-switches > .settings-tool-row {
+    flex: 0 0 calc(50% - 7px);
   }
 }
 .settings-about {

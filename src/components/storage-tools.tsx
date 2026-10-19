@@ -8,7 +8,7 @@ import {
   LoaderCircle,
   AlertCircle,
   RefreshCw,
-  Type,
+  Bell,
   HardDrive,
 } from "lucide-react";
 import { call, isDemo, native } from "@/lib/api";
@@ -36,17 +36,20 @@ import { toast } from "sonner";
 
 /// 「活动与诊断」框内的一行：折叠展开后才渲染内容，
 /// 内层子面板的卡片边框由 CSS 压平，只留外框。
+/// 「最近活动」默认折叠，其余四项默认展开（沿用 0.1.5/0.1.6 的形态）。
 function DiagnosticRow({
   label,
   action,
   children,
+  defaultOpen = false,
 }: {
   label: string;
   action?: ReactNode;
   children: ReactNode;
+  defaultOpen?: boolean;
 }) {
   return (
-    <Collapsible className="diagnostic-row">
+    <Collapsible className="diagnostic-row" defaultOpen={defaultOpen}>
       <div className="diagnostic-row-head">
         <CollapsibleTrigger asChild>
           <Button variant="ghost" size="sm" className="diagnostic-trigger">
@@ -157,6 +160,7 @@ export function StorageTools({
     });
     return () => cleanup();
   }, []);
+  // 同一张卡里的三个下拉一起保存：后台检查间隔、延时发送、侧边栏字号
   async function save() {
     setSaving(true);
     try {
@@ -164,24 +168,12 @@ export function StorageTools({
         ...preferences,
         syncIntervalMinutes: interval,
         sendCountdownSeconds: countdown,
+        sidebarScale: scale,
       };
       await call("save_preferences", { preferences: p });
       setPreferences(p);
-      toast.success("后台检查间隔已更新");
-    } catch (e) {
-      toast.error(String(e));
-    } finally {
-      setSaving(false);
-    }
-  }
-  async function saveScale() {
-    setSaving(true);
-    try {
-      const p = { ...preferences, sidebarScale: scale };
-      await call("save_preferences", { preferences: p });
-      setPreferences(p);
       document.documentElement.style.setProperty("--nav-scale", String(scale));
-      toast.success("侧边栏字号已更新");
+      toast.success("设置已保存");
     } catch (e) {
       toast.error(String(e));
     } finally {
@@ -350,7 +342,10 @@ export function StorageTools({
     <div className="storage-tools">
       <div className="storage-tools-top">
         <Card className="settings-tool">
-          <h3>系统通知</h3>
+          <div className="settings-tool-title">
+            <Bell size={18} />
+            <h3>通知与启动</h3>
+          </div>
           <div className="settings-tool-switches">
             <div className="settings-tool-row justify-between">
               <Label htmlFor="new-mail-notifications">新邮件通知</Label>
@@ -383,6 +378,19 @@ export function StorageTools({
                 onCheckedChange={(enabled) => void saveDockVisible(enabled)}
               />
             </div>
+            <div className="settings-tool-row justify-between">
+              <Label htmlFor="auto-start">开机自启</Label>
+              <Switch
+                id="auto-start"
+                checked={desktop?.autoStart || false}
+                disabled={
+                  !desktop ||
+                  desktopBusy ||
+                  (!desktop.autoStartAvailable && !desktop.autoStart)
+                }
+                onCheckedChange={(enabled) => void autoStart(enabled)}
+              />
+            </div>
           </div>
           <p>
             新邮件和发送结果使用系统通知；首次导入旧邮件不通知，横幅由 macOS
@@ -392,12 +400,19 @@ export function StorageTools({
             开启 Dock
             图标时始终显示；关闭时仅在打开窗口时显示，关闭或最小化窗口会自动隐藏，菜单栏图标仍可打开主窗口。
           </p>
+          <p>
+            {desktop?.autoStartAvailable === false
+              ? "开发预览依赖前端服务，请在正式应用中开启开机自启。"
+              : "登录 Mac 后自动在后台启动，继续收信和处理定时发送。"}
+          </p>
+          {isDemo() && <p>演示模式不修改系统启动项。</p>}
         </Card>
         <Card className="settings-tool">
           <div className="settings-tool-title">
             <Clock3 size={18} />
-            <h3>后台检查</h3>
+            <h3>间隔与外观</h3>
           </div>
+          {/* 三个下拉同行并排（含义看卡底说明），合并后的保存按钮靠右 */}
           <div className="settings-tool-row">
             <div className="settings-tool-selects">
               <SelectField
@@ -424,57 +439,8 @@ export function StorageTools({
                   </SelectOption>
                 ))}
               </SelectField>
-            </div>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={
-                !ready ||
-                saving ||
-                (interval === preferences.syncIntervalMinutes &&
-                  countdown === (preferences.sendCountdownSeconds ?? 5))
-              }
-              onClick={() => void save()}
-            >
-              {saving ? "保存中…" : "保存"}
-            </Button>
-          </div>
-          <div className="settings-tool-row justify-between">
-            <Label htmlFor="auto-start">开机自启</Label>
-            <Switch
-              id="auto-start"
-              checked={desktop?.autoStart || false}
-              disabled={
-                !desktop ||
-                desktopBusy ||
-                (!desktop.autoStartAvailable && !desktop.autoStart)
-              }
-              onCheckedChange={(enabled) => void autoStart(enabled)}
-            />
-          </div>
-          <p>IMAP 优先实时收取；此间隔用于定时补查和 POP3。</p>
-          <p>
-            延时发送：点「发送邮件」后先收起写信窗口，倒计时结束再发送；
-            期间可继续操作其他功能，也能撤回或立即发送。
-          </p>
-          <p>
-            {desktop?.autoStartAvailable === false
-              ? "开发预览依赖前端服务，请在正式应用中开启开机自启。"
-              : "登录 Mac 后自动在后台启动，继续收信和处理定时发送。"}
-          </p>
-          {isDemo() && <p>演示模式不修改系统启动项。</p>}
-        </Card>
-      </div>
-      <div className="storage-tools-bottom">
-        <div className="storage-tools-col">
-          <Card className="settings-tool">
-            <div className="settings-tool-title">
-              <Type size={18} />
-              <h3>外观</h3>
-            </div>
-            <div className="settings-tool-row">
               <SelectField
-                aria-label="侧边栏字号"
+                aria-label="侧栏字号"
                 value={scale}
                 disabled={!ready || saving}
                 onValueChange={(value) => setScale(Number(value))}
@@ -489,24 +455,197 @@ export function StorageTools({
                   </SelectOption>
                 ))}
               </SelectField>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={
-                  !ready || saving || scale === (preferences.sidebarScale ?? 1)
-                }
-                onClick={() => void saveScale()}
-              >
-                {saving ? "保存中…" : "保存"}
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={
+                !ready ||
+                saving ||
+                (interval === preferences.syncIntervalMinutes &&
+                  countdown === (preferences.sendCountdownSeconds ?? 5) &&
+                  scale === (preferences.sidebarScale ?? 1))
+              }
+              onClick={() => void save()}
+            >
+              {saving ? "保存中…" : "保存"}
+            </Button>
+          </div>
+          <p>IMAP 优先实时收取；此间隔用于定时补查和 POP3。</p>
+          <p>
+            延时发送：点「发送邮件」后先收起写信窗口，倒计时结束再发送；
+            期间可继续操作其他功能，也能撤回或立即发送。
+          </p>
+          <p>侧栏字号：调整左侧栏文字大小，立即生效，无需重启。</p>
+        </Card>
+      </div>
+      <Card className="settings-tool">
+        <div className="settings-tool-title">
+          <HardDrive size={18} />
+          <h3>存档校验</h3>
+        </div>
+        <div className="settings-tool-row">
+          <span className="text-sm">
+            {tier?.externalDir
+              ? `外置存档：${tier.externalDir}`
+              : "未设置外置存档目录"}
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void pickExternalDir()}
+          >
+            {tier?.externalDir ? "更改…" : "选择目录…"}
+          </Button>
+        </div>
+        <div className="settings-tool-row">
+          <div className="settings-tool-inline">
+            <SelectField
+              aria-label="本地保留天数"
+              value={tier?.retentionDays ?? 30}
+              disabled={tierBusy}
+              onValueChange={(v) => void saveTier({ retentionDays: Number(v) })}
+            >
+              {[7, 14, 30, 90].map((n) => (
+                <SelectOption key={n} value={n}>
+                  保留 {n} 天
+                </SelectOption>
+              ))}
+              <SelectOption value={0}>永久保留本地</SelectOption>
+            </SelectField>
+            <span className="text-sm">
+              {tierLog?.total != null
+                ? `已归档 ${tierLog.total.toLocaleString("zh-CN")} 封`
+                : "外置盘未连接"}
+            </span>
+          </div>
+          <div className="settings-tool-actions">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={tierBusy || !tier?.externalDir}
+              onClick={() => void runTierNow()}
+            >
+              {tierBusy ? "处理中…" : "立即归档"}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={tierBusy || !tier?.externalDir}
+              onClick={() => void recallTier()}
+            >
+              取回本地
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={tierBusy}
+              onClick={() => void normalizeNames()}
+            >
+              规范目录
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={checking}
+              onClick={() => void check()}
+            >
+              {checking && <LoaderCircle className="animate-spin" size={14} />}
+              校验存档
+            </Button>
+          </div>
+        </div>
+        <p>
+          收到超过保留天数的邮件，其本地存档会自动移到外置目录（按邮件日期计算，
+          随盘生成 index.html
+          索引，任何机器用浏览器打开即可检索）。未带外置盘时：
+          账户与近期邮件不受影响，打开旧邮件会提示连接外置盘。「校验存档」会核对本地原件与附件的完整性。
+          {tier && tier.pending > 0 && (
+            <>
+              {" "}
+              当前待归档 <strong>{tier.pending}</strong> 封。
+            </>
+          )}
+          {tier?.externalDir &&
+            !tier.externalReachable &&
+            "（外置盘当前未连接）"}
+        </p>
+        <Separator className="settings-tool-divider" />
+        <div className="settings-tool-row">
+          <span className="text-sm">
+            {checking
+              ? "正在校验原始邮件与附件…"
+              : health
+                ? `校验 ${health.healthy} / ${health.checked} 封通过`
+                : "尚未校验"}
+          </span>
+          {health && (
+            <small className="settings-tool-note">
+              最近校验：
+              {new Date(health.checkedAt).toLocaleString("zh-CN", {
+                hour12: false,
+              })}
+            </small>
+          )}
+        </div>
+        {isDemo() && <p>演示模式仅展示示例校验结果。</p>}
+        {health && health.problems.length > 0 && (
+          <div className="archive-problems" role="alert">
+            <p>
+              <AlertCircle size={14} /> {health.problems.length}{" "}
+              封需要检查，可从备份恢复
+            </p>
+            {health.problems.map((p) => (
+              <div key={p.mailId}>
+                <strong>{p.subject || "（无主题）"}</strong>
+                <span>{p.error}</span>
+              </div>
+            ))}
+          </div>
+        )}
+        <Collapsible>
+          <CollapsibleTrigger asChild>
+            <Button variant="ghost" size="sm" className="tier-log-trigger">
+              最近归档记录（{tierLog?.entries.length ?? 0}）
+            </Button>
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <div className="tier-log-list">
+              {tierLog && tierLog.entries.length > 0 ? (
+                tierLog.entries.map((entry, i) => (
+                  <div
+                    key={`${entry.archivedAt}-${entry.subject}-${i}`}
+                    className="tier-log-item"
+                  >
+                    <span className="tier-log-date">
+                      {formatArchivedAt(entry.archivedAt)}
+                    </span>
+                    <span className="tier-log-subject">
+                      {entry.subject || "（无主题）"}
+                    </span>
+                    <span className="tier-log-sender">{entry.sender}</span>
+                  </div>
+                ))
+              ) : (
+                <p>暂无归档记录</p>
+              )}
+            </div>
+          </CollapsibleContent>
+        </Collapsible>
+      </Card>
+      {/* 外层默认折叠：五个诊断行都不渲染；展开后「最近活动」仍折叠，其余四项默认展开 */}
+      <Card className="settings-tool diagnostics-card">
+        <Collapsible className="diagnostics-collapsible" defaultOpen={false}>
+          <div className="settings-tool-title">
+            <CollapsibleTrigger asChild>
+              <Button variant="ghost" size="sm" className="diagnostics-trigger">
+                <Activity size={18} />
+                <h3>活动与诊断</h3>
+                <ChevronRight size={14} className="collapse-chevron" />
               </Button>
-            </div>
-            <p>调整左侧栏文字大小，立即生效，无需重启。</p>
-          </Card>
-          <Card className="settings-tool diagnostics-card">
-            <div className="settings-tool-title">
-              <Activity size={18} />
-              <h3>活动与诊断</h3>
-            </div>
+            </CollapsibleTrigger>
+          </div>
+          <CollapsibleContent>
             <div className="diagnostics-body">
               <DiagnosticRow
                 label="最近活动"
@@ -530,180 +669,22 @@ export function StorageTools({
                   )}
                 </div>
               </DiagnosticRow>
-              <DiagnosticRow label="服务器状态同步">
+              <DiagnosticRow label="服务器状态同步" defaultOpen>
                 <ServerOperations />
               </DiagnosticRow>
-              <DiagnosticRow label="服务器文件夹操作">
+              <DiagnosticRow label="服务器文件夹操作" defaultOpen>
                 <DirectoryOperationsPanel />
               </DiagnosticRow>
-              <DiagnosticRow label="完整保存任务">
+              <DiagnosticRow label="完整保存任务" defaultOpen>
                 <ArchiveJobsPanel />
               </DiagnosticRow>
-              <DiagnosticRow label="目录来源检查">
+              <DiagnosticRow label="目录来源检查" defaultOpen>
                 <FolderHealthPanel />
               </DiagnosticRow>
             </div>
-          </Card>
-        </div>
-        <div className="storage-tools-col">
-          <Card className="settings-tool">
-            <div className="settings-tool-title">
-              <HardDrive size={18} />
-              <h3>存档校验</h3>
-            </div>
-            <div className="settings-tool-row">
-              <span className="text-sm">
-                {tier?.externalDir
-                  ? `外置存档：${tier.externalDir}`
-                  : "未设置外置存档目录"}
-              </span>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => void pickExternalDir()}
-              >
-                {tier?.externalDir ? "更改…" : "选择目录…"}
-              </Button>
-            </div>
-            <div className="settings-tool-row">
-              <span className="text-sm">
-                {tierLog?.total != null
-                  ? `已归档 ${tierLog.total.toLocaleString("zh-CN")} 封`
-                  : "外置盘未连接"}
-              </span>
-            </div>
-            <div className="settings-tool-row">
-              <SelectField
-                aria-label="本地保留天数"
-                value={tier?.retentionDays ?? 30}
-                disabled={tierBusy}
-                onValueChange={(v) =>
-                  void saveTier({ retentionDays: Number(v) })
-                }
-              >
-                {[7, 14, 30, 90].map((n) => (
-                  <SelectOption key={n} value={n}>
-                    保留 {n} 天
-                  </SelectOption>
-                ))}
-                <SelectOption value={0}>永久保留本地</SelectOption>
-              </SelectField>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={tierBusy || !tier?.externalDir}
-                onClick={() => void runTierNow()}
-              >
-                {tierBusy ? "处理中…" : "立即归档"}
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={tierBusy || !tier?.externalDir}
-                onClick={() => void recallTier()}
-              >
-                取回本地
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={tierBusy}
-                onClick={() => void normalizeNames()}
-              >
-                规范目录
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={checking}
-                onClick={() => void check()}
-              >
-                {checking && (
-                  <LoaderCircle className="animate-spin" size={14} />
-                )}
-                校验存档
-              </Button>
-            </div>
-            <p>
-              收到超过保留天数的邮件，其本地存档会自动移到外置目录（按邮件日期计算，
-              随盘生成 index.html
-              索引，任何机器用浏览器打开即可检索）。未带外置盘时：
-              账户与近期邮件不受影响，打开旧邮件会提示连接外置盘。「校验存档」会核对本地原件与附件的完整性。
-              {tier && tier.pending > 0 && (
-                <>
-                  {" "}
-                  当前待归档 <strong>{tier.pending}</strong> 封。
-                </>
-              )}
-              {tier?.externalDir &&
-                !tier.externalReachable &&
-                "（外置盘当前未连接）"}
-            </p>
-            <Separator className="settings-tool-divider" />
-            <div className="settings-tool-row">
-              <span className="text-sm">
-                {checking
-                  ? "正在校验原始邮件与附件…"
-                  : health
-                    ? `校验 ${health.healthy} / ${health.checked} 封通过`
-                    : "尚未校验"}
-              </span>
-              {health && (
-                <small className="settings-tool-note">
-                  最近校验：
-                  {new Date(health.checkedAt).toLocaleString("zh-CN", {
-                    hour12: false,
-                  })}
-                </small>
-              )}
-            </div>
-            {isDemo() && <p>演示模式仅展示示例校验结果。</p>}
-            {health && health.problems.length > 0 && (
-              <div className="archive-problems" role="alert">
-                <p>
-                  <AlertCircle size={14} /> {health.problems.length}{" "}
-                  封需要检查，可从备份恢复
-                </p>
-                {health.problems.map((p) => (
-                  <div key={p.mailId}>
-                    <strong>{p.subject || "（无主题）"}</strong>
-                    <span>{p.error}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-            <Collapsible>
-              <CollapsibleTrigger asChild>
-                <Button variant="ghost" size="sm" className="tier-log-trigger">
-                  最近归档记录（{tierLog?.entries.length ?? 0}）
-                </Button>
-              </CollapsibleTrigger>
-              <CollapsibleContent>
-                <div className="tier-log-list">
-                  {tierLog && tierLog.entries.length > 0 ? (
-                    tierLog.entries.map((entry, i) => (
-                      <div
-                        key={`${entry.archivedAt}-${entry.subject}-${i}`}
-                        className="tier-log-item"
-                      >
-                        <span className="tier-log-date">
-                          {formatArchivedAt(entry.archivedAt)}
-                        </span>
-                        <span className="tier-log-subject">
-                          {entry.subject || "（无主题）"}
-                        </span>
-                        <span className="tier-log-sender">{entry.sender}</span>
-                      </div>
-                    ))
-                  ) : (
-                    <p>暂无归档记录</p>
-                  )}
-                </div>
-              </CollapsibleContent>
-            </Collapsible>
-          </Card>
-        </div>
-      </div>
+          </CollapsibleContent>
+        </Collapsible>
+      </Card>
     </div>
   );
 }
