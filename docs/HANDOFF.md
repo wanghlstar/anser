@@ -7,18 +7,20 @@
 
 ```text
 项目：雁信 / Anser（Tauri 2 + React/TypeScript + shadcn/ui + Rust + SQLite）。
-仓库 /Users/wanghlstar/Mytools/anser，分支 feat/port-upstream-a（已推 origin），最新 tag v0.2.0（Alpha 预发布通道）；上游已 fetch 到 upstream/main = 331e05c（上游 0.1.21）。
+仓库 /Users/wanghlstar/Mytools/anser，分支 feat/port-upstream-a（本地领先 origin 6 笔，**未推送**），最新 tag v0.2.0（Alpha 预发布通道）；上游已 fetch 到 upstream/main = 331e05c（上游 0.1.21）。
 
-**当前状态（两件事）**
+**当前状态（三件事）**
 
-① 刚提交的「设置与账号」页重排（检查点提交 `0672f93` + tag `checkpoint-2026-10-19-settings-compact`，**已装机，等你验收**）。第一版装机后用户反馈了三条：①「活动与诊断」要整卡默认折叠、内层只折叠「最近活动」、其余四项展开 ②「已归档 N 封」并进「保留 N 天」那一行 ③顶卡恢复紧凑（四个开关横排一行、三个下拉同行）并把「侧边栏字号」改「侧栏字号」。三条都已改完，开发预览里量过几何（数据见 docs/IMPLEMENTATION.md 的「同日修订」小节），`/Applications/雁信.app` 里就是这一版（0.2.0，PID 61892 起于 2026-10-19 11:32）。要整轮退回：`git reset --hard 2d357d4` 或 `git revert 0672f93`。
+① 「设置与账号」页重排**已验收通过并提交**（原检查点提交 `0672f93` 已拆为 `6afe0d1` 源码 + `689d183` 文档；回滚点 tag `checkpoint-2026-10-19-settings-compact` 仍在 `0672f93`）。第一版装机后用户反馈了三条：①「活动与诊断」要整卡默认折叠、内层只折叠「最近活动」、其余四项展开 ②「已归档 N 封」并进「保留 N 天」那一行 ③顶卡恢复紧凑（四个开关横排一行、三个下拉同行）并把「侧边栏字号」改「侧栏字号」。三条都已改完，开发预览里量过几何（数据见 docs/IMPLEMENTATION.md 的「同日修订」小节），`/Applications/雁信.app` 里就是这一版（0.2.0，PID 61892 起于 2026-10-19 11:32）。要整轮退回：`git reset --hard 2d357d4` 或 `git revert 0672f93`。
 
 ② 刚做完**上游同步与移植评估**（只改文档，没动业务代码）。结论：上游自我们移植基线（上游 v0.1.19 = 037d7aa）以来只有两个实质提交 —— `3d48afc`（0.1.20：邮件工作流 + 规则条件/状态快照 + 未读口径 + Dock 角标）与 `1229985`（0.1.21：设置五分类导航 + 后台任务卡片反馈）；另发现**旧清单缺口**：上游 0.1.15–0.1.18 从未评估（含**大模型逐段双语翻译**）。逐项可合并性、建议批次、待决策项全在 **docs/UPSTREAM_REVIEW_0_1_20_0_1_21.md**。
+
+③ 刚做完 **B 线批次 0.5（补齐许可证家族）**：用户选「原样照搬上游」，并同意一并补「许可证随 App 交付」。新增 `LICENSE`、`NOTICE`、`docs/LICENSING.md`、`docs/licenses/shadcn-ui-MIT.txt`（与上游 v0.1.21 **逐字节相同**）；`package.json` 加 `license` 字段、`src-tauri/Cargo.toml` 加 `license-file`、`src-tauri/tauri.conf.json` 的 `bundle` 段补 `resources` 四条映射、`README.md` 补使用许可段。重打包实测：改前包 `Contents/Resources/` 只有 `icon.icns`，改后四个许可文件齐全（仓库原文 = 包内副本 = 上游原文，sha256 三方一致）。提交 `73b9a28`（许可文件与配置）+ `dfabcc7`（文档记录）。**下一批起点待用户定**（建议批次 1：Dock 未读角标 + `TaskPanelHeader`）。
 
 **优先级已定：先定本地界面，再同步上游。** 开工先做五件事，然后向我确认两条工作线怎么排：**A 本地界面 / 个性化实现**（我们自己要的界面与行为改动、自研功能，需求由我描述，**不要自行发明需求**）、**B 同步上游**（按批次搬上游 0.1.20/0.1.21 与 0.1.15–0.1.18 缺口的可合并项，排在 A 之后）。
 
 1. 读 AGENTS.md（项目长期约定：UI 铁律、真实收发范围、上游 cherry-pick 策略）与 docs/HANDOFF.md（交给你的这份）。
-2. 读 docs/IMPLEMENTATION.md 最后四节（「设置页重排」「同日修订」「上游同步与 0.1.20/0.1.21 移植评估」「上游全量版本比较脚本」）+ docs/RULES_PORT_UPSTREAM.md 的关键发现 37–53（原生窗、ACL 白名单、跨窗事件、主窗铺满、设置页排布、tag/清单两个坑、矩阵脚本口径）。
+2. 读 docs/IMPLEMENTATION.md 最后六节（「设置页重排」「同日修订」「上游同步与 0.1.20/0.1.21 移植评估」「上游全量版本比较脚本」「设置页重排验收通过并规范化提交」「B 线批次 0.5：补齐许可证家族」）+ docs/RULES_PORT_UPSTREAM.md 的关键发现 37–54（原生窗、ACL 白名单、跨窗事件、主窗铺满、设置页排布、tag/清单两个坑、矩阵脚本口径、许可证三层补法）。
 3. 读 docs/UPSTREAM_REVIEW_0_1_20_0_1_21.md（上游评估：逐项对照表、批次 0–7、4 个待决策项；**第十一节是以检查点 tag 为基准的双树比对结论**）与 docs/UPSTREAM_VERSION_MATRIX.md（逐版本对照 + 双树比对原始清单）；要复核就重跑 npm run upstream:matrix --local=<tag>（上游 tag 在 refs/upstream/tags/*）。
 4. 跑 git status / git log --oneline -6 / git tag -l | tail，核对工作树与 tag 对得上。**tag 有同名不同物**：v0.1.19/v0.1.20/v0.1.21 是上游的，v0.1.5–v0.1.9、v0.2.0 是我们的（用 `git log -1 --format="%an %s" <tag>` 认作者）。
 5. 需要跑起来看效果时优先 npm run desktop；之前起过一个后台 dev server（PID 73584，端口 1420，可能还活着），浏览器里已进演示模式并停在「设置与账号」页，可直接复用来量设置页几何。
@@ -29,7 +31,7 @@
 
 铁律（必须遵守）：
 - 中文界面；业务界面只用 shadcn/ui 组件，改 UI 后跑 npm run check:ui；不得回退已验收功能。
-- 每轮同步 docs/IMPLEMENTATION.md（末尾追加带日期小节）与 docs/RULES_PORT_UPSTREAM.md（编号「关键发现」，现 53 条）。
+- 每轮同步 docs/IMPLEMENTATION.md（末尾追加带日期小节）与 docs/RULES_PORT_UPSTREAM.md（编号「关键发现」，现 54 条）。
 - 改动先给我人工验收，我确认后再提交；提交信息用中文 feat:/fix:/docs: 风格，对应实际完成范围。
 - 验证要在「构建产物」和真机上做：合成 PointerEvent 会假通过，WKWebView 里 event.buttons 恒为 0；CSS 改动要 grep dist/assets/index-*.css 确认没有被生产构建吃掉；本机 browser.screenshot 不可用，看布局只能量 getBoundingClientRect。
 - **上游改动不能 cherry-pick**（本仓库与 upstream/main 无共同祖先），只能 `git show <sha>:<path>` / `git diff` 逐块搬。
@@ -44,13 +46,15 @@
 - 最近提交：`2d357d4` docs 交接文档与上游基线同步 → `fe6e600` release 0.2.0 版本号与发布说明 → `1a72a62` ci 发布流水线改走 Alpha 预发布通道 → `233f529` feat 主窗铺满状态跨重启、阅读窗悬浮入口 → `8bce831` feat 写信窗原生 → `3a2414c` feat 阅读窗原生 → `80b42de` feat 列表按账号收取、关闭确认与 ⌘W、浮动阅读窗。
 - tag：`v0.2.0`（最新正式发布 tag）、`v0.1.9`（上一版正式）；快照 tag `checkpoint-2026-10-18-compose-window`、`checkpoint-2026-10-17-port-upstream-a`、`baseline-2026-10-16`。
 - 门禁基线：`npx tsc -b`、`npm run format:check`（覆盖 src / scripts / `.github/workflows/*.yml` / `package*.json` / `src-tauri/*.json`）、`npm run check:ui`、`npx vitest run` = **53 文件 / 432 例**、`npm run test:desktop` = 18、`npm run build` 全绿；Rust 本轮未改（上次 `cargo test` = 343 passed / 1 ignored，共 344 例）。
-- 装机：`/Applications/雁信.app` = **0.2.0**（PID 61892，2026-10-19 11:32 起），即「同日修订」后的形态，**用户已验收通过**（装机版第一版 PID 75638 早于修订，已作废）。
+- 装机：`/Applications/雁信.app` = **0.2.0**（PID 61892，2026-10-19 11:32 起），即「同日修订」后的形态，**用户已验收通过**（装机版第一版 PID 75638 早于修订，已作废）。注意：该装机包与本机 `src-tauri/target/release/bundle/macos/雁信.app.tar.gz`（+ `.sig`）都是 **12:05 之前的版本，不含许可文件**（`Contents/Resources/` 只有 `icon.icns`）；重装或重打后才含 `LICENSE` / `NOTICE` / `LICENSING.md` / `licenses/shadcn-ui-MIT.txt`。
 
 ### 本轮改动（已提交为检查点 `0672f93` + tag `checkpoint-2026-10-19-settings-compact`）
 
-**A. 设置页重排那轮（业务改动，等验收）**：`src/components/storage-tools.tsx`、`src/components/storage-tools.test.tsx`、`src/index.css`、`src/App.test.tsx`、`docs/IMPLEMENTATION.md`（同轮小节 + 「同日修订」小节）、`AGENTS.md`（UI 铁律里那条设置页分组约定已按最终形态改写）。
+**A. 设置页重排那轮（已验收并提交）**：`src/components/storage-tools.tsx`、`src/components/storage-tools.test.tsx`、`src/index.css`、`src/App.test.tsx`、`docs/IMPLEMENTATION.md`（同轮小节 + 「同日修订」小节）、`AGENTS.md`（UI 铁律里那条设置页分组约定已按最终形态改写）。
 
-**B. 本次「同步上游 + 评估 + 全量版本比较」记录**：新增 `docs/UPSTREAM_REVIEW_0_1_20_0_1_21.md`、`docs/UPSTREAM_VERSION_MATRIX.md`（脚本生成）、`scripts/upstream-matrix.mjs`；`docs/RULES_PORT_UPSTREAM.md`（第 52–53 条 + 移植清单顶部提示，现 53 条）；`AGENTS.md` 与 `docs/IMPLEMENTATION.md` 里的上游基线说明；`package.json`（新增 `upstream:matrix`）；`docs/HANDOFF.md`（本文件）。
+**B. 本次「同步上游 + 评估 + 全量版本比较」记录**：新增 `docs/UPSTREAM_REVIEW_0_1_20_0_1_21.md`、`docs/UPSTREAM_VERSION_MATRIX.md`（脚本生成）、`scripts/upstream-matrix.mjs`；`docs/RULES_PORT_UPSTREAM.md`（第 52–53 条 + 移植清单顶部提示，本轮后现 54 条）；`AGENTS.md` 与 `docs/IMPLEMENTATION.md` 里的上游基线说明；`package.json`（新增 `upstream:matrix`）；`docs/HANDOFF.md`（本文件）。
+
+**C. 批次 0.5 许可证落地**：新增 `LICENSE`、`NOTICE`、`docs/LICENSING.md`、`docs/licenses/shadcn-ui-MIT.txt`；`package.json`（`license` 字段）、`src-tauri/Cargo.toml`（`license-file`）、`src-tauri/tauri.conf.json`（`bundle.resources` 四条映射）、`README.md`（使用许可段）；`docs/DEVELOPMENT_STATUS.md` 删掉失效的「未发现 LICENSE」条目；`docs/RULES_PORT_UPSTREAM.md` 第 54 条。
 
 **设置页重排的最终形态**（细节见 `IMPLEMENTATION.md` 最后一节及其「同日修订」小节）：
 
@@ -68,7 +72,7 @@
 
 产品约束：中文界面；正文仿宋 14pt；自带问候语/签名/全角空格首行缩进；存储与钥匙串标识 `dev.maildesk.desktop` 不能改。
 
-（本轮设置页重排**尚未验收**：第一版已装机给用户看过并收到三条反馈，已按反馈改完（外层折叠 / 紧凑排布 / 封数并进下拉行 / 字号改名），**等再次验收**。）
+（设置页重排已验收通过并提交（`6afe0d1` + `689d183`）；批次 0.5 许可证已验收通过并提交（`73b9a28` + `dfabcc7`）。）
 
 ## 四、常用命令
 
@@ -148,7 +152,7 @@ swift ax.swift dump 9 | grep "AXGroup t=写邮件"
 ## 六、待办与下一步
 
 1. ~~先定本轮设置页重排的去向~~ **已完成**：用户验收通过；已按中文 `feat:`/`docs:` 拆为两笔提交（`6afe0d1` 源码 + `689d183` 文档），回滚点 tag `checkpoint-2026-10-19-settings-compact` 仍在 `0672f93`。**A 线（本地界面）本轮暂不修改**，直接进第 2 条上游移植。
-2. **上游移植（评估已完成，等用户定取舍）**：读 `docs/UPSTREAM_REVIEW_0_1_20_0_1_21.md`。建议批次：0 收尾本轮设置页重排 → 1 纯新增（Dock 未读角标、TaskPanelHeader 组件）→ 2 设置五分类导航（`settings-layout.tsx` + App.tsx 重组 + 后台任务五卡）→ 3 规则条件与首次匹配状态快照 → 4 解析迁移（cc/优先级头块回填）→ 5 邮件工作流对齐（取消恢复编辑、排序待定）→ 6 未读口径（若用户要）→ 7 双语翻译（若用户要）。评估文档第八节有 4 个必须用户先定的取舍。
+2. **上游移植（进行中）**：读 `docs/UPSTREAM_REVIEW_0_1_20_0_1_21.md`。批次进度：**0 收尾设置页重排 —— 已完成**（`6afe0d1` + `689d183`）；**0.5 补许可证 + 缺口核对 —— 已完成**（`73b9a28` + `dfabcc7`；缺口核对确认 `archive-*`/`mail-filters` 是等价误报、`rule_runs.rs` 归批次 3）；**下一批起点待用户定**，建议 1 纯新增（Dock 未读角标、TaskPanelHeader 组件）→ 2 设置五分类导航（`settings-layout.tsx` + App.tsx 重组 + 后台任务五卡）→ 3 规则条件与首次匹配状态快照（含 `rule_runs.rs` 顺序动作引擎）→ 4 解析迁移（cc/优先级头块回填）→ 5 邮件工作流对齐（取消恢复编辑、排序待定）→ 6 未读口径（若用户要）→ 7 双语翻译（若用户要，依赖全局代理）。评估文档第八节有 4 个必须用户先定的取舍。
 3. **0.2.0 发布收尾**：核实 Actions 两架构构建与草稿 Release（DMG / app.tar.gz / sig / latest.json），再手动发布草稿；确认 `releases/latest` 仍指向 0.1.9。
 4. 已记录但暂缓（见 `RULES_PORT_UPSTREAM.md` 末尾）：通知横幅优先级与可靠性；阅读器图片自定义菜单与左键选中（需原生 `WKUIDelegate`）；服务器删除永久阻塞时待删邮件一直隐藏；更新说明 Markdown 渲染（现为纯文本）；全局网络代理。
 5. 新反馈优先：下一批迭代点等用户提出。
