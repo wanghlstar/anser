@@ -667,3 +667,15 @@ GitHub CI 和两架构发布工作流已推送；首次 Checks 已成功，Relea
 **② 悬浮入口**：`mail_windows` 登记表从「label → 邮件 id」升级为「label → `{id, subject}`」快照，新增 `mail_label_seq` / `mail_window_infos` / `emit_mail_windows`（事件 `mail-windows-changed`，`emit_to("main", …)`）；阅读窗的 `Focused` / `Destroyed` 窗口事件与 `mail_window_mail` 都重发该事件（窗口回到前台 → 悬浮条自动消失）。新增命令 `focus_mail_window(label)`（`unminimize()` + `set_focus()`）。`App.tsx` 新增 `NativeMailWindow` 类型、`mailWindows` 状态、`mail-windows-changed` 监听，并按未聚焦项渲染 `.compose-restore-bar` 条目（`bottom: calc(16px + (composeUnfocusedCount + index) * 52px)`，与「继续写信」共用同一条堆叠）。**没有新增 capability**：`focus_mail_window` 是 app 命令、不过 ACL；`mail-windows-changed` 只发给 `main`；阅读窗的 `capabilities/mail-window.json` 早就在白名单里（见 RULES 49）。
 
 **验证**：`cargo test` **343 passed / 1 ignored**（新增 2 例：`mail_window_registry_reports_subject_and_focus_for_the_floating_bar`、`window_fill_only_matches_windows_that_really_cover_the_screen`）、`npx vitest run` **53 文件 / 430 例**、`npx tsc --noEmit` 无输出、Prettier 通过、`npm run check:ui` 通过、`npm run test:desktop` 18/18、`npm run build` 成功（仅既存 >500kB 分包警告）。打包产物 `src-tauri/target/release/bundle/macos/雁信.app`（30.91 MiB，签名 "Yanxin Local Code Signing"；构建尾部是预期的 updater 私钥缺失报错）。真机核对项：「拖到顶部填充 → 退出 → 重开仍是铺满（且按当前 Dock/可用区重算）」「把窗口改成非铺满的自定义尺寸 → 重开后原样」「阅读窗切到后台 → 主窗底部出现「查看邮件」条 / 点击回到前台且条消失」。**未提交**（用户验收后按中文 `feat:` 提交）。
+
+## 0.2.0 发布准备（Alpha 预发布通道 + 版本号与发布说明）（2026-10-19）
+
+用户要求两件事：①把发布流水线「改成构建 alpha」②整理 0.1.9 到目前的改造内容，准备发布 0.2.0。拍板结果：**只把 GitHub Release 标成预发布**（不动版本号规则，不引入 `-alpha.N` 后缀），版本号一并升到 0.2.0 并写发布说明。
+
+**① Alpha 通道**：`.github/workflows/release.yml` 建 Release 的那行 `gh release create` 加 `--prerelease`（连同说明注释）。GitHub 的 `releases/latest` 不指向预发布，所以更新器端点 `releases/latest/download/latest.json` 仍指向上一版正式版 0.1.9，已装用户不会被自动升级；要试 Alpha 的人手动下载 DMG，或直接取 `releases/download/v版本/latest.json`。转正式版时删掉该参数重跑即可。原有的「同版本已发布即跳过」「发布后不可覆盖、草稿可重跑」逻辑未动。`docs/UPDATES.md` 的「已配置的流水线」补了一条 Alpha 通道说明。注意本机没有 `gh`，流水线只能在 GitHub Actions 上跑（推 tag 或网页手动 Run workflow）。
+
+**② 0.2.0 版本与发布说明**：`package.json` / `package-lock.json`（2 处）/ `src-tauri/Cargo.toml` / `src-tauri/Cargo.lock`（`yanxin` 条目）/ `src-tauri/tauri.conf.json` 五处一起升到 `0.2.0`；新增 `docs/releases/v0.2.0.md`，把 `v0.1.9` tag 之后的四项改动整理成用户可读的六节（原生阅读窗与写信窗、窗口不在前台时的「继续写信/查看邮件」入口、铺满跨重启、收取与列表、权限与事件修复、Alpha 安装说明），顶部点明不会自动推送给 0.1.9 用户。`npm run release:check`（版本四处一致 + 发布说明非空）通过。
+
+**③ 文档同步**：`docs/HANDOFF.md` 整体重写为 0.2.0 基线（四项改动的实现要点、发布命令、新的踩雷摘要 1–49、待办）；`AGENTS.md` 的「上游基线」清单按实际代码核对更新——原清单已过期（写「0.1.12 的完整富文本写信未移植」，实际 `c8b3b38` 已落地；0.1.11 的原附件转发与五项邮件快捷键也已在 `51e4d8a` 精简移植、`c8b3b38` 走 `forwardSource`，快捷键动作在 `src/lib/mail-shortcuts.ts` 里真的接线并在 `App.tsx` 使用），现改为「已移植到 0.1.19，逐项清单以 `docs/RULES_PORT_UPSTREAM.md` 为准；仍未移植只剩更新说明 Markdown 渲染与全局网络代理」。
+
+**门禁**：`npm run release:check` / `npm run format:check`（含 workflows、package*.json、src-tauri json）/ `npx tsc -b` / `cargo check` / `npm run test:desktop` 18 / `npx vitest run` **53 文件 430 例** / `cargo test` **343 passed, 1 ignored** 全绿。提交为中文 `ci:` / `release:` / `docs:` 三笔，随后推 `v0.2.0` tag 触发流水线（Alpha 预发布草稿，需在 GitHub 上核验 DMG / app.tar.gz / sig / latest.json 后手动发布）。
