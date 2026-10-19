@@ -14,6 +14,7 @@
 - `.github/workflows/release.yml`：推送 `v*` tag，或 Actions 手动运行；验证版本、发布说明和测试后，分别构建 Apple Silicon 与 Intel Mac 的 DMG、app.tar.gz 与签名。
 - 构建任务只产出架构独立的 artifacts；汇总任务检查两个架构文件齐全，统一生成 latest.json 并创建草稿 Release，避免并行写清单丢失架构。
 - 发布后的同版本不可覆盖。草稿可重跑上传；`releases/latest/download/latest.json` 只有正式发布后才可用。用户检查不读取草稿。
+- **Alpha 通道**：0.2.x 的 Release 由 `release.yml` 建为**预发布（`--prerelease`）**。GitHub 的 `releases/latest` 不会指向预发布，所以已装用户不会自动升到 Alpha；要试 Alpha 的人手动下载 DMG，或直接取 `releases/download/v版本/latest.json`。转正式版时去掉那一行 `--prerelease` 再跑。
 - 仓库是公开的 `yn-zxj/yanxin`；客户端不包含 GitHub token。端点仅 HTTPS，签名必须有效；失败时保留当前安装，不执行重启。
 
 ## 签名密钥
