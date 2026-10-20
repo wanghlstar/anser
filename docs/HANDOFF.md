@@ -7,7 +7,7 @@
 
 ```text
 项目：雁信 / Anser（Tauri 2 + React/TypeScript + shadcn/ui + Rust + SQLite）。
-仓库 /Users/wanghlstar/Mytools/anser，分支 feat/port-upstream-a。
+仓库 /Users/wanghlstar/Mytools/anser，基线分支 main。后续从 main 拉短分支开发，推送并发 PR。
 已推送 v0.2.1（Alpha，commit b890ad6）；GitHub Actions 正在构建/发布 Release。
 本地检查点：v0.20.1 / v0.20.2 / v0.20.3，均不推送、不发布。
 上游 upstream/main = 9398046（上游 0.1.23）。
@@ -24,7 +24,7 @@ CSS 改动要在 `dist/assets/index-*.css` 里 grep；本机 browser.screenshot 
 
 ## 二、当前基线
 
-- 分支 `feat/port-upstream-a`；发布提交 `b890ad6`（`release: 雁信 0.2.1（Alpha 发布）`）。
+- 基线 `main` = `7fbfe33`（含 `v0.2.1`）；后续从 `main` 拉 `feat/...` / `fix/...` 短分支，推送并发 PR，验收后合并。
 - 已推送：`v0.2.1` tag；`release.yml` 发布为正常 Release（标题 Alpha，不设 prerelease），完成后 `releases/latest` 指向它并支持应用内更新。
 - 历史发布：`v0.2.0` 是 Alpha 预发布；`v0.1.9` 及更早为上一稳定线。
 - 本地检查点：`v0.20.1`、`v0.20.2`、`v0.20.3`，**未推送、未发布**；版本号按用户当时原话使用 0.20.x，不是公开的 0.2.x 线。

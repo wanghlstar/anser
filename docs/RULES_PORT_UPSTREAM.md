@@ -4,7 +4,7 @@
 >
 > 继续「雁信（Anser）」开发。仓库 `/Users/wanghlstar/Mytools/anser`（活跃；旧仓库 `wanghlstar/yanxin` 已废弃）。先读 `AGENTS.md` 和本文件。
 >
-> **当前基线**：分支 `feat/port-upstream-a`，HEAD `8f8e94b`；`origin/main` = `15f73bd`（tag `v0.1.8`，已推送）；工作区干净。可回滚点：`checkpoint-2026-10-17-port-upstream-a` → `222ab9e`（本地未推送）。
+> **当前基线**：`main` = `7fbfe33`（tag `v0.2.1`，已推送）；后续从 `main` 拉短分支并经 PR 合并。上游 `upstream/main = 9398046`（0.1.23）。旧功能分支 `feat/port-upstream-a` 已并入 main 并删除。
 >
 > **本分支已完成（上游 A 类移植，均已提交）**：阅读快捷键、单封打印、清空草稿/废纸篓、精简版转发带原附件、正文图片超时重试、通知点击定位，以及一轮用户反馈修复（自寄邮件菜单/通知、重新编辑原样载入、问候语顶格、写信拖拽/粘贴附件、阅读器图片复制保存、废纸篓按当前文件夹独立、待确认删除按视图作用域清理）。
 >
