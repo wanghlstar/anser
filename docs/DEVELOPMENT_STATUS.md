@@ -1,6 +1,8 @@
-# 开发计划与继续检查点（更新：2026-10-09）
+# 开发计划与继续检查点（更新：2026-10-20）
 
-依据 PRD 第 5、8、9 节、实施记录和当前代码核查。当前仍为 Alpha；功能代码已存在与真实场景验收通过分别记录。早期回归使用临时存储/演示数据；2026-10-05 用户授权后增加当前腾讯企业邮箱与 QQ 邮箱互发测试，未向其他地址发送，未删除真实邮件。
+**当前发布：0.2.1 Alpha（2026-10-20）**。0.2 主线包含独立写信/阅读窗口、Dock/托盘不抢焦点、主窗关闭保留「继续写信」、悬浮条 X、旧规则组合动作兼容与 Retina 写信窗定位；tag `v0.2.1` 已推送，GitHub Actions 发布正常 Release 并支持应用内更新。`v0.20.1–v0.20.3` 是本地检查点，未发布。
+
+以下 2026-10-09 起的检查点保留为历史记录，最新门禁与窗口行为以本节、`HANDOFF.md` 和 `IMPLEMENTATION.md` 末节为准。依据 PRD 第 5、8、9 节、实施记录和当前代码核查。当前仍为 Alpha；功能代码已存在与真实场景验收通过分别记录。早期回归使用临时存储/演示数据；2026-10-05 用户授权后增加当前腾讯企业邮箱与 QQ 邮箱互发测试，未向其他地址发送，未删除真实邮件。
 
 ## 当前执行检查点
 
@@ -228,7 +230,7 @@ Thunderbird 历史迁移、Intel Mac、完整 Exchange、日历、移动端及�
 ### GitHub Release 与应用内更新检查点（2026-10-06）
 
 - **UPDATE-01A 代码完成**：首次推送 `43d858d`，正式应用启动后及每 6 小时检查 GitHub Release；有新版本才在“本地优先”前显示图标。更新中心使用 shadcn Dialog/Button/Progress/Alert，显示版本、纯文本发布说明、下载进度与失败，下载签名校验后才提供安装并重启；下载失败不安装，重启失败只重试重启。写信窗口未关闭时阻止安装，开发预览不下载安装。
-- 官方 tauri-plugin-updater 注册与权限已配置；端点 `https://github.com/yn-zxj/yanxin/releases/latest/download/latest.json`。保持产品名和 `dev.maildesk.desktop`；重启前等待当前收取/SMTP 锁并保存窗口状态。
+- 官方 tauri-plugin-updater 注册与权限已配置；端点 `https://github.com/wanghlstar/anser/releases/latest/download/latest.json`。保持产品名和 `dev.maildesk.desktop`；重启前等待当前收取/SMTP 锁并保存窗口状态。
 - **UPDATE-01B 构建启动**：Checks run `37407187998` 成功；Release macOS run `37407257846` 已通过登录后手动启动，构建结果尚在核验。两架构各自产出 DMG、app.tar.gz、sig，汇总检查齐全后生成 latest.json 并创建草稿 Release；禁止覆盖已发布版本。GitHub CLI 已登录仓库管理员账号，私钥通过 stdin 写入 Actions Secret，未进入仓库/日志。
 - 更新密钥在 `~/.config/yanxin-release/updater.key`（0600），不可重新生成替换，须保留仓库外备份。使用 `npm run release:secrets` 核对本机公钥再上传；`npm run desktop:build` 从本机匹配的密钥构建签名更新包。用户确认无 Developer ID 证书，当前没有 Apple 分发签名/公证；更新签名不替代 Apple 身份签名，首次安装及签名身份变化仍可能触发系统/钥匙串确认。
 - **本地验证**：120 项前端、170 项 Rust、13 项脚本、UI/TypeScript/生产构建通过。原生开发预览 Running 后确认 app PID 36686 的父进程为 Tauri 36422，验证设置页“关于与更新”、更新中心布局、检查状态、无正式发布时的失败反馈且顶部无更新图标。两个账号和 5460 本地存档保留；未发送测试邮件或改动真实远端来源。

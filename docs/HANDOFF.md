@@ -1,4 +1,4 @@
-# 会话交接（2026-10-20：0.20.2 —— 解析迁移/顺序规则/Dock/更新历史）
+# 会话交接（2026-10-20：0.2.1 Alpha 发布）
 
 > 本文件供新会话/新助手快速接手，**每次交接时整体重写**，只保留当前有效信息。
 > 长期约定在 `AGENTS.md`，进度记录在 `docs/IMPLEMENTATION.md`，踩过的坑在 `docs/RULES_PORT_UPSTREAM.md`。
@@ -7,17 +7,16 @@
 
 ```text
 项目：雁信 / Anser（Tauri 2 + React/TypeScript + shadcn/ui + Rust + SQLite）。
-仓库 /Users/wanghlstar/Mytools/anser，分支 feat/port-upstream-a。已提交到 0.20.2 本地检查点；
-本轮解析迁移/顺序规则/Dock/更新历史/全局恢复窗口快捷键与偏好布局已验收并进入 `v0.20.2` tag。
-origin/feat/port-upstream-a 仍停在 2d357d4，本地领先 15+ 笔且**未推送**。
-发布 tag：v0.2.0（已推送，Alpha 预发布）；v0.20.1 / v0.20.2 是**本地检查点 tag，不发布、不推送**。
+仓库 /Users/wanghlstar/Mytools/anser，分支 feat/port-upstream-a。
+已推送 v0.2.1（Alpha，commit b890ad6）；GitHub Actions 正在构建/发布 Release。
+本地检查点：v0.20.1 / v0.20.2 / v0.20.3，均不推送、不发布。
 上游 upstream/main = 9398046（上游 0.1.23）。
 
-当前状态（一句话）：0.20.2 已包含旧存档头块回填、`rule_runs` 顺序动作引擎、Dock 未读角标、
-更新说明 Markdown 与历史版本、全局恢复窗口快捷键；中英文界面、翻译与全局代理按用户决定暂缓，保持轻量化。
+当前状态（一句话）：0.2.1 包含 0.20.x 全部本地改进，重点是独立写信/阅读窗口的
+Dock/托盘行为、主窗关闭保留「继续写信」、悬浮条 X、旧规则组合动作兼容、Retina 写信窗定位。
 
-先读 AGENTS.md、本文件、docs/IMPLEMENTATION.md 最后几节、docs/RULES_PORT_UPSTREAM.md 关键发现 50–67。
-需要看效果时 `npm run desktop`；安装版 `/Applications/雁信.app` 为 0.20.2。
+先读 AGENTS.md、本文件、docs/IMPLEMENTATION.md 最后几节、docs/RULES_PORT_UPSTREAM.md 关键发现 50–68。
+需要看效果时 `npm run desktop`；安装版 `/Applications/雁信.app` 仍是 0.20.2 构建（0.2.1 发布后可手动装一次）。
 铁律：中文界面；业务 UI 只用 shadcn/ui；改 UI 跑 `npm run check:ui`；改动先验收再提交；
 上游与本地无共同祖先，不能 cherry-pick，只能 `git show <sha>:<path>` / `git diff` 逐块搬；
 CSS 改动要在 `dist/assets/index-*.css` 里 grep；本机 browser.screenshot 不可用，布局只量 getBoundingClientRect。
@@ -25,12 +24,13 @@ CSS 改动要在 `dist/assets/index-*.css` 里 grep；本机 browser.screenshot 
 
 ## 二、当前基线
 
-- 分支 `feat/port-upstream-a`；`v0.20.2` 指向 0.20.2 发布提交（`git log -1 v0.20.2` 可查）。
-- 已发布：`v0.2.0`（Alpha 预发布，GitHub `releases/latest` 仍指 0.1.9，已装用户不会自动升级）。
-- 本地检查点：`v0.20.1`、`v0.20.2`，**未推送、未发布**；版本号按用户原话使用 0.20.x（不是 0.2.x）。
-- 安装版：`/Applications/雁信.app` = **0.20.2 构建**（含全局恢复快捷键，PID 会变）。
-- 上游：`upstream/main = 9398046`（0.1.23）；上游 tag 在同名命名空间 `refs/upstream/tags/*`。看 tag 先认作者：`v0.1.19–v0.1.23` 是上游，`v0.1.5–v0.1.9`、`v0.2.0`、`v0.20.1/v0.20.2` 是我们的。
-- 门禁基线（本轮）：`npx tsc --noEmit`、`npm run format:check`、`npm run check:ui`、`npx vitest run` = **54 文件 / 452 例**、`npm run test:desktop` = **18**、`npm run build`；Rust `cargo test --manifest-path src-tauri/Cargo.toml` = **373 passed / 2 ignored**（`network::tests::idle_notification_*` 全量并发偶发失败，单跑通过）。
+- 分支 `feat/port-upstream-a`；发布提交 `b890ad6`（`release: 雁信 0.2.1（Alpha 发布）`）。
+- 已推送：`v0.2.1` tag；`release.yml` 发布为正常 Release（标题 Alpha，不设 prerelease），完成后 `releases/latest` 指向它并支持应用内更新。
+- 历史发布：`v0.2.0` 是 Alpha 预发布；`v0.1.9` 及更早为上一稳定线。
+- 本地检查点：`v0.20.1`、`v0.20.2`、`v0.20.3`，**未推送、未发布**；版本号按用户当时原话使用 0.20.x，不是公开的 0.2.x 线。
+- 安装版：`/Applications/雁信.app` = **0.20.2 构建**，含最新窗口/规则修复；0.2.1 的版本号更小，semver 不会自动降级，需手动安装一次。
+- 上游：`upstream/main = 9398046`（0.1.23）；上游 tag 在同名命名空间 `refs/upstream/tags/*`。看 tag 先认作者：`v0.1.19–v0.1.23` 是上游，`v0.1.5–v0.1.9`、`v0.2.0`、`v0.2.1`、`v0.20.1/v0.20.2/v0.20.3` 是我们的。
+- 门禁基线（本轮）：前端 **54 文件 / 454 例**、Rust **373 passed / 2 ignored**；`npx tsc -b`、`npm run format:check`、`npm run check:ui`、`npm run test:desktop` 18、`npm run build` 通过。
 - 装机命令（本地签名；末尾 updater 私钥报错是预期的）：
   ```bash
   cd ~/Mytools/anser
@@ -40,6 +40,15 @@ CSS 改动要在 `dist/assets/index-*.css` 里 grep；本机 browser.screenshot 
   # pkill -f "/Applications/雁信.app/Contents/MacOS/yanxin" → rm -rf /Applications/雁信.app
   # cp -R src-tauri/target/release/bundle/macos/雁信.app /Applications/雁信.app → open
   ```
+
+### 0.2.1 窗口行为（最新，别再回退）
+
+- 写信窗/阅读窗在前台时，`show_main_window` 直接返回：Dock、托盘、全局恢复快捷键不抢焦点、不最小化、不显示悬浮条。
+- 主窗收到 `CloseRequested` **只隐藏主窗**；不再把关闭请求转给写信窗。写信窗自然失焦成「继续写信」，恢复主窗后悬浮条仍在。
+- 写信窗自己的红灯/⌘W 仍由 `compose-window-*` 的 `CloseRequested` 拦下，发 `COMPOSE_WINDOW_CLOSE` 给写信窗，弹「保存 / 不保存 / 取消」。
+- 悬浮条按 `!focused` 渲染；「继续写信」右侧 X 在主窗内弹三选项（保存并关闭 / 不保存 / 取消），空白邮件直接舍弃；「查看邮件」右侧 X 直接调用 `close_mail_window`。
+- 写信窗位置按主窗逻辑坐标居中，并用当前显示器工作区钳制，修复 Retina 下出屏。
+- 旧规则的 `action: "read+trash"` / `"serverMove+read"` 由 `ruleActionSteps()` 拆成多步，编辑器不再空白。
 
 ## 三、本轮已完成（已验收）
 

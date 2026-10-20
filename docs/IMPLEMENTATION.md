@@ -1010,3 +1010,14 @@ GitHub CI 和两架构发布工作流已推送；首次 Checks 已成功，Relea
 - 验证：前端 54 文件 / 452 例；Rust 373 passed / 2 ignored；`tsc`、Prettier、`check:ui`、`test:desktop` 18、生产构建通过；已安装并实测快捷键录制/最小化恢复前置。
 - 上游基线更新为 `upstream/main = 9398046`（0.1.23）：0.1.22 新增中英文界面，0.1.23 仅版本一致性；尚未移植，任务见 `docs/HANDOFF.md` 第四节。
 - tag：`v0.20.2` 仅本地，不推送 `origin`。
+
+## 0.2.1 Alpha 发布（2026-10-20）
+
+- 版本号统一为 **0.2.1**（`package.json` / `package-lock.json` / `src-tauri/Cargo.toml` / `Cargo.lock` 的 `yanxin` / `src-tauri/tauri.conf.json`），新增 `docs/releases/v0.2.1.md`。这是 0.2 主线的正常发布，标题保留「Alpha」，不设 `--prerelease`，因此 `releases/latest` 指向它并支持应用内更新；0.2.0 用户可自动升级，0.20.x 本地检查点版本号更大，semver 不会自动降级，需要手动安装一次。
+- 窗口：`show_main_window` 在写信窗/阅读窗聚焦时直接返回，Dock、托盘、全局恢复快捷键不抢焦点；主窗 `CloseRequested` 只隐藏主窗，不再转发给写信窗；写信窗自己的红灯/⌘W 仍走保存确认；恢复主窗后「继续写信」不消失。
+- 悬浮条：新增 X。写信条在主窗弹「保存并关闭 / 不保存 / 取消」，空白邮件直接舍弃；阅读条调用新增的 `close_mail_window` 直接关闭。
+- 写信窗定位：Retina 下按主窗逻辑坐标居中（除以 `scale_factor`），并按当前显示器工作区钳制，修复新窗口跑到屏幕外。
+- 规则：`ruleActionSteps()` 把旧规则的 `read+trash` / `serverMove+read` 组合串拆成多个步骤，移动类动作才继承目标文件夹；编辑器不再显示空动作。
+- 发布流水线：`release.yml` 先建草稿、上传全部资产，再 `gh release edit --draft=false --prerelease=false --latest` 自动发布；标题「雁信 $VERSION（Alpha）」。
+- 验证：前端 54 文件 / 454 例、Rust 373 passed / 2 ignored；`tsc`、Prettier、`check:ui`、`test:desktop` 18、生产构建通过。本地检查点 `v0.20.3` 指向功能提交 `7160073`；发布 tag `v0.2.1` 指向其上的版本/发布说明提交 `b890ad6`。
+- tag：`v0.2.1` 已推送，触发 GitHub Actions；`v0.20.1/v0.20.2/v0.20.3` 仍为本地检查点。

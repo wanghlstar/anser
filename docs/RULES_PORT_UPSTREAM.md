@@ -52,7 +52,7 @@
 
 26. **写信窗「点外面自动最小化」的判定要能认全写信窗派生出来的 UI，别只列 role**。现在这四样都得进同一个 `closest()` 选择器：`.rich-image-zoom`（图片缩放 `− % +` 浮条，`createPortal(body)` + `role="toolbar"`）、`[data-sonner-toast]`（通知横幅，就地挂在 `#root` 里）、`[role="tooltip"]`（富文本工具条提示气泡）、`.compose-restore-bar`（另一封写信窗的「继续写信」还原条，就地渲染在 `#root` 里），再加上原本的 `dialog/alertdialog/listbox/menu`。漏掉它们的后果都一样：点一下缩放、点一下通知或点一下还原条，正在写的信就被收起来（用户反馈的「误触」）。**在写信窗里新增浮层时，把它的 role 或类名加进这个选择器**；要减少这种手工维护，可以给写信窗浮层统一加 `data-compose-ui` 标记再按标记认。
 
-27. **macOS 上 ⌘W 是原生菜单加速键，WKWebView 根本收不到这个 keydown**。`tauri::menu::Menu::default` 会给 `PredefinedMenuItem::close_window` 挂 ⌘W（File 与 Window 子菜单各一个），事件在 `NSApplication` 层就被处理掉，前端 `keydown` 监听不会触发；而 `PredefinedMenuItem` 只暴露 `id()/text()/set_text()`，改不了加速键。**先去改默认菜单会顺带弄坏已验收的 ⌘C/⌘V（同属 Edit 子菜单），不要动它**。做法：改在 Rust 侧拦 `WindowEvent::CloseRequested` —— 前端用 `set_compose_open(open)` 上报「当前有没有写信窗口」，为真时 `api.prevent_close()` 后 `window.emit("compose-close-requested")` 交给前端弹关闭确认，为假时才走原来的 `save_window_state + hide()`（否则 ⌘W 会把整个主窗口收进托盘，正是用户抱怨的「关的是整个邮件」）。前端再留一个 `keydown` 兜底，处理将来能收到键的场合。
+27. **macOS 上 ⌘W 是原生菜单加速键，但主窗和写信窗要分开处理**。`tauri::menu::Menu::default` 会给 `PredefinedMenuItem::close_window` 挂 ⌘W（File 与 Window 子菜单各一个），事件在 `NSApplication` 层就被处理，前端 `keydown` 收不到；不要改默认菜单，否则会弄坏 ⌘C/⌘V。**主窗 `CloseRequested` 只做 `save_window_state + hide()`，不要再用 `set_compose_open` 把关闭请求转给写信窗**：写信窗在前台时 ⌘W 本来就先到它；主窗收到关闭请求就说明主窗是 key window，此时隐藏主窗、让写信窗自然失焦成「继续写信」才是用户要的。写信窗自己的 `CloseRequested` 才拦：label 还在登记表里时 `prevent_close()` + `emit_to(label, COMPOSE_WINDOW_CLOSE)`，由写信窗弹「保存 / 不保存 / 取消」；前端确认后 `close_compose_window` 先摘登记再真正关，避免关不掉。
 
 28. **关闭有内容的写信窗口要「先问再关」，而且确认弹层本身不能触发自动最小化**。红点 ×、⌘W（原生与前端兜底）、Esc 三处走同一个 `requestClose()`：空白邮件直接舍弃、有内容弹「取消 / 不保存 / 保存」；**「不保存」= `delete_draft`**（离散掉自动保存的那份草稿），「保存」= `save_draft`，「取消」= 什么都不做继续编辑。另外这个确认弹层也是写信窗派生的 UI，自动最小化的 effect 必须把 `closePrompt` 加进早退条件与依赖数组，否则点弹层遮罩就会把写信窗收进「继续写信」还原条（RULES 26 的同一坑，role 白名单已覆盖 `alertdialog`，但组件内的早退判断也要同步）。
 
@@ -80,7 +80,7 @@
 
 40. **跨窗的「正在写信」判定别用布尔，用 Rust 报的草稿 id 列表**。主窗口原来靠 `composes.length > 0` 判断有没有在写信（键盘守卫、通知跳过、更新弹窗拦截、清空草稿箱保护）；写信窗搬走后主窗不再持有这些窗口。改法：Rust 在建窗/销毁窗时 `emit_to("main", "compose-windows-changed", ids)`（ids 从登记表里取 `draft.id`），主窗存成 `composeIds`，判定统一用 `composing = !!draft || composeIds.length > 0`，清空草稿箱的排除项也并上 `composeIds`。
 
-41. **主窗口按 ⌘W 时，如果只有原生写信窗在开，得把请求转给它**。Rust 的原生「关闭窗口」菜单项在主窗被拦下（不用收进托盘），原逻辑是通知主窗前端去关应用内那封信；写信窗搬走后主窗里没有这个对象。新增 `close_latest_compose_window`：从登记表里取序号最大的 `compose-window-N`，`emit_to(那个 label, "compose-close-requested")`。另外注意 Rust 侧 `window.emit(...)` 是**向所有窗口广播**，会误触主窗里处理应用内写信窗的同一个监听，所以这类定向通知一律用 `emit_to(label, ...)`。
+41. **不要再从主窗转发关闭请求给写信窗**。旧的 `close_latest_compose_window` / `compose-close-requested` 路径已经被 0.2.1 的「主窗关闭只隐藏」取代：主窗 `CloseRequested` 直接 `save_main_window_state + hide`；写信窗在前台时 ⌘W 会先命中它的 `CloseRequested`，走 `COMPOSE_WINDOW_CLOSE`。如果还看到主窗关掉写信窗的回归，先查是不是又把这套旧转发接回来了。Rust 侧定向通知一律用 `emit_to(label, ...)`，不要广播。
 
 42. **浏览器 / 演示模式 / 单测里没有原生窗口，写信窗要保留应用内浮窗外壳作为回退**。`openCompose` 只在 `native` 时 `invoke("open_compose_window")`，否则仍 `setComposes` 追加（jsdom 的 430 例前端测试跑的就是这条路）。所以 `ComposeDialog` 的浮动外壳代码与它的 37 例窗口管理测试**不删**——它们是非原生环境唯一的实现，只是应用打包后不再走。
 
@@ -116,7 +116,7 @@
 
 > 2026-10-20 更新：上游 `upstream/main` 已同步到 **`9398046`（上游 0.1.23）**。本清单仍是**已移植**基线（上游 `v0.1.19` = `037d7aa`）；
 > 0.1.20 / 0.1.21 评估见 `docs/UPSTREAM_REVIEW_0_1_20_0_1_21.md`；0.1.22/0.1.23 中英文界面与**旧清单缺口 0.1.15–0.1.18（含大模型双语翻译）**见 `docs/HANDOFF.md` 第四节。
-> tag 提醒：`v0.1.19–v0.1.23` 是**上游**的，`v0.1.5–v0.1.9`、`v0.2.0`、`v0.20.1/v0.20.2` 是**我们的**。
+> tag 提醒：`v0.1.19–v0.1.23` 是**上游**的，`v0.1.5–v0.1.9`、`v0.2.0`、`v0.2.1`、`v0.20.1/v0.20.2/v0.20.3` 是**我们的**。
 
 **后端**
 
@@ -241,3 +241,5 @@ c8b3b38 feat: 移植上游富文本写信编辑器（前端）
 65. **更新历史是后端拉取 + 前端消毒渲染两条链**。Rust 侧只访问固定 GitHub API、SemVer 排序、限制页数/字节并缓存；不要信任响应里的任意分页 URL。前端 `marked` 的 HTML 必须经 DOMPurify 白名单，链接只允许 http(s)/mailto，图片只允许外部 URL，点击链接走 `open_mail_link`。我们本轮不跟全局代理，请求保持 `no_proxy()`；以后做代理时再把 `proxy::current()` 接回来，别把 `no_proxy` 和 `.proxy()` 同时留着。
 
 66. **macOS 15 的后台应用可能拒绝 `NSApp.activateIgnoringOtherApps:`，全局快捷键恢复窗口不能只靠 `set_focus`**。表现：`⌘⌥` + 反引号后窗口 `AXMinimized=false`、`AXMain=true`，但进程 `frontmost=false`，前台仍是别的 App。修法分两层：① global shortcut handler 必须 `app.run_on_main_thread(...)` 后再 `show_main_window`，ObjC 激活调用不能留在插件的后台线程；② 主线程尝试 `NSRunningApplication.currentApplication activateWithOptions:` / `NSApplication.activate`，200ms 后**无条件**用 `/usr/bin/open -a <当前 .app>` 走 LaunchServices；不要用 `isActive` 判断，实测窗口已恢复、`isActive` 已为 true 时前台仍可能是 Finder。`open` 对已运行实例只发 reopen 事件，会再进单实例回调，但不会新建主窗口。另：`show_main_window` 里 `is_visible` 对「隐藏但未最小化」的窗口可能仍为 true，淡入判断要结合实际 `AXHidden`/`is_visible` 行为，避免恢复后停在 alpha 0。录制快捷键时还要先 `suspend_restore_shortcut` 注销当前全局键，否则按当前组合键会被全局热键先吞掉，设置按钮看起来“没反应”；取消/保存后由 `set_restore_shortcut` 重新注册。macOS 系统占用的组合键（如 ⌘ + 反引号 / ⌘⇧ + 反引号）无法录制，UI 要提示换一个；MacBook 上 ⌘⌥F2 实测录进去也不触发（F2 受 Fn/亮度层影响），默认不要用 F2。
+
+67. **独立写信/阅读窗在前台时，Dock/托盘/全局快捷键必须完全无操作**。`show_main_window` 先查 `compose_windows` 和 `mail_windows` 里是否有 `is_focused()` 的窗口，有就直接返回，不能先 `emit` 再 `show`；否则会把写信窗挤到后面，用户看到的是「点 Dock 把窗口收起来了」。主窗隐藏再恢复时，悬浮条只由 `compose-windows-changed` / `mail-windows-changed` 的 `focused` 驱动，不要再用 `app-reopened` 把未聚焦项强行改成聚焦，否则恢复后「继续写信」会消失。悬浮条右侧 X：写信条在主窗弹「保存并关闭 / 不保存 / 取消」，空白邮件直接舍弃；阅读条调 `close_mail_window` 直接关。写信窗几何按主窗逻辑坐标（除以 `scale_factor`）居中，再用当前显示器工作区钳制，避免 Retina 下出屏。

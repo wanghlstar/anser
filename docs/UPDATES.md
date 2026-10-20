@@ -12,10 +12,10 @@
 
 - `.github/workflows/ci.yml`：main 推送和 PR 执行前端/脚本/Rust 回归及 UI 检查和生产构建。
 - `.github/workflows/release.yml`：推送 `v*` tag，或 Actions 手动运行；验证版本、发布说明和测试后，分别构建 Apple Silicon 与 Intel Mac 的 DMG、app.tar.gz 与签名。
-- 构建任务只产出架构独立的 artifacts；汇总任务检查两个架构文件齐全，统一生成 latest.json 并创建草稿 Release，避免并行写清单丢失架构。
+- 构建任务只产出架构独立的 artifacts；汇总任务检查两个架构文件齐全，统一生成 latest.json，先创建草稿 Release，资产上传完成后自动发布，避免并行写清单丢失架构。
 - 发布后的同版本不可覆盖。草稿可重跑上传；`releases/latest/download/latest.json` 只有正式发布后才可用。用户检查不读取草稿。
-- **Alpha 通道**：0.2.x 的 Release 由 `release.yml` 建为**预发布（`--prerelease`）**。GitHub 的 `releases/latest` 不会指向预发布，所以已装用户不会自动升到 Alpha；要试 Alpha 的人手动下载 DMG，或直接取 `releases/download/v版本/latest.json`。转正式版时去掉那一行 `--prerelease` 再跑。
-- 仓库是公开的 `yn-zxj/yanxin`；客户端不包含 GitHub token。端点仅 HTTPS，签名必须有效；失败时保留当前安装，不执行重启。
+- **0.2.x Alpha 通道**：0.2.1 起由 `release.yml` 直接发布为正常 Release，标题标注「Alpha」，但不设 `--prerelease`。这样 `releases/latest` 会指向它，应用内更新可用；已安装 0.2.0 的用户可以自动升级。本地 `0.20.x` 检查点的版本号更大，semver 不会自动降级，需要手动安装一次 0.2.1。
+- 仓库是公开的 `wanghlstar/anser`；客户端不包含 GitHub token。端点仅 HTTPS，签名必须有效；失败时保留当前安装，不执行重启。
 
 ## 签名密钥
 
@@ -28,7 +28,7 @@
 1. 同步修改 package.json、package-lock.json（npm install --package-lock-only）、src-tauri/Cargo.toml、Cargo.lock 和 tauri.conf.json 的版本。
 2. 写 `docs/releases/v版本.md`，运行 `npm run release:check` 和回归，提交并推送。
 3. 推送对应 `v版本` tag，或者运行 `gh workflow run release.yml --ref main`。
-4. 等待两架构构建和草稿生成，核验 DMG、app.tar.gz、sig、latest.json 和版本说明；再发布草稿。当前 v0.1.2 仍属于 Alpha，不代表开发计划全部完成。
+4. 等待两架构构建完成；流水线会生成 DMG、app.tar.gz、sig、latest.json，并在资产上传后自动发布 Alpha Release。发布后核验 `releases/latest` 指向该版本。
 5. 用含更新器的旧正式版检查新版本、下载安装并重启，确认账号、本地存档、窗口及新版本号。
 
 ## 验收记录
