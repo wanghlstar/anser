@@ -1684,15 +1684,25 @@ it("organizes settings into sections and keeps background tasks in collapsible c
   const section = host.querySelector("section.workspace-panel")!;
   const tab = (label: string) =>
     [...section.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(
-      (b) => b.textContent?.trim() === label,
+      (b) => b.querySelector("span")?.textContent === label,
     )!;
   const visible = () =>
     [...section.querySelectorAll<HTMLElement>(".settings-section")].find(
       (panel) => !panel.hidden,
     )!;
-  // 默认停在邮箱账号
+  // 默认停在邮箱账号；过滤规则紧跟其后，且不再占用侧栏入口
   expect(visible().textContent).toContain("管理已连接的邮箱");
   expect(visible().querySelector(".settings-accounts")).not.toBeNull();
+  expect(
+    [...section.querySelectorAll('[role="tab"]')]
+      .slice(0, 2)
+      .map((tab) => tab.querySelector("span")?.textContent),
+  ).toEqual(["邮箱账号", "过滤规则"]);
+  expect(nav("过滤规则")).toBeNull();
+  // 过滤规则：原规则页内容进入设置二级分类
+  await click(tab("过滤规则"));
+  expect(visible().textContent).toContain("按账号和条件自动归类");
+  expect(visible().querySelector(".rule-list")).not.toBeNull();
   // 本地存档：完整保存卡 + 存档校验合在同一分类
   await click(tab("本地存档"));
   expect(visible().querySelector(".storage-card")).not.toBeNull();
@@ -1702,7 +1712,7 @@ it("organizes settings into sections and keeps background tasks in collapsible c
   expect(visible().querySelector(".storage-tools")).not.toBeNull();
   expect(visible().textContent).toContain("通知与启动");
   expect(visible().textContent).toContain("间隔与外观");
-  // 后台任务：五张独立卡，默认全部折叠，最近活动在最前
+  // 后台任务：六张独立卡，默认全部折叠，最近活动在最前
   await click(tab("后台任务"));
   expect(
     [...visible().querySelectorAll('[aria-label^="展开或收起"]')].map((b) =>
@@ -1710,6 +1720,7 @@ it("organizes settings into sections and keeps background tasks in collapsible c
     ),
   ).toEqual([
     "展开或收起最近活动",
+    "展开或收起规则处理任务",
     "展开或收起完整保存任务",
     "展开或收起服务器状态同步",
     "展开或收起目录来源检查",
@@ -1721,6 +1732,7 @@ it("organizes settings into sections and keeps background tasks in collapsible c
     "服务器文件夹操作",
     "目录来源检查",
     "最近活动",
+    "规则处理任务",
   ]) {
     const trigger = visible().querySelector(
       `[aria-label="展开或收起${title}"]`,
@@ -2237,6 +2249,18 @@ describe("mail list receive actions", () => {
     expect(labels).toContain("全部账号");
     expect(labels.some((label) => label?.includes("工作邮箱"))).toBe(true);
     expect(labels.some((label) => label?.includes("个人邮箱"))).toBe(true);
+  });
+  it("shows the account receive dropdown only in the all-inbox view", async () => {
+    for (const label of ["星标邮件", "已发送", "本地存档", "本地废纸篓"]) {
+      await click(nav(label));
+      expect(
+        host.querySelector('[aria-label="选择收取邮件的账号"]'),
+      ).toBeNull();
+    }
+    await click(nav("全部收件箱"));
+    expect(
+      host.querySelector('[aria-label="选择收取邮件的账号"]'),
+    ).not.toBeNull();
   });
   it("receives only the selected account from the header dropdown", async () => {
     const seed = await snapshot(localQuery);

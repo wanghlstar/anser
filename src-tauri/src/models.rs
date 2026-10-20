@@ -166,17 +166,36 @@ pub struct Rule {
     pub enabled: bool,
     pub mode: String,
     pub conditions: Vec<Condition>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub actions: Vec<RuleAction>,
     pub action: String,
     pub destination: String,
     #[serde(default)]
     pub source_folder: String,
     pub stop: bool,
 }
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuleAction {
+    pub action: String,
+    #[serde(default)]
+    pub destination: String,
+    #[serde(default)]
+    pub source_folder: String,
+}
 impl Rule {
     /// 本地动作可以叠加：`action` 里用 `+` `,` `，` `;` `；` 分隔写多个，
     /// 例如 `folder+read`。单个动作（旧数据）天然兼容。
     /// 服务器 COPY/MOVE 走独立任务队列，见 `rules::remote`。
     pub fn effective_actions(&self) -> Vec<String> {
+        if !self.actions.is_empty() {
+            return self
+                .actions
+                .iter()
+                .map(|a| a.action.clone())
+                .filter(|a| !a.is_empty())
+                .collect();
+        }
         self.action
             .split(['+', ',', '，', ';', '；'])
             .map(|a| a.trim().to_string())
@@ -189,7 +208,10 @@ impl Rule {
         let mut out: Vec<String> = Vec::new();
         for action in self.effective_actions() {
             let flag = matches!(action.as_str(), "read" | "unread")
-                .then(|| out.iter().position(|a| matches!(a.as_str(), "read" | "unread")))
+                .then(|| {
+                    out.iter()
+                        .position(|a| matches!(a.as_str(), "read" | "unread"))
+                })
                 .flatten();
             match flag {
                 Some(index) => out[index] = action,
@@ -398,6 +420,9 @@ pub struct Preferences {
     /// 写信「发送邮件」的撤销倒计时秒数；0 = 立即发送，无倒计时
     #[serde(default = "default_send_countdown_seconds")]
     pub send_countdown_seconds: u32,
+    /// 全局恢复窗口快捷键；空字符串表示不注册
+    #[serde(default = "default_restore_shortcut")]
+    pub restore_shortcut: String,
     /// 上次关窗时主窗口是否铺满屏幕（内部状态，不在设置页展示）。macOS 拖到顶部
     /// 的「填充」不置 zoom 位，插件记的 maximized 一直是 false，所以铺满的意图
     /// 得自己记；下次启动按当前屏幕可用区域重新铺满。
@@ -406,6 +431,9 @@ pub struct Preferences {
 }
 fn default_send_countdown_seconds() -> u32 {
     5
+}
+pub fn default_restore_shortcut() -> String {
+    "CommandOrControl+Alt+Backquote".into()
 }
 fn default_retention_days() -> u32 {
     30
@@ -469,6 +497,7 @@ impl Default for Preferences {
             archive_index_enabled: true,
             dock_visible: true,
             send_countdown_seconds: 5,
+            restore_shortcut: default_restore_shortcut(),
             window_fill: false,
         }
     }

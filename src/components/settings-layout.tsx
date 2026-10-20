@@ -1,10 +1,18 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Archive, History, Info, Mail, SlidersHorizontal } from "lucide-react";
+import {
+  Archive,
+  History,
+  Info,
+  ListFilter,
+  Mail,
+  SlidersHorizontal,
+} from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { Badge } from "./ui/badge";
 
 const sections = [
   { value: "accounts", label: "邮箱账号", icon: Mail },
+  { value: "rules", label: "过滤规则", icon: ListFilter },
   { value: "archive", label: "本地存档", icon: Archive },
   { value: "preferences", label: "应用偏好", icon: SlidersHorizontal },
   { value: "tasks", label: "后台任务", icon: History },
@@ -17,11 +25,13 @@ export function SettingsLayout({
   value,
   onValueChange,
   accountCount,
+  ruleCount,
   ...panels
 }: {
   value: string;
   onValueChange: (value: string) => void;
   accountCount: number;
+  ruleCount: number;
 } & Record<Section, ReactNode>) {
   const container = useRef<HTMLDivElement>(null);
   const panelContainer = useRef<HTMLDivElement>(null);
@@ -55,6 +65,11 @@ export function SettingsLayout({
               {section.value === "accounts" && (
                 <Badge variant="secondary" className="ml-auto">
                   {accountCount}
+                </Badge>
+              )}
+              {section.value === "rules" && ruleCount > 0 && (
+                <Badge variant="secondary" className="ml-auto">
+                  {ruleCount}
                 </Badge>
               )}
             </TabsTrigger>

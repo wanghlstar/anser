@@ -135,18 +135,32 @@ pub fn prepare(cache: &Path, raw: &[u8], account: &Account, index: usize) -> Res
         return Err(attachment.error.clone());
     }
     let bytes = archive::attachment(raw, index)?;
-    let name = filename(&attachment.name, &attachment.mime);
-    if !can_open(&name, &attachment.mime, &bytes) {
+    let identity = archive::digest(format!("{}:{index}", archive::digest(raw)).as_bytes());
+    prepare_with_identity(cache, &attachment.name, &attachment.mime, &bytes, identity)
+}
+
+pub fn prepare_file(cache: &Path, name: &str, mime: &str, bytes: &[u8]) -> Result<PathBuf> {
+    prepare_with_identity(cache, name, mime, bytes, archive::digest(bytes))
+}
+
+fn prepare_with_identity(
+    cache: &Path,
+    name: &str,
+    mime: &str,
+    bytes: &[u8],
+    identity: String,
+) -> Result<PathBuf> {
+    let name = filename(name, mime);
+    if !can_open(&name, mime, bytes) {
         return Err("该附件是程序或脚本，不支持直接预览；可使用下载按钮另存".into());
     }
     private_dir(cache)?;
     prune(cache, SystemTime::now());
-    let identity = archive::digest(format!("{}:{index}", archive::digest(raw)).as_bytes());
     let folder = cache.join(identity);
     private_dir(&folder)?;
     let path = folder.join(name);
     // Reuse exact bytes, but replace any edited preview with the original.
-    if fs::read(&path).ok().as_deref() != Some(bytes.as_slice()) {
+    if fs::read(&path).ok().as_deref() != Some(bytes) {
         archive::atomic_write(&path, &bytes)?;
     }
     #[cfg(unix)]

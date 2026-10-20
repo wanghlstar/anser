@@ -412,6 +412,12 @@ impl Store {
             .map_err(err)?;
         check(&tx, op)?;
         check_other_move(&tx, op)?;
+        if Self::rule_blocks_directory(&tx, &op.id)? {
+            return Err("关联规则尚未完成或已停止，未提交服务器操作".into());
+        }
+        if op.kind == "move" && Self::rule_blocks_move(&tx, &op.mail_id)? {
+            return Err("规则尚未完成正文核对或保存，未提交移动".into());
+        }
         if compatibility && op.kind != "move" {
             return Err("兼容移动类型无效".into());
         }
@@ -444,6 +450,9 @@ impl Store {
             || current.content_hash.is_empty()
         {
             return Err("缺少已保存的目标回执，不能移除原目录邮件".into());
+        }
+        if Self::rule_blocks_move(&tx, &current.mail_id)? {
+            return Err("规则尚未完成正文核对或保存，未移除原目录".into());
         }
         let receipt = current.receipt.as_ref().unwrap();
         if current.content_hash != op.content_hash

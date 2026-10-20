@@ -545,6 +545,46 @@ impl Store {
         }
         Ok(result)
     }
+    pub(crate) fn forward_file(
+        &self,
+        owner: &str,
+        token: &str,
+        file_id: &str,
+    ) -> Result<AttachmentBytes> {
+        id_valid(file_id)?;
+        let g = gate(&self.root)?;
+        let _guard = g.lock().map_err(err)?;
+        let db = self.db()?;
+        let live: bool = db
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM compose_sessions WHERE draft_id=?1 AND token=?2)",
+                params![owner, token],
+                |r| r.get(0),
+            )
+            .map_err(err)?;
+        if !live {
+            return Err("写信窗口已关闭或切换，附件读取已取消".into());
+        }
+        let data: Option<(String, String, usize, String)> = db
+            .query_row(
+                "SELECT name,mime,size,hash FROM compose_files WHERE id=?1 AND draft_id=?2",
+                params![file_id, owner],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .optional()
+            .map_err(err)?;
+        let (name, mime, size, hash) = data.ok_or("原附件副本不属于这份草稿，请重新准备")?;
+        let path = payload(&self.root, file_id)?;
+        regular(&path)?;
+        let bytes = fs::read(path).map_err(err)?;
+        if bytes.len() != size {
+            return Err("原附件副本大小变化，未读取".into());
+        }
+        if archive::digest(&bytes) != hash {
+            return Err("原附件副本校验失败，未读取".into());
+        }
+        Ok(AttachmentBytes { name, mime, bytes })
+    }
     pub(crate) fn collect_compose_files(&self, owner: &str) -> Result<()> {
         let g = gate(&self.root)?;
         let _guard = g.lock().map_err(err)?;
@@ -977,6 +1017,25 @@ mod tests {
                 .unwrap(),
             raw()
         );
+    }
+    #[test]
+    fn forwarded_file_can_be_opened_only_by_the_live_owner() {
+        let (_dir, store, mut d, source, token) = fixture();
+        d.forward_files = store.prepare_forward_files(&d.id, &token, &source).unwrap();
+        let file = &d.forward_files[0];
+        let opened = store.forward_file(&d.id, &token, &file.id).unwrap();
+        assert_eq!(opened.name, "report.pdf");
+        assert_eq!(opened.mime, "application/pdf");
+        assert_eq!(opened.bytes, [0, 255, 254, 1]);
+        assert!(store.forward_file(&d.id, "wrong-token", &file.id).is_err());
+        assert!(store
+            .forward_file("another-draft", &token, &file.id)
+            .is_err());
+        fs::write(payload(&store.root, &file.id).unwrap(), [1, 1, 1, 1]).unwrap();
+        assert!(store
+            .forward_file(&d.id, &token, &file.id)
+            .unwrap_err()
+            .contains("校验失败"));
     }
     #[test]
     fn stale_source_and_cancelled_publication_never_publish_or_change_original() {

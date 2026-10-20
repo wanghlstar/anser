@@ -96,6 +96,11 @@ export interface Condition {
   operator: string;
   value: string;
 }
+export interface RuleAction {
+  action: string;
+  destination: string;
+  sourceFolder?: string;
+}
 export interface Rule {
   id: string;
   name: string;
@@ -103,6 +108,7 @@ export interface Rule {
   enabled: boolean;
   mode: "all" | "any";
   conditions: Condition[];
+  actions?: RuleAction[];
   action: string;
   destination: string;
   sourceFolder?: string;
@@ -259,6 +265,8 @@ export interface Preferences {
   dockVisible?: boolean;
   /** 写信「发送邮件」的撤销倒计时秒数；0 = 立即发送 */
   sendCountdownSeconds?: number;
+  /** 全局恢复窗口快捷键，如 CommandOrControl+Alt+Backquote */
+  restoreShortcut?: string;
 }
 export interface TierInfo {
   externalDir: string;

@@ -7,6 +7,7 @@ import {
   prepareCompose,
   prepareEditorCompose,
 } from "./compose-format";
+import { preserveBlockFontStyles } from "./compose-fonts";
 import { newDraft } from "./api";
 import { FONT_DEFAULT, SIZE_DEFAULT } from "./fonts";
 describe("mail source formats", () => {
@@ -120,6 +121,28 @@ describe("mail source formats", () => {
     expect(result.source).toBe("**回复内容**");
     expect(result.body).toBe("回复内容");
     expect(result.html).not.toContain("原文");
+  });
+});
+
+describe("reedited source font styles", () => {
+  it("moves block font styles onto spans so the editor keeps the original signature", () => {
+    const draft = {
+      ...newDraft("account"),
+      html: '<html><body><div style="font-family:楷体, KaiTi;font-size:12pt;">祝您工作顺利<br>雁信</div><p>正文</p><div style="font-family:黑体;"><strong>重点</strong></div></body></html>',
+    };
+    const result = preserveBlockFontStyles(draft);
+    const doc = new DOMParser().parseFromString(result.html!, "text/html");
+    const span = (text: string) =>
+      [...doc.querySelectorAll<HTMLElement>("span")].find(
+        (item) => item.textContent === text,
+      )!;
+    expect(span("祝您工作顺利").style.fontFamily).toContain("楷体");
+    expect(span("祝您工作顺利").style.fontSize).toBe("12pt");
+    expect(span("雁信").style.fontFamily).toContain("楷体");
+    expect(span("重点").style.fontFamily).toContain("黑体");
+    expect(doc.querySelector("br")).toBeTruthy();
+    expect(doc.body.textContent).toContain("正文");
+    expect(doc.querySelector("p")?.textContent).toBe("正文");
   });
 });
 

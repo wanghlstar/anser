@@ -4,44 +4,60 @@ pub fn validate(rule: &Rule) -> Result<()> {
     if rule.name.trim().is_empty() || rule.conditions.is_empty() {
         return Err("规则需要名称和至少一个条件".into());
     }
-    let actions = rule.effective_actions_deduped();
-    const KNOWN: [&str; 7] = [
-        "folder",
-        "read",
-        "unread",
-        "star",
-        "trash",
-        "serverCopy",
-        "serverMove",
-    ];
-    if !["all", "any"].contains(&rule.mode.as_str()) || actions.is_empty() {
-        return Err("无效的规则配置".into());
+    if rule.actions.len() > 8 {
+        return Err("一条规则最多添加 8 个动作".into());
     }
-    if !actions.iter().all(|a| KNOWN.contains(&a.as_str())) {
-        return Err("无效的规则配置".into());
-    }
-    // 服务器 COPY/MOVE 走独立任务（有确认/重试状态机）：只能有一个，
-    // 且只允许搭配本机标记（已读/未读/星标），不能与归类、删除或另一个服务器动作叠加。
-    let remote_actions: Vec<&String> = actions
-        .iter()
-        .filter(|a| matches!(a.as_str(), "serverCopy" | "serverMove"))
-        .collect();
-    if remote_actions.len() > 1 {
-        return Err("服务器复制/移动不能同时使用两个服务器动作".into());
-    }
-    if let Some(server) = remote_actions.first() {
-        if actions
-            .iter()
-            .any(|a| a != *server && !matches!(a.as_str(), "read" | "unread" | "star"))
-        {
-            return Err("服务器复制/移动只能搭配标记已读/未读或星标".into());
+    if rule.actions.is_empty() {
+        let actions = rule.effective_actions();
+        if actions.is_empty() {
+            return Err("无效的规则配置".into());
+        }
+        if actions.len() > 8 {
+            return Err("一条规则最多添加 8 个动作".into());
+        }
+        for action in actions {
+            let mut step = rule.clone();
+            step.action = action;
+            validate_action(&step)?;
+        }
+    } else {
+        for action in &rule.actions {
+            let mut step = rule.clone();
+            step.actions.clear();
+            step.action = action.action.clone();
+            step.destination = action.destination.clone();
+            step.source_folder = action.source_folder.clone();
+            validate_action(&step)?;
         }
     }
-    if actions.iter().any(|a| a == "folder") && rule.destination.trim().is_empty() {
+    for c in &rule.conditions {
+        validate_condition(c)?;
+    }
+    Ok(())
+}
+
+fn validate_action(rule: &Rule) -> Result<()> {
+    if !["all", "any"].contains(&rule.mode.as_str())
+        || ![
+            "folder",
+            "read",
+            "unread",
+            "star",
+            "trash",
+            "serverCopy",
+            "serverMove",
+            "save",
+            "saveFolder",
+        ]
+        .contains(&rule.action.as_str())
+    {
+        return Err("无效的规则配置".into());
+    }
+    if matches!(rule.action.as_str(), "folder" | "saveFolder") && rule.destination.trim().is_empty()
+    {
         return Err("请输入本地目标文件夹".into());
     }
-    // 来源目录可以留空：留空时按邮件当前所在的活跃服务器目录动态解析
-    // （合并动作「移动到文件夹」的默认行为，等价于 Foxmail 的移动）。
+    // 服务器动作的来源目录可以留空：留空时按邮件当前所在的活跃服务器目录动态解析。
     if remote(rule)
         && (rule.account_id.is_empty()
             || rule.destination.is_empty()
@@ -52,12 +68,6 @@ pub fn validate(rule: &Rule) -> Result<()> {
                 .any(|s| s.bytes().any(|b| b < 32 || b == 127)))
     {
         return Err("服务器规则需要指定账号和不同的目标目录".into());
-    }
-    for c in &rule.conditions {
-        if remote(rule) && c.field == "body" {
-            return Err("服务器动作暂不支持正文条件，请先使用主题、发件人等条件".into());
-        }
-        validate_condition(c)?;
     }
     Ok(())
 }
@@ -99,8 +109,7 @@ fn validate_condition(c: &Condition) -> Result<()> {
     }
     if (c.field == "date" && !["before", "after"].contains(&c.operator.as_str()))
         || (c.field == "attachment" && c.operator != "equals")
-        || (matches!(c.field.as_str(), "read" | "starred" | "priority")
-            && c.operator != "equals")
+        || (matches!(c.field.as_str(), "read" | "starred" | "priority") && c.operator != "equals")
         || (c.field == "sizeKb"
             && !["greaterThan", "lessThan", "equals"].contains(&c.operator.as_str()))
         || (c.field == "ageDays"
@@ -168,7 +177,8 @@ pub enum MatchState {
 /// Read and star flags as observed when a rule chain first matched. Later
 /// actions may flip these flags, so every step keeps evaluating them against
 /// this small snapshot.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ObservedStatus {
     pub is_read: bool,
     pub starred: bool,
@@ -310,9 +320,7 @@ fn condition_matches(
         // such as "mark read" or "star" must not invalidate the remaining
         // steps of the same rule.
         "read" => return observed.map_or(mail.is_read, |s| s.is_read) == (c.value != "false"),
-        "starred" => {
-            return observed.map_or(mail.starred, |s| s.starred) == (c.value != "false")
-        }
+        "starred" => return observed.map_or(mail.starred, |s| s.starred) == (c.value != "false"),
         _ => return false,
     };
     text_match(text, &c.value, &c.operator)
@@ -344,10 +352,57 @@ pub fn body_available(mail: &Mail) -> bool {
     mail.saved_locally && !body_decode_failed(mail)
 }
 
-pub fn remote(rule: &Rule) -> bool {
-    rule.effective_actions()
+pub fn expand(configured: &[Rule]) -> Vec<Rule> {
+    configured
         .iter()
-        .any(|a| matches!(a.as_str(), "serverCopy" | "serverMove"))
+        .flat_map(|rule| {
+            let actions = if rule.actions.is_empty() {
+                rule.effective_actions()
+                    .into_iter()
+                    .map(|action| RuleAction {
+                        action,
+                        destination: rule.destination.clone(),
+                        source_folder: rule.source_folder.clone(),
+                    })
+                    .collect()
+            } else {
+                rule.actions.clone()
+            };
+            let last = actions.len().saturating_sub(1);
+            actions.into_iter().enumerate().map(move |(index, action)| {
+                let mut step = rule.clone();
+                step.id = if index == 0 {
+                    rule.id.clone()
+                } else {
+                    format!("{}#{}", rule.id, index)
+                };
+                step.action = action.action;
+                step.destination = action.destination;
+                step.source_folder = action.source_folder;
+                step.stop = rule.stop && index == last;
+                step.actions.clear();
+                step
+            })
+        })
+        .collect()
+}
+
+pub fn remote(rule: &Rule) -> bool {
+    rule.action == "serverCopy"
+        || rule.action == "serverMove"
+        || rule
+            .effective_actions()
+            .iter()
+            .any(|a| matches!(a.as_str(), "serverCopy" | "serverMove"))
+}
+
+pub fn saves(rule: &Rule) -> bool {
+    rule.action == "save"
+        || rule.action == "saveFolder"
+        || rule
+            .effective_actions()
+            .iter()
+            .any(|a| matches!(a.as_str(), "save" | "saveFolder"))
 }
 
 #[cfg(test)]
@@ -366,6 +421,7 @@ mod body_tests {
                 operator: operator.into(),
                 value: value.into(),
             }],
+            actions: Vec::new(),
             action: "read".into(),
             destination: String::new(),
             source_folder: String::new(),
@@ -494,7 +550,10 @@ mod body_tests {
         let ok = rule("cc", "contains", "copy@example.com");
         validate(&ok).unwrap();
         assert!(matches(&ok, &mail));
-        assert!(!matches(&rule("cc", "contains", "alice@example.com"), &mail));
+        assert!(!matches(
+            &rule("cc", "contains", "alice@example.com"),
+            &mail
+        ));
         assert!(matches(&rule("cc", "notContains", "missing"), &mail));
         assert!(matches(
             &rule("cc", "equals", "Copy Team <copy@example.com>"),

@@ -103,6 +103,69 @@ it("hides the top entry without an available update and displays release notes w
   await click("查看更新");
   expect(document.body.textContent).toContain("更新中心");
 });
+it("renders Markdown release notes and sanitizes unsafe content", async () => {
+  const next = update();
+  next.body =
+    '## 更新内容\n\n- **修复**邮件收取\n- `收件箱`\n\n[发布说明](https://github.com/wanghlstar/anser/releases/tag/v0.2.0)\n\n![安全图片](https://github.com/wanghlstar/anser/image.png) ![危险图片](javascript:alert(1))\n\n<script>alert(1)</script><a href="javascript:alert(1)">危险链接</a>';
+  mocks.check.mockResolvedValue(next);
+  await click("检查更新");
+  const notes = document.querySelector(".release-notes")!;
+  expect(notes.querySelector("h2")?.textContent).toBe("更新内容");
+  expect(notes.querySelectorAll("li")).toHaveLength(2);
+  expect(notes.querySelector("strong")?.textContent).toBe("修复");
+  expect(notes.querySelector("code")?.textContent).toBe("收件箱");
+  expect(notes.querySelector("script")).toBeNull();
+  expect(notes.querySelectorAll("img")).toHaveLength(1);
+  expect(notes.querySelector("img")?.getAttribute("alt")).toBe("安全图片");
+  expect(notes.querySelector("a:not([href])")?.textContent).toBe("危险链接");
+  const link = notes.querySelector<HTMLAnchorElement>("a[href]")!;
+  const event = new MouseEvent("click", { bubbles: true, cancelable: true });
+  await act(async () => link.dispatchEvent(event));
+  expect(event.defaultPrevented).toBe(true);
+  expect(mocks.invoke).toHaveBeenCalledWith("open_mail_link", {
+    url: "https://github.com/wanghlstar/anser/releases/tag/v0.2.0",
+  });
+});
+function history(
+  current = "0.1.18",
+  target = "0.1.23",
+  versions = ["0.1.23", "0.1.22", "0.1.21", "0.1.20", "0.1.19"],
+) {
+  return {
+    currentVersion: current,
+    targetVersion: target,
+    releases: versions.map((version) => ({
+      version,
+      name: `雁信 ${version}`,
+      body: `## ${version} 的更新\n\n- 版本 ${version} 的重要内容`,
+      publishedAt: "2026-10-16T00:00:00Z",
+    })),
+  };
+}
+it("shows every intervening version instead of only the latest notes", async () => {
+  const next = update();
+  next.currentVersion = "0.1.18";
+  next.version = "0.1.23";
+  mocks.check.mockResolvedValue(next);
+  mocks.invoke.mockImplementation(async (command) =>
+    command === "update_release_history" ? history() : undefined,
+  );
+  await click("检查更新");
+  expect(document.body.textContent).toContain("0.1.18 → 0.1.23 · 共 5 个版本");
+  const notes = [...document.querySelectorAll(".release-notes")];
+  expect(notes).toHaveLength(5);
+  expect(notes.map((n) => n.querySelector("h2")?.textContent)).toEqual([
+    "0.1.23 的更新",
+    "0.1.22 的更新",
+    "0.1.21 的更新",
+    "0.1.20 的更新",
+    "0.1.19 的更新",
+  ]);
+  expect(mocks.invoke).toHaveBeenCalledWith("update_release_history", {
+    currentVersion: "0.1.18",
+    targetVersion: "0.1.23",
+  });
+});
 it("downloads first and installs only on explicit confirmation, then restarts", async () => {
   const next = update();
   mocks.check.mockResolvedValue(next);
@@ -136,14 +199,32 @@ it("preserves the downloaded update while manual checks and the timer would run"
 it("retrying a restart does not install the package twice", async () => {
   const next = update();
   mocks.check.mockResolvedValue(next);
-  mocks.invoke.mockRejectedValueOnce("restart failed");
+  mocks.invoke.mockImplementation(async (command: string) => {
+    if (command === "restart_for_update") throw "restart failed";
+    return {
+      currentVersion: "0.1.0",
+      targetVersion: "0.2.0",
+      releases: [
+        {
+          version: "0.2.0",
+          name: "雁信 0.2.0",
+          body: "修复邮件收取",
+          publishedAt: "2026-10-20T00:00:00Z",
+        },
+      ],
+    };
+  });
   await click("检查更新");
   await click("下载更新");
   await click("安装并重启");
   expect(document.body.textContent).toContain("安装已完成，但重启失败");
   await click("重新启动");
   expect(next.install).toHaveBeenCalledOnce();
-  expect(mocks.invoke).toHaveBeenCalledTimes(2);
+  expect(
+    mocks.invoke.mock.calls.filter(
+      ([command]) => command === "restart_for_update",
+    ),
+  ).toHaveLength(2);
 });
 it("blocks installation while a compose window is open", async () => {
   blocked = true;

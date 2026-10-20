@@ -353,9 +353,7 @@ impl Store {
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .map_err(err)?;
         let status: Option<String> = tx
-            .query_row("SELECT status FROM outbox WHERE id=?1", [id], |r| {
-                r.get(0)
-            })
+            .query_row("SELECT status FROM outbox WHERE id=?1", [id], |r| r.get(0))
             .optional()
             .map_err(err)?;
         let Some(status) = status else {

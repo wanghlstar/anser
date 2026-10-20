@@ -3,15 +3,6 @@ import { MailContent } from "./mail-content";
 import { Switch } from "./ui/switch";
 import { Label } from "./ui/label";
 import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
-import { Checkbox } from "./ui/checkbox";
-import {
-  FieldSet,
-  FieldLegend,
-  FieldGroup,
-  Field,
-  FieldContent,
-  FieldLabel,
-} from "./ui/field";
 import { signatureContent, greetingSpec } from "@/lib/signatures";
 import type { MailSignature } from "@/lib/types";
 import { disableFrameContextMenu } from "@/lib/context-menu";
@@ -21,7 +12,7 @@ import {
   attachmentSubject,
   insideComposeDrop,
 } from "@/lib/compose-attachments";
-import { ComposeAttachments } from "./compose-attachments";
+import { ComposeAttachments, ForwardAttachments } from "./compose-attachments";
 import { SelectField, SelectOption } from "@/components/ui/select-field";
 import {
   useCallback,
@@ -709,6 +700,27 @@ export function ComposeDialog({
   }, [value, sending, closing]);
   function update(p: Partial<Compose>) {
     setValue((v) => (v ? { ...v, ...p } : null));
+  }
+  async function openForwardFile(file: ForwardFile) {
+    const current = latest.current,
+      id = current?.id,
+      lease = session.current;
+    if (!id || !current?.forwardFiles?.some((item) => item.id === file.id))
+      return;
+    if (!native || isDemo()) {
+      toast.info("请在桌面客户端中打开原邮件附件");
+      return;
+    }
+    if (!lease || lease.id !== id) {
+      toast.info("写信窗口正在准备，请稍后重试");
+      return;
+    }
+    try {
+      const token = await lease.promise;
+      await call("open_forward_file", { id, token, fileId: file.id });
+    } catch (error) {
+      toast.error(String(error));
+    }
   }
   /** 关闭前的把关：有内容先问「保存 / 不保存 / 取消」，空白邮件直接舍弃。 */
   function requestClose() {
@@ -1498,38 +1510,21 @@ export function ComposeDialog({
                   </AlertDescription>
                 </Alert>
               )}
-              {!!value.forwardFiles?.length && (
-                <FieldSet className="min-w-0 shrink-0 px-7 py-3">
-                  <FieldLegend>原邮件附件</FieldLegend>
-                  <FieldGroup>
-                    {value.forwardFiles.map((file) => (
-                      <Field key={file.id} orientation="horizontal">
-                        <Checkbox
-                          id={`forward-file-${file.id}`}
-                          checked={file.included}
-                          disabled={sending || closing}
-                          onCheckedChange={(included) =>
-                            update({
-                              forwardFiles: value.forwardFiles!.map((item) =>
-                                item.id === file.id
-                                  ? { ...item, included: included === true }
-                                  : item,
-                              ),
-                            })
-                          }
-                        />
-                        <FieldContent className="min-w-0">
-                          <FieldLabel
-                            className="max-w-full break-words"
-                            htmlFor={`forward-file-${file.id}`}
-                          >
-                            {file.name} · {file.size} 字节
-                          </FieldLabel>
-                        </FieldContent>
-                      </Field>
-                    ))}
-                  </FieldGroup>
-                </FieldSet>
+              {!!value.forwardFiles?.some((file) => file.included) && (
+                <ForwardAttachments
+                  files={(value.forwardFiles ?? []).filter(
+                    (file) => file.included,
+                  )}
+                  onOpen={(file) => void openForwardFile(file)}
+                  onRemove={(file) =>
+                    update({
+                      forwardFiles: (value.forwardFiles ?? []).filter(
+                        (item) => item.id !== file.id,
+                      ),
+                    })
+                  }
+                  disabled={sending || closing}
+                />
               )}
               {value.attachments.length > 0 && (
                 <ComposeAttachments

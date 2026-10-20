@@ -21,6 +21,7 @@ mod remote;
 mod retention;
 mod retention_budget;
 mod rule_operations;
+mod rule_runs;
 mod rules;
 mod scheduling;
 mod search;
@@ -28,6 +29,7 @@ mod sent_uploads;
 mod signatures;
 mod store;
 mod sync_control;
+mod update_history;
 use models::*;
 use std::{
     path::Path,
@@ -55,6 +57,8 @@ struct AppState {
     /// （主窗口靠它判断「还有没有在写信」）。
     compose_windows: Arc<Mutex<std::collections::HashMap<String, serde_json::Value>>>,
     compose_window_seq: Arc<std::sync::atomic::AtomicUsize>,
+    /// 当前已注册的全局恢复窗口快捷键；None = 未注册。
+    restore_shortcut: Arc<Mutex<Option<tauri_plugin_global_shortcut::Shortcut>>>,
 }
 /// 托盘右键菜单里需要反向更新勾选状态的菜单项。
 struct TrayState {
@@ -270,6 +274,24 @@ async fn rule_executions(
 ) -> Result<Vec<rule_operations::RuleExecution>> {
     let store = state.store.clone();
     tauri::async_runtime::spawn_blocking(move || store.rule_executions())
+        .await
+        .map_err(err)?
+}
+#[tauri::command]
+async fn rule_runs(state: tauri::State<'_, AppState>) -> Result<Vec<rule_runs::RuleRunView>> {
+    let store = state.store.clone();
+    tauri::async_runtime::spawn_blocking(move || store.rule_runs())
+        .await
+        .map_err(err)?
+}
+#[tauri::command]
+async fn rule_run_action(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    action: String,
+) -> Result<()> {
+    let store = state.store.clone();
+    tauri::async_runtime::spawn_blocking(move || store.rule_run_action(&id, &action))
         .await
         .map_err(err)?
 }
@@ -594,7 +616,16 @@ fn save_preferences(
     state: tauri::State<AppState>,
     preferences: Preferences,
 ) -> Result<()> {
+    let previous = state.store.preferences()?;
     state.store.save_preferences(&preferences)?;
+    if previous.restore_shortcut != preferences.restore_shortcut {
+        if let Err(error) =
+            apply_restore_shortcut(&app, &state.restore_shortcut, &preferences.restore_shortcut)
+        {
+            let _ = state.store.save_preferences(&previous);
+            return Err(error);
+        }
+    }
     state.dock_enabled.store(
         preferences.dock_visible,
         std::sync::atomic::Ordering::Relaxed,
@@ -607,6 +638,35 @@ fn save_preferences(
         if let Some(item) = tray.do_not_disturb.as_ref() {
             let _ = item.set_checked(!preferences.new_mail_notifications);
         }
+    }
+    Ok(())
+}
+/// 单独设置恢复窗口的全局快捷键：即使与当前值相同也重新尝试注册，
+/// 便于启动时被其它应用占用后再次录入同一个组合键。
+#[tauri::command]
+fn set_restore_shortcut(
+    app: tauri::AppHandle,
+    state: tauri::State<AppState>,
+    shortcut: String,
+) -> Result<()> {
+    let previous = state.store.preferences()?;
+    apply_restore_shortcut(&app, &state.restore_shortcut, &shortcut)?;
+    let mut next = previous.clone();
+    next.restore_shortcut = shortcut.trim().to_string();
+    if let Err(error) = state.store.save_preferences(&next) {
+        let _ = apply_restore_shortcut(&app, &state.restore_shortcut, &previous.restore_shortcut);
+        return Err(error);
+    }
+    Ok(())
+}
+/// 录制快捷键期间暂时注销全局键，避免按当前组合键时被系统吞掉。
+/// 只改注册状态，不改偏好；取消或保存时由 set_restore_shortcut 重新注册。
+#[tauri::command]
+fn suspend_restore_shortcut(app: tauri::AppHandle, state: tauri::State<AppState>) -> Result<()> {
+    use tauri_plugin_global_shortcut::GlobalShortcutExt;
+    let mut current = state.restore_shortcut.lock().map_err(|e| e.to_string())?;
+    if let Some(shortcut) = current.take() {
+        app.global_shortcut().unregister(shortcut).map_err(err)?;
     }
     Ok(())
 }
@@ -863,11 +923,7 @@ fn collect_mail(store: &Store, app: &tauri::AppHandle, only: Option<&str>) -> Re
     }
 }
 #[tauri::command]
-fn save_draft(
-    window: tauri::Window,
-    state: tauri::State<AppState>,
-    draft: Compose,
-) -> Result<()> {
+fn save_draft(window: tauri::Window, state: tauri::State<AppState>, draft: Compose) -> Result<()> {
     state.store.save_draft(&draft)?;
     // 原生写信窗口存草稿时同步刷新登记：主窗口「继续写信」悬浮条上的主题要跟着变。
     let label = window.label().to_string();
@@ -932,9 +988,7 @@ async fn open_mail_window(
         .lock()
         .map_err(err)?
         .iter()
-        .find(|(_, mail)| {
-            mail.pointer("/id").and_then(|value| value.as_str()) == Some(id.as_str())
-        })
+        .find(|(_, mail)| mail.pointer("/id").and_then(|value| value.as_str()) == Some(id.as_str()))
         .map(|(label, _)| label.clone())
     {
         if let Some(window) = app.get_webview_window(&label) {
@@ -949,14 +1003,11 @@ async fn open_mail_window(
     } else {
         subject.trim().to_string()
     };
-    let mut builder = tauri::WebviewWindowBuilder::new(
-        &app,
-        &label,
-        tauri::WebviewUrl::App("index.html".into()),
-    )
-    .title(title)
-    .inner_size(760.0, 640.0)
-    .min_inner_size(480.0, 360.0);
+    let mut builder =
+        tauri::WebviewWindowBuilder::new(&app, &label, tauri::WebviewUrl::App("index.html".into()))
+            .title(title)
+            .inner_size(760.0, 640.0)
+            .min_inner_size(480.0, 360.0);
     // 从主窗口位置逐层错开，避免连开几封完全叠在一起。
     if let Some(main) = app.get_webview_window("main") {
         if let Ok(position) = main.outer_position() {
@@ -1088,10 +1139,7 @@ fn latest_compose_label(
 /// 主窗口收到 ⌘W、且当时有写信窗口时，由前端调这里把关闭请求转给写信窗口自己
 /// （原生窗口自己弹「保存 / 不保存 / 取消」）。
 #[tauri::command]
-fn close_latest_compose_window(
-    app: tauri::AppHandle,
-    state: tauri::State<AppState>,
-) -> Result<()> {
+fn close_latest_compose_window(app: tauri::AppHandle, state: tauri::State<AppState>) -> Result<()> {
     let label = {
         let windows = state.compose_windows.lock().map_err(err)?;
         latest_compose_label(&windows)
@@ -1131,7 +1179,9 @@ async fn open_compose_window(
             .map_err(err)?
             .iter()
             .find(|(_, payload)| {
-                payload.pointer("/draft/id").and_then(|value| value.as_str())
+                payload
+                    .pointer("/draft/id")
+                    .and_then(|value| value.as_str())
                     == Some(id.as_str())
             })
             .map(|(label, _)| label.clone())
@@ -1158,14 +1208,11 @@ async fn open_compose_window(
     } else {
         subject
     };
-    let mut builder = tauri::WebviewWindowBuilder::new(
-        &app,
-        &label,
-        tauri::WebviewUrl::App("index.html".into()),
-    )
-    .title(title)
-    .inner_size(980.0, 720.0)
-    .min_inner_size(640.0, 420.0);
+    let mut builder =
+        tauri::WebviewWindowBuilder::new(&app, &label, tauri::WebviewUrl::App("index.html".into()))
+            .title(title)
+            .inner_size(980.0, 720.0)
+            .min_inner_size(640.0, 420.0);
     // 从主窗口位置逐层错开，避免连开几封完全叠在一起。
     if let Some(main) = app.get_webview_window("main") {
         if let Ok(position) = main.outer_position() {
@@ -1186,10 +1233,7 @@ async fn open_compose_window(
 }
 /// 写信窗口启动时问「我在编辑哪封草稿、发件人有哪些」：label 由窗口自己上报。
 #[tauri::command]
-fn compose_window_draft(
-    state: tauri::State<AppState>,
-    label: String,
-) -> Option<serde_json::Value> {
+fn compose_window_draft(state: tauri::State<AppState>, label: String) -> Option<serde_json::Value> {
     state.compose_windows.lock().ok()?.get(&label).cloned()
 }
 /// 写信窗口里保存/发送/舍弃完，请求关掉这扇窗。先把登记摘掉再 close：
@@ -1218,6 +1262,28 @@ fn prepare_forward_files(
     source: ForwardSource,
 ) -> Result<Vec<ForwardFile>> {
     state.store.prepare_forward_files(&id, &token, &source)
+}
+#[tauri::command]
+async fn open_forward_file(
+    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
+    id: String,
+    token: String,
+    file_id: String,
+) -> Result<()> {
+    let store = state.store.clone();
+    let cache = app
+        .path()
+        .app_cache_dir()
+        .map_err(err)?
+        .join("forward-previews");
+    tauri::async_runtime::spawn_blocking(move || {
+        let file = store.forward_file(&id, &token, &file_id)?;
+        let path = attachment_preview::prepare_file(&cache, &file.name, &file.mime, &file.bytes)?;
+        open::that(path).map_err(|e| format!("无法打开附件，请确认已安装对应应用：{e}"))
+    })
+    .await
+    .map_err(err)?
 }
 #[tauri::command]
 fn read_body_images(
@@ -1970,6 +2036,95 @@ fn mail_navigation_target(url: &url::Url) -> Option<String> {
         _ => None,
     }
 }
+fn parse_restore_shortcut(value: &str) -> Result<Option<tauri_plugin_global_shortcut::Shortcut>> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Ok(None);
+    }
+    let shortcut: tauri_plugin_global_shortcut::Shortcut = value
+        .parse()
+        .map_err(|error| format!("无效的恢复窗口快捷键：{error}"))?;
+    if shortcut.mods.is_empty() {
+        return Err("恢复窗口快捷键至少需要一个修饰键".into());
+    }
+    Ok(Some(shortcut))
+}
+fn apply_restore_shortcut(
+    app: &tauri::AppHandle,
+    registered: &Mutex<Option<tauri_plugin_global_shortcut::Shortcut>>,
+    value: &str,
+) -> Result<()> {
+    use tauri_plugin_global_shortcut::GlobalShortcutExt;
+    let next = parse_restore_shortcut(value)?;
+    let mut current = registered.lock().map_err(|error| error.to_string())?;
+    if *current == next {
+        return Ok(());
+    }
+    let previous = *current;
+    if let Some(shortcut) = previous {
+        app.global_shortcut().unregister(shortcut).map_err(err)?;
+    }
+    if let Some(shortcut) = next {
+        if let Err(error) = app.global_shortcut().register(shortcut) {
+            if let Some(old) = previous {
+                let _ = app.global_shortcut().register(old);
+            }
+            return Err(format!("无法注册恢复窗口快捷键：{error}"));
+        }
+    }
+    *current = next;
+    Ok(())
+}
+/// macOS 15 会拒绝后台应用通过 AppKit 自激活。200ms 后无条件交给
+/// LaunchServices 重新打开当前 bundle（与 `open -a` 相同），只发 reopen
+/// 事件，不会新建主窗口；即使 AppKit 已激活，也不会抢走其他窗口。
+#[cfg(target_os = "macos")]
+fn reopen_bundle_for_activation() {
+    let Some(exe) = std::env::current_exe().ok() else {
+        return;
+    };
+    let Some(bundle) = exe
+        .parent()
+        .and_then(|p| p.parent())
+        .and_then(|p| p.parent())
+        .filter(|p| p.extension().is_some_and(|ext| ext == "app"))
+    else {
+        return;
+    };
+    let _ = std::process::Command::new("open")
+        .arg("-a")
+        .arg(bundle)
+        .spawn();
+}
+
+#[cfg(target_os = "macos")]
+fn ensure_app_activated(handle: tauri::AppHandle) {
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        let _ = handle.run_on_main_thread(reopen_bundle_for_activation);
+    });
+}
+
+#[cfg(target_os = "macos")]
+fn activate_app() {
+    use objc::runtime::{BOOL, YES};
+    use objc::{class, msg_send, sel, sel_impl};
+    unsafe {
+        let current: *mut objc::runtime::Object =
+            msg_send![class!(NSRunningApplication), currentApplication];
+        if !current.is_null() {
+            let _: BOOL = msg_send![current, activateWithOptions: 3u64];
+        }
+        let app: *mut objc::runtime::Object = msg_send![class!(NSApplication), sharedApplication];
+        if !app.is_null() {
+            let _: () = msg_send![app, activateIgnoringOtherApps: YES];
+            if msg_send![app, respondsToSelector: sel!(activate)] {
+                let _: () = msg_send![app, activate];
+            }
+        }
+    }
+}
+
 fn show_main_window(app: &tauri::AppHandle) {
     #[cfg(target_os = "macos")]
     let _ = app.show();
@@ -2019,10 +2174,7 @@ fn window_state_flags() -> tauri_plugin_window_state::StateFlags {
 /// 窗口外框是否（几乎）铺满屏幕可用区域：四边留白都在容差内即算铺满。
 /// 容差取每条边的 5%——macOS 的「拖到顶部填充」自带一点窗口间距，
 /// 完全相等是等不到的。
-fn rect_fills_area(
-    outer: (i32, i32, u32, u32),
-    area: (i32, i32, u32, u32),
-) -> bool {
+fn rect_fills_area(outer: (i32, i32, u32, u32), area: (i32, i32, u32, u32)) -> bool {
     let (x, y, width, height) = outer;
     let (ax, ay, aw, ah) = area;
     let (tol_x, tol_y) = (aw as i32 / 20, ah as i32 / 20);
@@ -2066,19 +2218,15 @@ fn fill_main_window(window: &tauri::WebviewWindow) {
         area.position.x,
         area.position.y,
     ));
-    let _ = window.set_size(tauri::PhysicalSize::new(
-        area.size.width,
-        area.size.height,
-    ));
+    let _ = window.set_size(tauri::PhysicalSize::new(area.size.width, area.size.height));
 }
 /// 关窗/退出时保存主窗口状态，并记下「上次是不是铺满屏幕」：铺满是个意图，
 /// 下次启动要按当前屏幕重算，而不是照搬旧的像素尺寸。只有真的变了才写库；
 /// 只在主线程调用（读窗口几何与屏幕要碰 NSWindow/NSScreen）。
 fn save_main_window_state(app: &tauri::AppHandle) {
-    if let (Some(window), Some(state)) = (
-        app.get_webview_window("main"),
-        app.try_state::<AppState>(),
-    ) {
+    if let (Some(window), Some(state)) =
+        (app.get_webview_window("main"), app.try_state::<AppState>())
+    {
         let fills = main_window_fills_screen(&window);
         if let Ok(mut preferences) = state.store.preferences() {
             if preferences.window_fill != fills {
@@ -2347,8 +2495,7 @@ fn copy_image_to_pasteboard(mime: &str, bytes: &[u8]) -> Result<()> {
         if let Some(kind) = image_pasteboard_type(mime) {
             let _: () = msg_send![item, setData: data forType: ns_string(kind)?];
         }
-        let array: *mut objc::runtime::Object =
-            msg_send![class!(NSArray), arrayWithObject: item];
+        let array: *mut objc::runtime::Object = msg_send![class!(NSArray), arrayWithObject: item];
         let _: () = msg_send![pasteboard, clearContents];
         let written: bool = msg_send![pasteboard, writeObjects: array];
         let _: () = msg_send![image, release];
@@ -2411,8 +2558,7 @@ fn read_pasteboard_file_paths() -> Vec<String> {
                 if path.is_null() {
                     return None;
                 }
-                let bytes: *const std::os::raw::c_char =
-                    msg_send![path, UTF8String];
+                let bytes: *const std::os::raw::c_char = msg_send![path, UTF8String];
                 if bytes.is_null() {
                     return None;
                 }
@@ -2575,7 +2721,7 @@ fn watch_dock_icon(_app: tauri::AppHandle, _enabled: Arc<std::sync::atomic::Atom
 
 /// 菜单栏图标右侧显示未读数：口径同「全部收件箱」未读徽标，无未读时不显示。
 /// 只读数据库，不依赖通知开关；数字变化时才更新，避免频繁触碰主线程。
-fn watch_tray_unread(store: Store, tray: tauri::tray::TrayIcon) {
+fn watch_tray_unread(store: Store, tray: tauri::tray::TrayIcon, app: tauri::AppHandle) {
     std::thread::spawn(move || {
         // 用 Option 区分「尚未写入」与「已写入 0」；0 表示清空标题。
         let mut shown: Option<u64> = None;
@@ -2597,6 +2743,11 @@ fn watch_tray_unread(store: Store, tray: tauri::tray::TrayIcon) {
             } else {
                 "雁信 · 点击打开".to_string()
             }));
+            #[cfg(target_os = "macos")]
+            if let Some(window) = app.get_webview_window("main") {
+                let badge = (unread > 0).then(|| unread.min(i64::MAX as u64) as i64);
+                let _ = window.set_badge_count(badge);
+            }
         }
     });
 }
@@ -2622,6 +2773,25 @@ pub fn run() {
             queue_eml_arguments(app, args, Path::new(&cwd));
             show_main_window(app)
         }))
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, _shortcut, event| {
+                    if event.state() == tauri_plugin_global_shortcut::ShortcutState::Pressed {
+                        let handle = app.clone();
+                        let app = app.clone();
+                        let _ = handle.run_on_main_thread(move || {
+                            show_main_window(&app);
+                            #[cfg(target_os = "macos")]
+                            {
+                                set_dock_visible(true);
+                                activate_app();
+                                ensure_app_activated(app.clone());
+                            }
+                        });
+                    }
+                })
+                .build(),
+        )
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(
@@ -2680,6 +2850,7 @@ pub fn run() {
             let send_gate = Arc::new(Mutex::new(()));
             let realtime = Arc::new(realtime::RealtimeControl::default());
             let compose_open = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let restore_shortcut = Arc::new(Mutex::new(None));
             app.manage(AppState {
                 store: store.clone(),
                 gate: gate.clone(),
@@ -2691,7 +2862,17 @@ pub fn run() {
                 mail_window_seq: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
                 compose_windows: Arc::new(Mutex::new(std::collections::HashMap::new())),
                 compose_window_seq: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+                restore_shortcut: restore_shortcut.clone(),
             });
+            let restore_value = store
+                .preferences()
+                .map(|preferences| preferences.restore_shortcut)
+                .unwrap_or_else(|_| default_restore_shortcut());
+            if let Err(error) =
+                apply_restore_shortcut(app.handle(), &restore_shortcut, &restore_value)
+            {
+                let _ = store.log(&format!("恢复窗口快捷键未注册：{error}"));
+            }
             watch_dock_icon(app.handle().clone(), dock_enabled);
             #[cfg(target_os = "macos")]
             notification_open::setup(app.handle());
@@ -2706,6 +2887,7 @@ pub fn run() {
             directory_operations::start(store.clone(), app.handle().clone());
             sent_uploads::start(store.clone(), app.handle().clone());
             archive_jobs::start(store.clone(), app.handle().clone());
+            rule_runs::start(store.clone(), app.handle().clone());
             let menu = tauri::menu::Menu::default(app.handle())?;
             app.set_menu(menu)?;
             // 托盘右键菜单：免打扰、立即收取、退出。设置菜单同时修复
@@ -2778,7 +2960,7 @@ pub fn run() {
                     }
                 })
                 .build(app)?;
-            watch_tray_unread(store.clone(), tray);
+            watch_tray_unread(store.clone(), tray, app.handle().clone());
             let handle = app.handle().clone();
             let scheduled_store = store.clone();
             let scheduled_gate = send_gate.clone();
@@ -2914,6 +3096,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             restart_for_update,
+            update_history::update_release_history,
             take_eml_paths,
             take_notification_mail,
             notification_mail,
@@ -2965,6 +3148,8 @@ pub fn run() {
             clear_local_folder,
             move_local_archive,
             rule_executions,
+            rule_runs,
+            rule_run_action,
             retry_rule_execution,
             preview_rule,
             run_rules,
@@ -2984,6 +3169,8 @@ pub fn run() {
             clear_sent_outbox,
             get_preferences,
             save_preferences,
+            set_restore_shortcut,
+            suspend_restore_shortcut,
             toggle_do_not_disturb,
             desktop_settings,
             set_auto_start,
@@ -3007,6 +3194,7 @@ pub fn run() {
             close_latest_compose_window,
             focus_compose_window,
             prepare_forward_files,
+            open_forward_file,
             read_body_images,
             send_mail,
             schedule_mail,

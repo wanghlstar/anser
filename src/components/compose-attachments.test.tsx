@@ -2,7 +2,8 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { ComposeAttachments } from "./compose-attachments";
+import { ComposeAttachments, ForwardAttachments } from "./compose-attachments";
+import type { ForwardFile } from "../lib/types";
 import { call } from "../lib/api";
 vi.mock("../lib/api", () => ({ native: true, call: vi.fn() }));
 let root: Root, host: HTMLDivElement;
@@ -116,4 +117,37 @@ it("only removes the clicked attachment", async () => {
   );
   await act(async () => find("报表.pdf").querySelector("button")!.click());
   expect(onRemove).toHaveBeenCalledExactlyOnceWith(1);
+});
+
+it("opens and removes forwarded attachments like normal attachments", async () => {
+  const files: ForwardFile[] = [
+    {
+      id: "forward-1",
+      name: "SmsForwarder.json",
+      mime: "application/json",
+      size: 7638,
+      included: true,
+    },
+    {
+      id: "forward-2",
+      name: "雁信规则.json",
+      mime: "application/json",
+      size: 5770,
+      included: true,
+    },
+  ];
+  const onOpen = vi.fn();
+  const onRemove = vi.fn();
+  await act(async () =>
+    root.render(
+      <ForwardAttachments files={files} onOpen={onOpen} onRemove={onRemove} />,
+    ),
+  );
+  const first = find("SmsForwarder.json");
+  await act(async () =>
+    first.dispatchEvent(new MouseEvent("dblclick", { bubbles: true })),
+  );
+  expect(onOpen).toHaveBeenCalledExactlyOnceWith(files[0]);
+  await act(async () => find("雁信规则.json").querySelector("button")!.click());
+  expect(onRemove).toHaveBeenCalledExactlyOnceWith(files[1]);
 });

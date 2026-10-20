@@ -18,7 +18,6 @@ import {
   MoreHorizontal,
   Download,
 } from "lucide-react";
-import { SidebarTrigger } from "./ui/sidebar";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
@@ -35,16 +34,23 @@ import {
   DialogTitle,
   DialogDescription,
 } from "./ui/dialog";
-import type { Condition, Rule, Snapshot, FolderSettings } from "@/lib/types";
+import type {
+  Condition,
+  Rule,
+  RuleAction,
+  Snapshot,
+  FolderSettings,
+} from "@/lib/types";
 import { call, isDemo } from "@/lib/api";
 import { toast } from "sonner";
 import { SelectGroup } from "./ui/select";
 import { Checkbox } from "./ui/checkbox";
 import {
   ruleActionsDeduped,
+  ruleActionSteps,
+  withRuleActions,
   isRemoteRule,
   isMoveAction,
-  toggleMergedAction,
   groupRulesByAccount,
 } from "@/lib/rule-match";
 import { RuleServerFolders } from "./rule-server-folders";
@@ -101,25 +107,17 @@ const conditionValueLabel = (c: Condition) =>
   choiceConditions[c.field]?.find(([value]) => value === c.value)?.[1] ??
   `「${c.value}」`;
 const actions: { [key: string]: string } = {
-  // 用户层只有一个「移动到文件夹」：IMAP 落地为服务器移动，POP3 退化为本地归类。
-  // serverCopy 仅用于兼容旧规则展示。
   move: "移动到文件夹",
-  folder: "移动到文件夹",
-  serverMove: "移动到文件夹",
+  folder: "归入本地文件夹",
+  save: "完整保存到本地",
+  saveFolder: "完整保存并归入本地文件夹",
   read: "标记为已读",
   unread: "标记为未读",
   star: "添加星标",
   trash: "移到本地废纸篓",
   serverCopy: "复制到服务器文件夹",
+  serverMove: "移动到服务器文件夹",
 };
-/** 可勾选的动作：合并后的移动动作独占，其余本地动作可叠加。 */
-const ALL_ACTIONS: [string, string][] = [
-  ["move", "移动到文件夹"],
-  ["read", "标记为已读"],
-  ["unread", "标记为未读"],
-  ["star", "添加星标"],
-  ["trash", "移到本地废纸篓"],
-];
 function ConditionDatePicker({
   value,
   onChange,
@@ -327,17 +325,13 @@ export function RulesPanel({
     void save(rs);
   }
   return (
-    <section className="workspace-panel rules-workspace">
-      <div className="panel-heading">
+    <>
+      <div className="settings-section-heading">
         <div>
-          <span className="eyebrow">A LITTLE ORDER</span>
-          <div className="page-title-row">
-            <SidebarTrigger title="切换侧边栏" aria-label="切换侧边栏" />
-            <h1>让邮件，自动归位</h1>
-          </div>
-          <p>设置一次规则，把更多时间留给重要的事。</p>
+          <h2>过滤规则</h2>
+          <p>按账号和条件自动归类、保存或移动邮件。</p>
         </div>
-        <div className="page-title-actions">
+        <div className="flex flex-wrap items-center gap-2">
           <Button
             variant="outline"
             onClick={() => void importRules()}
@@ -366,8 +360,11 @@ export function RulesPanel({
                 conditions: [
                   { field: "subject", operator: "contains", value: "" },
                 ],
-                action: "",
+                action: "folder",
                 destination: "",
+                actions: [
+                  { action: "folder", destination: "", sourceFolder: "" },
+                ],
                 stop: true,
               });
             }}
@@ -560,19 +557,39 @@ export function RulesPanel({
                     aria-label="规则适用账号"
                     onValueChange={(value) => {
                       const changed = value !== editing.accountId;
-                      // 合并动作跟随账号：换账号后重新决定服务器移动还是本地归类
-                      const action =
-                        changed && isMoveAction(editing)
-                          ? serverMoveCapable(value)
-                            ? "serverMove"
-                            : "folder"
-                          : editing.action;
-                      const next = { ...editing, accountId: value, action };
-                      setEditing({
-                        ...next,
-                        ...(isRemoteRule(next) ? {} : { sourceFolder: "" }),
-                        ...(changed ? { destination: "" } : {}),
-                      });
+                      const capable = serverMoveCapable(value);
+                      // 移动动作跟随账号能力：IMAP → 服务器移动，其它 → 本地归类。
+                      const nextActions = ruleActionSteps(editing).map(
+                        (step) => {
+                          if (!changed) return step;
+                          if (
+                            step.action === "serverMove" ||
+                            step.action === "serverCopy"
+                          ) {
+                            return {
+                              ...step,
+                              action: capable ? step.action : "folder",
+                              destination: "",
+                              sourceFolder: "",
+                            };
+                          }
+                          if (step.action === "folder" && capable) {
+                            return {
+                              ...step,
+                              action: "serverMove",
+                              destination: "",
+                              sourceFolder: "",
+                            };
+                          }
+                          return { ...step, destination: "" };
+                        },
+                      );
+                      setEditing(
+                        withRuleActions(
+                          { ...editing, accountId: value },
+                          nextActions,
+                        ),
+                      );
                     }}
                   >
                     <SelectGroup>
@@ -813,80 +830,189 @@ export function RulesPanel({
                 添加条件
               </Button>
               <div className="field">
-                <Label>执行动作</Label>
-                <div className="rule-action-picker">
-                  {ALL_ACTIONS.map(([k, v]) => {
-                    const chosen =
-                      k === "move"
-                        ? isMoveAction(editing)
-                        : ruleActionsDeduped(editing).includes(k);
-                    return (
-                      <Label
-                        key={k}
-                        className="rule-action-option"
-                        htmlFor={`action-${k}`}
-                      >
-                        <Checkbox
-                          id={`action-${k}`}
-                          checked={chosen}
-                          onCheckedChange={(next) => {
-                            const on = next === true;
-                            const action = toggleMergedAction(
+                <Label>依次执行动作</Label>
+                {ruleActionSteps(editing).map((step, index) => (
+                  <div className="rounded-md border p-3 space-y-3" key={index}>
+                    <div className="flex items-center gap-3">
+                      <span className="text-sm text-muted-foreground shrink-0">
+                        {index + 1}.
+                      </span>
+                      <SelectField
+                        className="w-[230px] shrink-0"
+                        aria-label={
+                          index === 0
+                            ? "规则执行动作"
+                            : `规则执行动作 ${index + 1}`
+                        }
+                        value={step.action}
+                        onValueChange={(value) => {
+                          if (!value) return;
+                          setEditing(
+                            withRuleActions(
                               editing,
-                              k,
-                              on,
-                              serverMoveCapable(editing.accountId),
-                            );
-                            const updated = { ...editing, action };
-                            // 切换移动或勾选废纸篓会改变移动本身：清掉移动的目标与来源
-                            const clearingMove =
-                              k === "move" || (k === "trash" && on);
-                            setEditing({
-                              ...updated,
-                              ...(isRemoteRule(updated)
-                                ? {}
-                                : { sourceFolder: "" }),
-                              ...(clearingMove ? { destination: "" } : {}),
-                            });
+                              ruleActionSteps(editing).map((item, position) =>
+                                position === index
+                                  ? {
+                                      action: value,
+                                      destination: "",
+                                      sourceFolder: "",
+                                    }
+                                  : item,
+                              ),
+                            ),
+                          );
+                        }}
+                      >
+                        <SelectGroup>
+                          {Object.entries(actions)
+                            .filter(
+                              ([key]) =>
+                                !["serverCopy", "serverMove"].includes(key) ||
+                                key === step.action ||
+                                serverMoveCapable(editing.accountId),
+                            )
+                            .map(([key, label]) => (
+                              <SelectOption key={key} value={key}>
+                                {label}
+                              </SelectOption>
+                            ))}
+                        </SelectGroup>
+                      </SelectField>
+                      {["folder", "saveFolder"].includes(step.action) && (
+                        <div className="flex min-w-0 flex-1 items-center gap-2">
+                          <Label
+                            className="shrink-0"
+                            htmlFor={`rule-local-folder-${index}`}
+                          >
+                            本地文件夹
+                          </Label>
+                          <FolderInput
+                            value={step.destination}
+                            onChange={(value) =>
+                              setEditing(
+                                withRuleActions(
+                                  editing,
+                                  ruleActionSteps(editing).map(
+                                    (item, position) =>
+                                      position === index
+                                        ? { ...item, destination: value }
+                                        : item,
+                                  ),
+                                ),
+                              )
+                            }
+                            folders={data.folders}
+                          />
+                        </div>
+                      )}
+                      <div className="ml-auto flex shrink-0 items-center gap-1">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-sm"
+                          title="上移动作"
+                          disabled={index === 0}
+                          onClick={() => {
+                            const next = [...ruleActionSteps(editing)];
+                            [next[index - 1], next[index]] = [
+                              next[index],
+                              next[index - 1],
+                            ];
+                            setEditing(withRuleActions(editing, next));
                           }}
-                        />
-                        <span>{v}</span>
-                      </Label>
-                    );
-                  })}
-                </div>
-                <p className="rule-action-hint">
-                  {isMoveAction(editing)
-                    ? isRemoteRule(editing)
-                      ? "「移动到文件夹」通过服务器移动邮件，可搭配标记已读/未读/星标（本机立即生效）；与废纸篓互斥。"
-                      : "本地归类可搭配标记已读/未读/星标；与废纸篓互斥。"
-                    : "本地动作可多选叠加，例如「标记为已读 + 添加星标」。"}
-                </p>
-              </div>
-              {isMoveAction(editing) &&
-                (isRemoteRule(editing) ? (
-                  <RuleServerFolders
-                    rule={editing}
-                    account={data.accounts.find(
-                      (a) => a.id === editing.accountId,
+                        >
+                          <ArrowUp size={14} />
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-sm"
+                          title="下移动作"
+                          disabled={
+                            index === ruleActionSteps(editing).length - 1
+                          }
+                          onClick={() => {
+                            const next = [...ruleActionSteps(editing)];
+                            [next[index + 1], next[index]] = [
+                              next[index],
+                              next[index + 1],
+                            ];
+                            setEditing(withRuleActions(editing, next));
+                          }}
+                        >
+                          <ArrowDown size={14} />
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-sm"
+                          title="移除动作"
+                          disabled={ruleActionSteps(editing).length === 1}
+                          onClick={() =>
+                            setEditing(
+                              withRuleActions(
+                                editing,
+                                ruleActionSteps(editing).filter(
+                                  (_, position) => position !== index,
+                                ),
+                              ),
+                            )
+                          }
+                        >
+                          <Trash2 size={14} />
+                        </Button>
+                      </div>
+                    </div>
+                    {["serverCopy", "serverMove"].includes(step.action) && (
+                      <RuleServerFolders
+                        rule={{
+                          ...editing,
+                          action: step.action,
+                          destination: step.destination,
+                          sourceFolder: step.sourceFolder,
+                        }}
+                        account={data.accounts.find(
+                          (a) => a.id === editing.accountId,
+                        )}
+                        onChange={(changed) =>
+                          setEditing(
+                            withRuleActions(
+                              editing,
+                              ruleActionSteps(editing).map((item, position) =>
+                                position === index
+                                  ? {
+                                      ...item,
+                                      destination: changed.destination,
+                                      sourceFolder: changed.sourceFolder || "",
+                                    }
+                                  : item,
+                              ),
+                            ),
+                          )
+                        }
+                        targetOnly
+                      />
                     )}
-                    onChange={setEditing}
-                    targetOnly
-                  />
-                ) : (
-                  <div className="field">
-                    <Label>移动到本地文件夹</Label>
-                    {/* 目标列该账号已有的本地文件夹；也可输入新名称，
-                        首次归类时自动创建 */}
-                    <FolderInput
-                      value={editing.destination}
-                      onChange={(value) =>
-                        setEditing({ ...editing, destination: value })
-                      }
-                      folders={data.folders}
-                    />
                   </div>
                 ))}
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={ruleActionSteps(editing).length >= 8}
+                  onClick={() =>
+                    setEditing(
+                      withRuleActions(editing, [
+                        ...ruleActionSteps(editing),
+                        { action: "read", destination: "", sourceFolder: "" },
+                      ]),
+                    )
+                  }
+                >
+                  <Plus size={14} />
+                  添加动作
+                </Button>
+              </div>
               <Label className="switch-label">
                 <Switch
                   checked={editing.stop}
@@ -948,14 +1074,15 @@ export function RulesPanel({
                 </Button>
                 <Button
                   type="submit"
-                  disabled={
-                    !ruleActionsDeduped(editing).length ||
-                    (isMoveAction(editing) && !editing.destination.trim()) ||
-                    (isRemoteRule(editing) &&
-                      (!editing.accountId ||
-                        editing.conditions.some((c) => c.field === "body") ||
-                        !serverMoveCapable(editing.accountId)))
-                  }
+                  disabled={ruleActionSteps(editing).some(
+                    (step) =>
+                      (["folder", "saveFolder"].includes(step.action) &&
+                        !step.destination.trim()) ||
+                      (["serverCopy", "serverMove"].includes(step.action) &&
+                        (!editing.accountId ||
+                          !step.destination.trim() ||
+                          !serverMoveCapable(editing.accountId))),
+                  )}
                 >
                   保存规则
                 </Button>
@@ -1013,6 +1140,6 @@ export function RulesPanel({
           </div>
         </DialogContent>
       </Dialog>
-    </section>
+    </>
   );
 }

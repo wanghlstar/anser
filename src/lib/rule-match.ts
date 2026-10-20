@@ -1,4 +1,4 @@
-import type { Condition, Mail, Rule } from "./types";
+import type { Condition, Mail, Rule, RuleAction } from "./types";
 export function ruleMatches(rule: Rule, mail: Mail): boolean {
   if (
     !rule.enabled ||
@@ -95,10 +95,34 @@ export function ruleMatches(rule: Rule, mail: Mail): boolean {
 
 /** 规则动作可用分隔符写多个（与后端 models::Rule::effective_actions 一致）。 */
 export function ruleActions(rule: Rule): string[] {
+  if (rule.actions?.length)
+    return rule.actions.map((a) => a.action).filter(Boolean);
   return rule.action
     .split(/[+,,;；]/)
     .map((a) => a.trim())
     .filter(Boolean);
+}
+/** 有序动作列表；旧规则自动补成单个动作。 */
+export function ruleActionSteps(rule: Rule): RuleAction[] {
+  if (rule.actions?.length) return rule.actions;
+  return [
+    {
+      action: rule.action,
+      destination: rule.destination,
+      sourceFolder: rule.sourceFolder || "",
+    },
+  ];
+}
+/** 保存有序动作，同时保留旧字段供旧版本/旧数据读取。 */
+export function withRuleActions(rule: Rule, next: RuleAction[]): Rule {
+  const first = next[0];
+  return {
+    ...rule,
+    actions: next,
+    action: first?.action || "",
+    destination: first?.destination || "",
+    sourceFolder: first?.sourceFolder || "",
+  };
 }
 
 /** read/unread 互相矛盾，重复动作也没有意义：各自只保留最后一次。 */

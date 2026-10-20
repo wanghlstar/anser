@@ -80,7 +80,7 @@ export function RuleExecutions({ onShowTasks }: { onShowTasks: () => void }) {
   }
   return (
     <Collapsible defaultOpen={false} asChild>
-      <Card className="mt-4 rule-executions-card">
+      <Card className="rule-executions-card">
         <TaskPanelHeader
           title="服务器规则执行记录"
           description={`最近 50 次命中${

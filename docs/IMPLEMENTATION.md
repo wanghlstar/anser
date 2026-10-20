@@ -804,13 +804,13 @@ GitHub CI 和两架构发布工作流已推送；首次 Checks 已成功，Relea
 
 **workflow 差异**（`ci.yml` + `release.yml` 之外，上游另有 3 个）
 
-| 文件                | 结论                                                                                                                                              |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ci.yml`            | 仅 rustfmt：上游阻塞、我们 advisory                                                                                                               |
+| 文件                | 结论                                                                                                                                                   |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `ci.yml`            | 仅 rustfmt：上游阻塞、我们 advisory                                                                                                                    |
 | `release.yml`       | 并发组、跳过已发布版本的实现、签名方式（上游自家 Apple 证书 vs 我们 tauri-action 默认）、发布方式（内联 `gh` + `--prerelease` vs `release-draft.mjs`） |
-| `homebrew.yml`      | 上游自家 tap，**不跟**                                                                                                                            |
-| `preview.yml`       | 上游 Pages 预览，**不跟**                                                                                                                         |
-| `signing-check.yml` | 上游固定证书回归，**不跟**                                                                                                                        |
+| `homebrew.yml`      | 上游自家 tap，**不跟**                                                                                                                                 |
+| `preview.yml`       | 上游 Pages 预览，**不跟**                                                                                                                              |
+| `signing-check.yml` | 上游固定证书回归，**不跟**                                                                                                                             |
 
 **发现一处该补的校验（未做）**：上游 `release.yml` 会 `test -s` 断言包内四个许可文件，我们批次 0.5 配了 `bundle.resources` 但 CI 不校验，补 4 行 `test -s` 即可防回归。
 
@@ -934,3 +934,78 @@ GitHub CI 和两架构发布工作流已推送；首次 Checks 已成功，Relea
 
 - 门禁：`npm run release:check`、`format:check`、`check:ui`、`tsc --noEmit`、`vitest`（442 例）、`test:desktop`（18）、`build`、`cargo test`（354 passed / 1 ignored）。
 - 版本号按用户原话「0.20.1」字面执行（不是 0.2.1）。
+
+## 0.20.1 后继续：解析迁移 / 顺序规则 / Dock / 更新历史（2026-10-20）
+
+用户确认跟进批次 1、2、3、5、8；4 不改，6/7 暂时不做。
+
+### 解析迁移与头块回填（批次 1）
+
+- `archive.rs` 新增 `PARSER_VERSION: i64 = 5` 与 `header_metadata(raw) -> (cc, priority)`；后者只解析头块，不重新解码正文/附件。
+- `store.rs::refresh_archive_metadata` 改为按 `parser_version < 5` 选取：
+  - `parser_version >= 3`：只读原件头块回填 `cc` / `priority` 并置 `header_metadata_known=true`；
+  - 无原件的在线记录：只推进 `parser_version`，保留未知状态，避免每次启动重试；
+  - `parser_version < 3`：沿用完整重解析，补全旧记录结构。
+- 所有新写入路径（`ingest`、完整保存、补存、迁移）统一写 `archive::PARSER_VERSION`，不再散落硬编码 `3`。
+- 新增测试 `metadata_upgrade_backfills_cc_and_priority_without_reparsing_body`，验证只补头、不覆盖正文。
+- 门禁：Rust 371 passed / 2 ignored。
+
+### `rule_runs` 顺序动作引擎（批次 2）
+
+- `models.rs` 新增 `RuleAction{action,destination,sourceFolder}`，`Rule.actions: Vec<RuleAction>`（`serde(default)`、空数组不序列化）；旧 `action` 分隔符语法仍兼容。
+- `rules.rs`：
+  - `validate` 对有序 `actions` 逐项校验，最多 8 个；旧单字段规则仍按原语义校验。
+  - 新增 `expand(configured)`：把每条规则展开为执行步骤，非首步 id 加 `#N`，`stop` 只落在最后一步。
+  - 新增 `saves(rule)`；`remote` / `saves` 同时识别单步与旧组合动作。
+- 新增 `src-tauri/src/rule_runs.rs`：
+  - `rule_runs` 表（id/mail_id/data/status/cursor/revision/error/updated_at）；启动时把 `running` 恢复为 `queued`。
+  - `RuleRun` 持久化来源证明、冻结配置哈希、剩余步骤、`ObservedStatus` 快照、本地意图、已入队服务器操作；`defer_rules` 与 `process_rule_run` 支持崩溃后续跑。
+  - `process_rule_run` 按游标逐步执行；`NeedsBody` 时读取在线正文，只在命中 `save`/`saveFolder` 时落盘；保存成功后再归类；服务器动作经本地 `apply_remote_rule_in` 入队并记录 operation id。
+  - `rule_run_action` 支持暂停、继续、取消（只取消本链未提交的目录操作）、重试；规则配置变化、账号/邮件删除时取消关联任务。
+  - `start(store, app)` 后台线程每秒领取 queued 任务，读取本地原件或在线来源，失败置 `blocked`。
+- `store.rs` 的 `apply_configured_rules` 改用 `rules::expand`：先预判正文/保存需求，必要时 `defer_rules`；否则同步执行本地动作或服务器动作；`preview_rule` 用展开后的步骤判断来源可用，`run_rules` 保持候选投影。
+- `archive_jobs.rs` 抽出 `complete_archive_in` / `archive_job_for_mail_in`，`queue_archive_in` 改为 `pub(crate)`，供规则引擎在同一个事务里完成保存。
+- `rule_operations.rs` 抽出 `apply_remote_rule_in` 与 `unqueued_rule_failure_in`；重试时先检查关联规则链是否完成；本地服务器执行记录保留。
+- `directory_operations.rs` 在提交复制/移动与移除来源前检查 `rule_blocks_directory` / `rule_blocks_move`，避免规则链执行中提前提交服务器动作。
+- 命令：`rule_runs`、`rule_run_action`；后台任务新增「规则处理任务」卡（默认折叠、刷新、暂停/继续/取消/重试）。
+- 前端规则编辑器改为「依次执行动作」列表：最多 8 个、可上移/下移/删除；`folder` / `saveFolder` 用本地文件夹输入，服务器动作复用 `RuleServerFolders`；保存时同时写 `actions` 与首动作旧字段，旧规则打开时自动补成单步。
+- 新增 Rust 测试：有序本地动作与 stop、首次匹配快照、`saveFolder` 完整保存并保持身份、正文等待、已发送/草稿不执行未读、服务器移动 + 已读只入队一次。
+- 门禁：Rust 371 passed / 2 ignored；前端 444 例。
+
+### Dock 未读角标（批次 5）
+
+- `watch_tray_unread` 增加 `AppHandle` 参数；在 macOS 上用主窗口 `set_badge_count` 同步未读数，零未读传 `None` 清除。
+- 数字变化时才更新，口径继续使用 `tray_unread_count()`（统一收件箱范围，排除废纸篓）。
+
+### 更新说明 Markdown 与历史版本（批次 8）
+
+- 新增 `src-tauri/src/update_history.rs`：从 `wanghlstar/anser` GitHub Releases 拉取当前版本到目标版本之间的全部非草稿版本，SemVer 排序、分页/字节上限、10 分钟缓存；去掉了上游的代理依赖（批次 7 暂不做）。
+- 新增命令 `update_release_history`；`app-updates.tsx` 新增 `history` 状态、`loadHistory`、`ReleaseNotes`（marked + DOMPurify 消毒、外链走 `open_mail_link`）、`VersionNotes` 与「更新中心」历史列表；加载失败时回退显示目标版本说明并可重试。
+- 新增 `release-history.ts` / `release-notes.ts`，只允许安全标签/属性与 http(s)/mailto 链接；图片仅允许外部 URL。
+- `index.css` 增加 `.release-notes` 排版（标题、列表、代码、引用、表格、图片）。
+- 测试：Rust `update_history` 10 例（1 例手动联网忽略）；前端新增 Markdown 消毒与多版本历史用例。
+
+### 邮件工作流核对（批次 3）
+
+- 即时发送「撤回」已经是「取消倒计时、保留草稿并重新打开编辑」；定时计划「取消计划并编辑」也会把计划标记为 `cancelled`、恢复草稿并打开。
+- 发件箱保持现状：待发送/已错过/暂停优先，按计划时间升序；其余按 `scheduled_at` + 最近 rowid。按用户意见本轮不改排序。
+
+**门禁**：`cargo test` 371 passed / 2 ignored；`npx vitest run` 54 文件 / 444 例；`tsc --noEmit`、`format:check`、`check:ui`、`test:desktop` 18、`npm run build` 全绿。**待用户验收，未提交。**
+
+## 全局恢复窗口快捷键与偏好布局（2026-10-20 续）
+
+- 默认 `⌘⌥` + 反引号，可自定义：设置 → 应用偏好 →「通知与启动」内点按钮后直接按组合键，Esc/点击外部取消；至少包含 ⌘/⌃/⌥ 之一。录制时先 `suspend_restore_shortcut` 注销当前全局键，取消/保存后由 `set_restore_shortcut` 重注册，避免按当前组合键被系统吞掉；被 macOS 占用的组合键仍无法录制。
+- `Preferences.restore_shortcut` 持久化；旧偏好缺字段回退默认。Rust 侧用 `tauri-plugin-global-shortcut` 注册，`save_preferences` 与新命令 `set_restore_shortcut` 在注册失败时回滚旧值并返回错误。
+- 应用偏好两张卡改为**全宽横卡上下排列**：四个开关 + 快捷键录入横向铺开，三个下拉同行分摊宽度、保存按钮同排靠右；窄窗自然换行。
+- 规则页去掉 `quiet-note` 的额外上边距和「服务器规则执行记录」卡片的 `mt-4`，统一使用设置分区 24px 间距。
+- macOS 窗口恢复：global shortcut handler 切主线程执行；先 `NSRunningApplication` / `NSApplication` 激活，200ms 后无条件 `open -a` 当前 `.app` 走 LaunchServices（只发 reopen，不新建窗口）。实测不能依赖 `NSApplication.isActive`：窗口已恢复、该值已为真时前台仍可能是 Finder；改为无条件重开后最小化窗口可恢复且前台变为雁信。
+- 验证：前端 54 文件 / 449 例；Rust 373 passed / 2 ignored（`network::tests::idle_notification_*` 全量并发时偶发失败，单跑通过）；`build`、`format:check`、`check:ui`、`test:desktop` 18 全绿；已在 1470/1180/980 宽度下检查应用偏好布局并装机。
+- **0.20.2 已验收并打本地 tag `v0.20.2`（不推送、不发布）。**
+
+## 0.20.2 本地检查点（2026-10-20）
+
+- 版本号：`package.json` / `src-tauri/tauri.conf.json` / `src-tauri/Cargo.toml` / `Cargo.lock` 统一为 **0.20.2**；新增 `docs/releases/v0.20.2.md` 作为 `release:check` 的说明来源。
+- 内容：0.20.1 之后的旧存档头块回填、`rule_runs` 顺序动作引擎、Dock 未读角标、更新说明 Markdown/历史版本、全局恢复窗口快捷键与偏好布局。
+- 验证：前端 54 文件 / 449 例；Rust 373 passed / 2 ignored；`tsc`、Prettier、`check:ui`、`test:desktop` 18、生产构建通过；已安装并实测快捷键录制/最小化恢复前置。
+- 上游基线更新为 `upstream/main = 9398046`（0.1.23）：0.1.22 新增中英文界面，0.1.23 仅版本一致性；尚未移植，任务见 `docs/HANDOFF.md` 第四节。
+- tag：`v0.20.2` 仅本地，不推送 `origin`。

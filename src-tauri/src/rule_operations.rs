@@ -48,7 +48,7 @@ fn inbox_scope(account: &Account) -> Vec<String> {
 }
 /// 解析规则的服务器来源目录。收信规则只作用于账号的收件箱（唯一入口）：
 /// 显式配置来源时校验该活跃来源行存在；留空时取邮件在收件箱范围内的活跃来源。
-fn resolve_source(
+pub(crate) fn resolve_source(
     tx: &rusqlite::Connection,
     rule: &Rule,
     mail: &Mail,
@@ -80,20 +80,27 @@ impl Store {
     ) -> Result<bool> {
         rules::validate(rule)?;
         if !rules::remote(rule)
-            || rules::match_state_observed(
-                rule,
-                mail,
-                observed,
-                rules::body_available(mail),
-            ) != rules::MatchState::Match
+            || rules::match_state_observed(rule, mail, observed, rules::body_available(mail))
+                != rules::MatchState::Match
         {
             return Err("邮件不匹配此服务器规则".into());
         }
-        let frozen = fingerprint(rule)?;
         let mut db = self.db()?;
         let tx = db
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .map_err(err)?;
+        let result = Self::apply_remote_rule_in(&tx, rule, mail, retry)?;
+        tx.commit().map_err(err)?;
+        Ok(result)
+    }
+    pub(crate) fn apply_remote_rule_in(
+        tx: &rusqlite::Connection,
+        rule: &Rule,
+        mail: &Mail,
+        retry: bool,
+    ) -> Result<bool> {
+        rules::validate(rule)?;
+        let frozen = fingerprint(rule)?;
         let data: String = tx
             .query_row(
                 "SELECT data FROM accounts WHERE id=?1",
@@ -102,7 +109,7 @@ impl Store {
             )
             .map_err(err)?;
         let account: Account = serde_json::from_str(&data).map_err(err)?;
-        let source = match resolve_source(&tx, rule, mail, &account)? {
+        let source = match resolve_source(tx, rule, mail, &account)? {
             Some(source) => source,
             None => {
                 if retry {
@@ -135,7 +142,7 @@ impl Store {
             Err("Gmail 标签规则尚未支持，请使用本地归类动作".into())
         } else {
             Self::queue_directory_in(
-                &tx,
+                tx,
                 mail,
                 &source,
                 &rule.destination,
@@ -173,18 +180,28 @@ impl Store {
             updated_at: chrono::Utc::now().to_rfc3339(),
         };
         tx.execute("INSERT INTO rule_executions(id,rule_id,mail_id,fingerprint,rule_data,data,operation_id,status,error,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10) ON CONFLICT(rule_id,mail_id,fingerprint) DO UPDATE SET operation_id=excluded.operation_id,status=excluded.status,error=excluded.error,updated_at=excluded.updated_at",params![execution.id,rule.id,mail.id,frozen,serde_json::to_string(rule).map_err(err)?,serde_json::to_string(&execution).map_err(err)?,operation_id,status,error,execution.updated_at]).map_err(err)?;
-        tx.commit().map_err(err)?;
         Ok(true)
+    }
+    pub(crate) fn unqueued_rule_failure_in(
+        db: &rusqlite::Connection,
+        rule: &Rule,
+        mail_id: &str,
+    ) -> Result<bool> {
+        db.query_row("SELECT EXISTS(SELECT 1 FROM rule_executions WHERE rule_id=?1 AND mail_id=?2 AND fingerprint=?3 AND status='blocked' AND operation_id IS NULL)",params![rule.id,mail_id,fingerprint(rule)?],|row|row.get(0)).map_err(err)
     }
     pub fn retry_rule_execution(&self, id: &str) -> Result<()> {
         let (rule_id, mail_id, frozen): (String,String,String) = self.db()?.query_row("SELECT rule_id,mail_id,fingerprint FROM rule_executions WHERE id=?1 AND operation_id IS NULL AND status='blocked'",[id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).map_err(|_| "此规则记录不能重试，请查看关联服务器任务")?;
-        let rule = self
-            .rules()?
+        let rule = rules::expand(&self.rules()?)
             .into_iter()
             .find(|r| r.id == rule_id && r.enabled)
             .ok_or("规则已删除或停用，不能重试")?;
         if fingerprint(&rule)? != frozen {
             return Err("规则配置已变化，请预览新规则后执行，旧记录保留".into());
+        }
+        if Self::rule_blocks_move(&self.db()?, &mail_id)? {
+            return Err(
+                "关联规则链尚未完成，请在规则处理任务中重新核对，不会提前入队服务器动作".into(),
+            );
         }
         let mail = self.mail(&mail_id)?;
         if !rules::matches(&rule, &mail) {
@@ -238,6 +255,7 @@ mod tests {
                 operator: "contains".into(),
                 value: "invoice".into(),
             }],
+            actions: Vec::new(),
             action: kind.into(),
             destination: "Archive".into(),
             source_folder: "INBOX".into(),
@@ -471,7 +489,10 @@ mod tests {
         store
             .db()
             .unwrap()
-            .execute("UPDATE sources SET folder='Archive' WHERE mail_id=?1", params![id])
+            .execute(
+                "UPDATE sources SET folder='Archive' WHERE mail_id=?1",
+                params![id],
+            )
             .unwrap();
         let mut r = remote_rule(&a, "serverMove");
         r.source_folder.clear();
@@ -534,6 +555,7 @@ mod multi_action_tests {
                 operator: "contains".into(),
                 value: "invoice".into(),
             }],
+            actions: Vec::new(),
             action: action.into(),
             destination: destination.into(),
             source_folder: String::new(),
@@ -549,10 +571,7 @@ mod multi_action_tests {
         store
             .ingest(&a, "INBOX", "7:12", &crate::tests::raw(), false)
             .unwrap();
-        let id = store
-            .snapshot(&crate::tests::query())
-            .unwrap()
-            .messages[0]
+        let id = store.snapshot(&crate::tests::query()).unwrap().messages[0]
             .id
             .clone();
         (temp, store, a, id)
@@ -560,7 +579,13 @@ mod multi_action_tests {
 
     #[test]
     fn splits_actions_written_with_separators() {
-        for action in ["folder+read", "folder,read", "folder，read", "folder;read", "folder；read"] {
+        for action in [
+            "folder+read",
+            "folder,read",
+            "folder，read",
+            "folder;read",
+            "folder；read",
+        ] {
             assert_eq!(
                 local_rule(action, "").effective_actions(),
                 vec!["folder".to_string(), "read".to_string()],
@@ -595,7 +620,7 @@ mod multi_action_tests {
     }
 
     #[test]
-    fn local_actions_apply_together_in_one_pass() {
+    fn local_actions_apply_in_order() {
         let (_temp, store, _a, id) = fixture();
         store
             .save_rules(&[local_rule("folder+read+star", "项目")])
@@ -605,10 +630,10 @@ mod multi_action_tests {
         assert_eq!(mail.local_folder, "项目");
         assert!(mail.is_read);
         assert!(mail.starred);
-        // 只写一次日志，不叠加时也一样
+        // 每个有序动作各记一条执行日志。
         assert_eq!(
             store.snapshot(&crate::tests::query()).unwrap().logs.len(),
-            1
+            3
         );
     }
 
@@ -624,9 +649,7 @@ mod multi_action_tests {
     #[test]
     fn trash_combined_with_read_marks_both() {
         let (_temp, store, _a, id) = fixture();
-        store
-            .save_rules(&[local_rule("read+trash", "")])
-            .unwrap();
+        store.save_rules(&[local_rule("read+trash", "")]).unwrap();
         store.run_rules().unwrap();
         let mail = store.mail(&id).unwrap();
         assert!(mail.is_read);
@@ -634,7 +657,7 @@ mod multi_action_tests {
     }
 
     #[test]
-    fn server_actions_combine_only_with_local_marks() {
+    fn ordered_actions_may_combine_server_and_local_steps() {
         let remote = |action: &str| {
             let mut r = local_rule(action, "Archive");
             r.account_id = "test-account".into();
@@ -642,14 +665,12 @@ mod multi_action_tests {
             r
         };
         assert!(crate::rules::validate(&remote("serverCopy")).is_ok());
-        // 可以搭配本机标记
         assert!(crate::rules::validate(&remote("serverCopy+read")).is_ok());
         assert!(crate::rules::validate(&remote("serverMove+star")).is_ok());
         assert!(crate::rules::validate(&remote("serverMove+read+star")).is_ok());
-        // 不能搭配归类、删除或另一个服务器动作
-        assert!(crate::rules::validate(&remote("serverCopy+folder")).is_err());
-        assert!(crate::rules::validate(&remote("serverMove+trash")).is_err());
-        assert!(crate::rules::validate(&remote("serverCopy+serverMove")).is_err());
+        assert!(crate::rules::validate(&remote("serverCopy+folder")).is_ok());
+        assert!(crate::rules::validate(&remote("serverMove+trash")).is_ok());
+        assert!(crate::rules::validate(&remote("serverCopy+serverMove")).is_ok());
     }
 
     #[test]
@@ -690,10 +711,7 @@ mod multi_action_tests {
         store
             .ingest(&a, "INBOX", "7:12", &crate::tests::raw(), false)
             .unwrap();
-        let id = store
-            .snapshot(&crate::tests::query())
-            .unwrap()
-            .messages[0]
+        let id = store.snapshot(&crate::tests::query()).unwrap().messages[0]
             .id
             .clone();
         let mut rule = local_rule("folder", "项目");

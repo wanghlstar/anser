@@ -119,8 +119,7 @@ it("merges the folder action into one move with a server target list", async () 
   await render();
   await click("新建规则");
   await select("规则适用账号", account.email);
-  await pickAction("move");
-  // IMAP 账号：移动到文件夹落地为服务器移动，只有目标、没有来源
+  // IMAP 账号：默认「移动到文件夹」落地为服务器移动，只有目标、没有来源
   expect(document.querySelector("#rule-source")).toBeNull();
   await act(async () => {});
   expect(document.querySelector("#rule-target")).toBeTruthy();
@@ -147,6 +146,13 @@ it("merges the folder action into one move with a server target list", async () 
       accountId: account.id,
       sourceFolder: "",
       destination: "&UXZO1mWHTvZZOQ-",
+      actions: [
+        {
+          action: "serverMove",
+          destination: "&UXZO1mWHTvZZOQ-",
+          sourceFolder: "",
+        },
+      ],
     }),
   });
   expect(api.call).not.toHaveBeenCalledWith("run_rules");
@@ -162,6 +168,13 @@ it("merges the folder action into one move with a server target list", async () 
         sourceFolder: "",
         destination: "&UXZO1mWHTvZZOQ-",
         action: "serverMove",
+        actions: [
+          {
+            action: "serverMove",
+            destination: "&UXZO1mWHTvZZOQ-",
+            sourceFolder: "",
+          },
+        ],
       }),
     ],
   });
@@ -245,18 +258,21 @@ it("stacks a local mark with the merged move and keeps its target", async () => 
   await render();
   await click("新建规则");
   await select("规则适用账号", account.email);
-  await pickAction("move");
   await act(async () => {});
   await select("规则目标文件夹", "归档");
-  // 勾选其它动作与移动叠加，目标保留
-  await pickAction("read");
+  // 添加第二个有序动作，移动目标保留
+  await click("添加动作");
   expect(document.querySelector("#rule-target")).toBeTruthy();
   await click("预览匹配，不执行动作");
   expect(api.call).toHaveBeenLastCalledWith("preview_rule", {
     rule: expect.objectContaining({
       sourceFolder: "",
       destination: "Archive",
-      action: "serverMove+read",
+      action: "serverMove",
+      actions: [
+        { action: "serverMove", destination: "Archive", sourceFolder: "" },
+        { action: "read", destination: "", sourceFolder: "" },
+      ],
     }),
   });
 });
@@ -325,8 +341,7 @@ it("degrades the merged move to a local folder for a non-IMAP account", async ()
   await render();
   await click("新建规则");
   await select("规则适用账号", data.accounts[0].email);
-  await pickAction("move");
-  // Gmail / 无服务器目录：退化为本地归类，不再显示服务器目标
+  // Gmail / 无服务器目录：保留本地归类，不再显示服务器目标
   expect(document.querySelector("#rule-target")).toBeNull();
   expect(document.querySelector('[aria-label="本地文件夹名称"]')).toBeTruthy();
 });

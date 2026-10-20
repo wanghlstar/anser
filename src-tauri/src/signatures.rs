@@ -151,7 +151,8 @@ mod tests {
         assert!(old.greeting.is_empty());
         // 旧草稿签名快照（无问候语字段）
         let mut value = serde_json::to_value(crate::tests::draft()).unwrap();
-        value["signature"] = serde_json::json!({"accountId": "a", "included": true, "body": "b", "html": ""});
+        value["signature"] =
+            serde_json::json!({"accountId": "a", "included": true, "body": "b", "html": ""});
         let draft: crate::models::Compose = serde_json::from_value(value).unwrap();
         assert!(draft.signature.unwrap().greeting.is_empty());
     }

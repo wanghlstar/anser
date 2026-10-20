@@ -340,9 +340,7 @@ mod tests {
                 .set_read_timeout(Some(Duration::from_secs(2)))
                 .unwrap();
             socket
-                .write_all(
-                    b"GET /?state=state&code=synthetic HTTP/1.1\r\nHost: localhost\r\n\r\n",
-                )
+                .write_all(b"GET /?state=state&code=synthetic HTTP/1.1\r\nHost: localhost\r\n\r\n")
                 .unwrap();
             let mut response = String::new();
             socket.read_to_string(&mut response).unwrap();

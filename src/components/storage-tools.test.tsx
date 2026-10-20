@@ -90,6 +90,67 @@ it("groups every on/off switch in the notifications and startup card", async () 
     ),
   ).toBe(false);
 });
+it("records a global restore-window shortcut and saves it through the dedicated command", async () => {
+  await call("save_preferences", {
+    preferences: {
+      syncIntervalMinutes: 5,
+      restoreShortcut: "CommandOrControl+Alt+K",
+    },
+  });
+  const calls = vi.spyOn(api, "call");
+  await act(async () => root.render(<StorageTools />));
+  const button = host.querySelector<HTMLButtonElement>(
+    '[aria-label="恢复窗口快捷键"]',
+  )!;
+  expect(button.textContent).toBe("⌘⌥K");
+  await act(async () => button.click());
+  expect(button.textContent).toBe("请按组合键…");
+  await act(async () => {
+    button.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "M",
+        code: "KeyM",
+        metaKey: true,
+        shiftKey: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  });
+  expect(calls).toHaveBeenCalledWith("set_restore_shortcut", {
+    shortcut: "CommandOrControl+Shift+M",
+  });
+  expect(button.textContent).toBe("⌘⇧M");
+  expect(await call("get_preferences")).toEqual(
+    expect.objectContaining({ restoreShortcut: "CommandOrControl+Shift+M" }),
+  );
+});
+it("defaults to the left-hand backquote shortcut and records punctuation labels", async () => {
+  const calls = vi.spyOn(api, "call");
+  await act(async () => root.render(<StorageTools />));
+  const button = host.querySelector<HTMLButtonElement>(
+    '[aria-label="恢复窗口快捷键"]',
+  )!;
+  expect(button.textContent).toBe("⌘⌥`");
+  await act(async () => button.click());
+  expect(button.textContent).toBe("请按组合键…");
+  await act(async () => {
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "`",
+        code: "Backquote",
+        metaKey: true,
+        altKey: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  });
+  expect(calls).toHaveBeenCalledWith("set_restore_shortcut", {
+    shortcut: "CommandOrControl+Alt+Backquote",
+  });
+  expect(button.textContent).toBe("⌘⌥`");
+});
 it("sends a test notification when the new mail notification switch is turned on", async () => {
   await call("save_preferences", {
     preferences: {

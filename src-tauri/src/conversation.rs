@@ -179,9 +179,22 @@ impl Store {
                 .collect::<std::result::Result<Vec<_>, _>>()
                 .map_err(err)?
         } else {
-            stmt.query_map(rusqlite::params![id, selected.account_id, selected.message_id, if selected.server_message_id.is_empty() { &selected.message_id } else { &selected.server_message_id }], |r| r.get::<_, String>(0)).map_err(err)?
-                .collect::<std::result::Result<Vec<_>, _>>()
-                .map_err(err)?
+            stmt.query_map(
+                rusqlite::params![
+                    id,
+                    selected.account_id,
+                    selected.message_id,
+                    if selected.server_message_id.is_empty() {
+                        &selected.message_id
+                    } else {
+                        &selected.server_message_id
+                    }
+                ],
+                |r| r.get::<_, String>(0),
+            )
+            .map_err(err)?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(err)?
         };
         drop(stmt);
         let mut row_ids: Vec<String> = Vec::new();

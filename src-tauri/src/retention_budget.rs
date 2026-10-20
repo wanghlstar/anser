@@ -324,7 +324,11 @@ fn inspect_using(
     let complete = complete && required_bytes.is_some();
     let (data_dir, available_bytes, disk_error) = match disk {
         Ok((path, bytes)) => (path, Some(bytes), None),
-        Err(reason) => (store.root.to_string_lossy().into_owned(), None, Some(reason)),
+        Err(reason) => (
+            store.root.to_string_lossy().into_owned(),
+            None,
+            Some(reason),
+        ),
     };
     let low_space = required_bytes
         .zip(available_bytes)

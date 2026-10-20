@@ -517,6 +517,7 @@ export async function call<T = void>(
       case "folder_health":
       case "directory_operations":
       case "rule_executions":
+      case "rule_runs":
         result = [];
         break;
       case "copy_sources":
@@ -761,6 +762,22 @@ export async function call<T = void>(
           JSON.stringify(args.preferences),
         );
         break;
+      case "suspend_restore_shortcut":
+        result = null;
+        break;
+      case "set_restore_shortcut": {
+        const stored = JSON.parse(
+          localStorage.getItem(key + "-preferences") || "{}",
+        );
+        localStorage.setItem(
+          key + "-preferences",
+          JSON.stringify({
+            ...stored,
+            restoreShortcut: args.shortcut as string,
+          }),
+        );
+        break;
+      }
       case "archive_deletion_preview": {
         const mails = demo.messages.filter(
           (m) =>

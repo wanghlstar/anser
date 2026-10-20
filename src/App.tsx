@@ -40,6 +40,7 @@ import { ConversationReader } from "./components/conversation-reader";
 import { ScrollPane } from "./components/scroll-pane";
 import { replyHeaders } from "./lib/conversations";
 import { signatureContent } from "./lib/signatures";
+import { preserveBlockFontStyles } from "./lib/compose-fonts";
 import { Tabs, TabsList, TabsTrigger } from "./components/ui/tabs";
 import { disableNativeContextMenu } from "./lib/context-menu";
 import { NavigationLayout, MailLayout } from "./components/resizable-layout";
@@ -162,6 +163,7 @@ import { ArchiveTools, StorageTools } from "./components/storage-tools";
 import { SettingsLayout } from "./components/settings-layout";
 import { TaskPanelHeader } from "./components/task-panel-header";
 import { ArchiveJobsPanel } from "./components/archive-jobs";
+import { RuleRunsPanel } from "./components/rule-runs";
 import { ServerOperations } from "./components/server-operations";
 import { FolderHealthPanel } from "./components/folder-health";
 import { DirectoryOperationsPanel } from "./components/server-copy";
@@ -942,10 +944,15 @@ export default function App() {
           body: mail.body,
           html: source.html,
         };
-        if (forward && native && !isDemo() && source.attachments.length) {
+        if (
+          forward &&
+          native &&
+          !isDemo() &&
+          (source.attachments.length || mail.hasAttachments)
+        ) {
           d.forwardSource = {
             id: source.mail.id,
-            hash: source.originalHash || "",
+            hash: source.originalHash || mail.hash || "",
           };
         }
       }
@@ -1791,7 +1798,9 @@ export default function App() {
     try {
       // 原样载入已发送邮件的正文（含问候语/落款/引用），保持原状态；
       // 不再单独抽签名再追加，否则签名会被挪到引用之后、正文顺序错乱。
-      const draft = await call<Compose>("reedit_sent_mail", { id: m.id });
+      const draft = preserveBlockFontStyles(
+        await call<Compose>("reedit_sent_mail", { id: m.id }),
+      );
       // 原件正文已经带签名：给本封一个「不含签名」的快照，避免写信窗口
       // 重新读取账号签名后又追加一次（重编辑出现双签名）。
       const config = await call<MailSignature>("mail_signature", {
@@ -2560,15 +2569,6 @@ export default function App() {
                 </Button>
                 <Button
                   variant="ghost"
-                  className={`nav-item ${page === "rules" ? "active" : ""}`}
-                  onClick={() => setPage("rules")}
-                >
-                  <SlidersHorizontal size={17} />
-                  <span>过滤规则</span>
-                  {data.rules.length > 0 && <small>{data.rules.length}</small>}
-                </Button>
-                <Button
-                  variant="ghost"
                   className={`nav-item ${page === "settings" ? "active" : ""}`}
                   onClick={() => setPage("settings")}
                 >
@@ -2600,15 +2600,6 @@ export default function App() {
             />
           ) : page === "outbox" ? (
             <OutboxPanel onDraft={openCompose} />
-          ) : page === "rules" ? (
-            <RulesPanel
-              data={data}
-              onChange={() => void refresh()}
-              onShowTasks={() => {
-                setSettingsSection("tasks");
-                setPage("settings");
-              }}
-            />
           ) : page === "settings" || page === "storage" ? (
             <section className="workspace-panel settings-workspace">
               <div className="panel-heading">
@@ -2629,6 +2620,7 @@ export default function App() {
                 value={settingsSection}
                 onValueChange={setSettingsSection}
                 accountCount={data.accounts.length}
+                ruleCount={data.rules.length}
                 accounts={
                   <>
                     <div className="settings-section-heading">
@@ -2753,6 +2745,13 @@ export default function App() {
                       </>
                     )}
                   </>
+                }
+                rules={
+                  <RulesPanel
+                    data={data}
+                    onChange={() => void refresh()}
+                    onShowTasks={() => setSettingsSection("tasks")}
+                  />
                 }
                 archive={
                   <>
@@ -2912,6 +2911,7 @@ export default function App() {
                         </CollapsibleContent>
                       </Card>
                     </Collapsible>
+                    <RuleRunsPanel />
                     <ArchiveJobsPanel defaultCollapsed />
                     <ServerOperations defaultCollapsed />
                     <FolderHealthPanel defaultCollapsed />
@@ -3023,38 +3023,41 @@ export default function App() {
                             className={syncing ? "animate-spin" : ""}
                           />
                         </Button>
-                        {!query.remoteFolder && (
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <Button
-                                variant="ghost"
-                                size="icon-sm"
-                                disabled={syncing || !data.accounts.length}
-                                title="选择收取邮件的账号"
-                                aria-label="选择收取邮件的账号"
-                              >
-                                <ChevronDown size={16} />
-                              </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end">
-                              <DropdownMenuLabel>收取邮件</DropdownMenuLabel>
-                              <DropdownMenuItem onSelect={() => void sync()}>
-                                全部账号
-                              </DropdownMenuItem>
-                              <DropdownMenuSeparator />
-                              {data.accounts
-                                .filter((a) => a.enabled)
-                                .map((a) => (
-                                  <DropdownMenuItem
-                                    key={a.id}
-                                    onSelect={() => void sync(a.id)}
-                                  >
-                                    {a.name} · {a.email}
-                                  </DropdownMenuItem>
-                                ))}
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                        )}
+                        {query.view === "all" &&
+                          !query.accountId &&
+                          !query.folder &&
+                          !query.remoteFolder && (
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon-sm"
+                                  disabled={syncing || !data.accounts.length}
+                                  title="选择收取邮件的账号"
+                                  aria-label="选择收取邮件的账号"
+                                >
+                                  <ChevronDown size={16} />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                <DropdownMenuLabel>收取邮件</DropdownMenuLabel>
+                                <DropdownMenuItem onSelect={() => void sync()}>
+                                  全部账号
+                                </DropdownMenuItem>
+                                <DropdownMenuSeparator />
+                                {data.accounts
+                                  .filter((a) => a.enabled)
+                                  .map((a) => (
+                                    <DropdownMenuItem
+                                      key={a.id}
+                                      onSelect={() => void sync(a.id)}
+                                    >
+                                      {a.name} · {a.email}
+                                    </DropdownMenuItem>
+                                  ))}
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          )}
                       </ButtonGroup>
                     </div>
                   </div>

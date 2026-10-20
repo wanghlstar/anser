@@ -1005,7 +1005,9 @@ fn sync_imap_scope_controlled<T: std::io::Read + Write>(
                     );
                     let registration = if folder.eq_ignore_ascii_case("INBOX") {
                         control
-                            .map(|control| folder_gate.interruptible_download(observed_activity, control))
+                            .map(|control| {
+                                folder_gate.interruptible_download(observed_activity, control)
+                            })
                             .transpose()?
                     } else {
                         None
@@ -2689,7 +2691,8 @@ mod tests {
                 (old.date.clone(), old.is_read, old.starred, true)
             );
             assert_eq!(
-                archive::read_raw(&[store.root.clone()], old.rel_path.as_deref(), &old_hash).unwrap(),
+                archive::read_raw(&[store.root.clone()], old.rel_path.as_deref(), &old_hash)
+                    .unwrap(),
                 crate::tests::raw()
             );
             assert!(store
@@ -2734,7 +2737,8 @@ mod tests {
             assert!(!active("7:9"));
             assert!(active("7:12") && active("7:13") && active("7:14"));
             assert_eq!(
-                archive::read_raw(&[store.root.clone()], old.rel_path.as_deref(), &old_hash).unwrap(),
+                archive::read_raw(&[store.root.clone()], old.rel_path.as_deref(), &old_hash)
+                    .unwrap(),
                 crate::tests::raw()
             );
         }
@@ -2829,7 +2833,8 @@ mod tests {
         assert!(active("7:12") && active("7:13") && active("7:14"));
         assert_eq!(hash(), old_hash);
         assert_eq!(
-            crate::archive::read_raw(&[store.root.clone()], old.rel_path.as_deref(), &old_hash).unwrap(),
+            crate::archive::read_raw(&[store.root.clone()], old.rel_path.as_deref(), &old_hash)
+                .unwrap(),
             crate::tests::raw()
         );
     }
@@ -3376,7 +3381,11 @@ mod tests {
         let current = store.snapshot(&inbox).unwrap();
         // 被替换下来的旧邮件来源行已非活跃但本地仍有存档：「全部」按收件箱范围保留它。
         assert_eq!(current.matched, 2);
-        let mut subjects: Vec<_> = current.messages.iter().map(|m| m.subject.as_str()).collect();
+        let mut subjects: Vec<_> = current
+            .messages
+            .iter()
+            .map(|m| m.subject.as_str())
+            .collect();
         subjects.sort_unstable();
         assert_eq!(subjects, vec!["New invoice", "Project invoice"]);
         let old = local
@@ -3606,7 +3615,14 @@ pub fn sync_folder_with_updates(
         ));
     }
     let result = catch_unwind(AssertUnwindSafe(|| {
-        sync_imap_scope_controlled(store, a, &mut session, &updated, Some(folder), Some(&control))
+        sync_imap_scope_controlled(
+            store,
+            a,
+            &mut session,
+            &updated,
+            Some(folder),
+            Some(&control),
+        )
     }))
     .unwrap_or_else(|_| Err("邮件协议库处理响应异常；已下载的本地存档已保留".into()));
     finish_readonly_sync(&mut session, &control, result)

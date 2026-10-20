@@ -123,6 +123,85 @@ kbd {
   --sidebar-border: hsl(240 3.7% 15.9%);
   --sidebar-ring: hsl(217.2 91.2% 59.8%);
 }
+.release-notes {
+  min-width: 0;
+  overflow-wrap: break-word;
+}
+.release-notes > * + * {
+  margin-top: 0.75em;
+}
+.release-notes :is(h1, h2, h3, h4, h5, h6) {
+  font-weight: 650;
+  line-height: 1.4;
+}
+.release-notes h1 {
+  font-size: 1.35em;
+}
+.release-notes h2 {
+  font-size: 1.2em;
+}
+.release-notes h3 {
+  font-size: 1.1em;
+}
+.release-notes :is(ul, ol) {
+  padding-left: 1.5em;
+}
+.release-notes ul {
+  list-style: disc;
+}
+.release-notes ol {
+  list-style: decimal;
+}
+.release-notes li + li {
+  margin-top: 0.25em;
+}
+.release-notes li > :is(ul, ol) {
+  margin-top: 0.25em;
+}
+.release-notes a {
+  color: var(--foreground);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.release-notes :is(pre, code) {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.release-notes :not(pre) > code,
+.release-notes pre {
+  background: var(--secondary);
+  border-radius: 4px;
+}
+.release-notes :not(pre) > code {
+  padding: 0.1em 0.3em;
+}
+.release-notes pre {
+  padding: 0.75em;
+  overflow-x: auto;
+}
+.release-notes blockquote {
+  border-left: 3px solid var(--border);
+  padding-left: 0.75em;
+  color: var(--muted);
+}
+.release-notes table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+}
+.release-notes :is(th, td) {
+  border: 1px solid var(--border);
+  padding: 0.35em 0.6em;
+  text-align: left;
+}
+.release-notes img {
+  max-width: 100%;
+  height: auto;
+}
+.release-notes hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+}
 .app-shell {
   display: flex;
   height: 100vh;
@@ -1311,7 +1390,6 @@ button.nav-collapse .collapse-chevron {
   color: var(--muted);
   font-size: 12px;
   line-height: 1.6;
-  margin-top: 16px;
 }
 .panel-empty {
   text-align: center;
@@ -1647,13 +1725,15 @@ button.nav-collapse .collapse-chevron {
   gap: 12px;
   margin: 12px 0;
 }
-/* 顶部两卡同排：左卡放四个开关，右卡放三个下拉与保存，左宽右窄；
-   两卡等高，但不再逐行对齐 */
+/* 应用偏好两张全宽横卡上下排列：通知与启动的控件横向铺开，
+   间隔与外观的三个下拉跟随卡片宽度分摊 */
 .storage-tools-top {
-  display: grid;
-  grid-template-columns: 1.3fr 1fr;
-  gap: 12px;
-  align-items: stretch;
+  display: flex;
+  flex-direction: column;
+  gap: var(--settings-card-gap, 24px);
+}
+.storage-tools-top .settings-tool {
+  justify-content: flex-start;
 }
 .diagnostics-card {
   justify-content: flex-start;
@@ -1816,22 +1896,26 @@ button.nav-collapse .collapse-chevron {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* 四个开关横排一行（左卡内宽约 550px，容纳四组的自然宽度）；
-   窄窗口整组换成两行两列，不把标签文字折行 */
+/* 通知与启动的四个开关 + 快捷键录入横向铺开；宽度不足时自然换行 */
 .settings-tool-switches {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 8px 14px;
+  gap: 8px 20px;
 }
 .settings-tool-switches > .settings-tool-row {
-  flex: 0 0 auto;
+  flex: 0 1 auto;
 }
-@media (max-width: 1279px) {
-  .settings-tool-switches > .settings-tool-row {
-    flex: 0 0 calc(50% - 7px);
-  }
+.storage-tools-top .settings-tool p {
+  max-width: 820px;
+}
+.storage-tools-top .settings-tool-selects {
+  flex: 1;
+}
+.storage-tools-top .settings-tool-selects .select-field {
+  flex: 1 1 0;
+  min-width: 0;
 }
 .settings-about {
   padding: 12px 16px;
@@ -4524,11 +4608,7 @@ button.nav-collapse .collapse-chevron {
   min-width: 0;
 }
 
-/* 规则页：内容区适当加宽；账号分组卡头整体下移，避免贴着卡片上缘 */
-.rules-workspace {
-  max-width: 1800px;
-  padding-inline: 12px;
-}
+/* 规则页：账号分组卡头整体下移，避免贴着卡片上缘 */
 .rule-group-card [data-slot="card-header"] {
   align-items: center;
   padding-block: 14px;

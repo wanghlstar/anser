@@ -9,6 +9,7 @@ import {
   DropdownMenuTrigger,
 } from "./ui/dropdown-menu";
 import { call, native } from "../lib/api";
+import type { ForwardFile } from "../lib/types";
 
 /// 写信附件条：单击选中，⌘/⇧ 多选，双击或空格用系统默认应用打开，
 /// ⌘C 把选中的文件写进剪贴板（text/uri-list），可直接粘到 Finder/邮件正文。
@@ -199,6 +200,74 @@ export function ComposeAttachments({
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
+    </div>
+  );
+}
+
+export function ForwardAttachments({
+  files,
+  onOpen,
+  onRemove,
+  disabled = false,
+}: {
+  files: ForwardFile[];
+  onOpen: (file: ForwardFile) => void;
+  onRemove: (file: ForwardFile) => void;
+  disabled?: boolean;
+}) {
+  const [selected, setSelected] = useState<string | null>(null);
+  useEffect(() => {
+    if (selected && !files.some((file) => file.id === selected))
+      setSelected(null);
+  }, [files, selected]);
+  if (!files.length) return null;
+  return (
+    <div
+      className="compose-attachments"
+      role="listbox"
+      aria-label="原邮件附件"
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node))
+          setSelected(null);
+      }}
+    >
+      {files.map((file) => (
+        <span
+          key={file.id}
+          role="option"
+          aria-selected={selected === file.id}
+          tabIndex={0}
+          className="compose-attachment"
+          data-selected={selected === file.id}
+          title={`${file.name} · ${file.size} 字节`}
+          onClick={() => setSelected(file.id)}
+          onDoubleClick={() => !disabled && onOpen(file)}
+          onKeyDown={(event) => {
+            if (event.key === " " || event.key === "Enter") {
+              event.preventDefault();
+              if (!disabled) onOpen(file);
+            }
+          }}
+        >
+          <Paperclip size={13} />
+          <span className="compose-attachment-name" title={file.name}>
+            {file.name}
+          </span>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            title="移除附件"
+            aria-label={`移除附件 ${file.name}`}
+            disabled={disabled}
+            onClick={(event) => {
+              event.stopPropagation();
+              onRemove(file);
+            }}
+          >
+            <X size={13} />
+          </Button>
+        </span>
+      ))}
     </div>
   );
 }

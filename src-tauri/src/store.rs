@@ -102,6 +102,7 @@ impl Store {
         crate::directory_operations::initialize(&db)?;
         crate::sent_uploads::initialize(&db)?;
         crate::rule_operations::initialize(&db)?;
+        crate::rule_runs::initialize(&db)?;
         crate::retention::initialize(&db)?;
         crate::archive_jobs::initialize(&db)?;
         crate::search::initialize(&db)?;
@@ -302,6 +303,7 @@ impl Store {
                 .map_err(err)?;
             tx.execute("DELETE FROM sources WHERE mail_id=?1", [id])
                 .map_err(err)?;
+            crate::rule_runs::cancel_mail_in(&tx, id)?;
             // server_operations 无 mail_id 列，mailId 存在 data JSON 里
             tx.execute(
                 "DELETE FROM server_operations WHERE json_extract(data,'$.mailId')=?1",
@@ -929,11 +931,9 @@ impl Store {
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .map_err(err)?;
         let stored: Option<String> = tx
-            .query_row(
-                "SELECT data FROM accounts WHERE id=?1",
-                [account_id],
-                |r| r.get(0),
-            )
+            .query_row("SELECT data FROM accounts WHERE id=?1", [account_id], |r| {
+                r.get(0)
+            })
             .optional()
             .map_err(err)?;
         if stored.is_none() {
@@ -948,19 +948,14 @@ impl Store {
         } else {
             tx.execute(
                 "UPDATE accounts SET data=json_set(data,'$.inboxFolders',json(?2)) WHERE id=?1",
-                params![
-                    account_id,
-                    serde_json::to_string(&selected).map_err(err)?
-                ],
+                params![account_id, serde_json::to_string(&selected).map_err(err)?],
             )
             .map_err(err)?;
         }
         let data: String = tx
-            .query_row(
-                "SELECT data FROM accounts WHERE id=?1",
-                [account_id],
-                |r| r.get(0),
-            )
+            .query_row("SELECT data FROM accounts WHERE id=?1", [account_id], |r| {
+                r.get(0)
+            })
             .map_err(err)?;
         let account: Account = serde_json::from_str(&data).map_err(err)?;
         tx.commit().map_err(err)?;
@@ -1038,6 +1033,7 @@ impl Store {
         tx.execute("DELETE FROM folder_retention WHERE account_id=?1", [id])
             .map_err(err)?;
         tx.execute("UPDATE archive_jobs SET status='cancelled',revision=revision+1,error='账号已移除，本地存档保留' WHERE json_extract(data,'$.accountId')=?1 AND status!='completed'",[id]).map_err(err)?;
+        crate::rule_runs::cancel_account_in(&tx, id)?;
         tx.execute("UPDATE server_operations SET status='blocked',revision=revision+1,error='账号已移除，本地存档保留' WHERE account_id=?1 AND status!='completed'", [id]).map_err(err)?;
         tx.execute("DELETE FROM accounts WHERE id=?1", [id])
             .map_err(err)?;
@@ -1094,6 +1090,11 @@ impl Store {
                 |r| r.get(0),
             )
             .map_err(err)?;
+        tx.execute(
+            "DELETE FROM rule_runs WHERE mail_id IN (SELECT id FROM messages WHERE account_id=?1)",
+            [id],
+        )
+        .map_err(err)?;
         tx.execute(
             "DELETE FROM rule_executions WHERE mail_id IN (SELECT id FROM messages WHERE account_id=?1)",
             [id],
@@ -1168,11 +1169,7 @@ impl Store {
     /// 导出规则：按账号筛选（空 = 全部），保持执行顺序。
     /// `include_global` 控制是否带上全局规则（accountId 为空）；
     /// 默认带上，否则导出的规则在别处导入会丢掉通用条件。
-    pub fn export_rules(
-        &self,
-        account_ids: &[String],
-        include_global: bool,
-    ) -> Result<Vec<Rule>> {
+    pub fn export_rules(&self, account_ids: &[String], include_global: bool) -> Result<Vec<Rule>> {
         Ok(self
             .rules()?
             .into_iter()
@@ -1194,9 +1191,7 @@ impl Store {
         let ids: Vec<String> = {
             let db = self.db()?;
             let mut q = db
-                .prepare(
-                    "SELECT id FROM messages WHERE json_extract(data,'$.localFolder')=?1",
-                )
+                .prepare("SELECT id FROM messages WHERE json_extract(data,'$.localFolder')=?1")
                 .map_err(err)?;
             let rows = q
                 .query_map([name], |r| r.get::<_, String>(0))
@@ -1299,6 +1294,16 @@ impl Store {
             )
             .map_err(err)?;
         }
+        let hash = crate::rule_runs::configuration(rs)?;
+        let ids = {
+            let mut q = tx.prepare("SELECT id FROM rule_runs WHERE status NOT IN ('completed','cancelled') AND json_extract(data,'$.configuration')!=?1").map_err(err)?;
+            let rows = q
+                .query_map([hash], |row| row.get::<_, String>(0))
+                .map_err(err)?;
+            rows.collect::<std::result::Result<Vec<_>, _>>()
+                .map_err(err)?
+        };
+        crate::rule_runs::cancel_in(&tx, &ids)?;
         tx.commit().map_err(err)
     }
     pub fn mail(&self, id: &str) -> Result<Mail> {
@@ -1416,8 +1421,12 @@ impl Store {
                     mail.date = mail.server_date.clone();
                 }
                 tx.execute(
-                    "UPDATE messages SET data=?2,parser_version=3 WHERE id=?1",
-                    params![mail.id, serde_json::to_string(&mail).map_err(err)?],
+                    "UPDATE messages SET data=?2,parser_version=?3 WHERE id=?1",
+                    params![
+                        mail.id,
+                        serde_json::to_string(&mail).map_err(err)?,
+                        archive::PARSER_VERSION
+                    ],
                 )
                 .map_err(err)?;
                 upgraded = true;
@@ -1449,7 +1458,7 @@ impl Store {
             if mail.date.is_empty() {
                 mail.date = mail.server_date.clone();
             }
-            tx.execute("INSERT INTO messages(id,account_id,hash,data,parser_version) VALUES(?1,?2,?3,?4,3) ON CONFLICT(id) DO UPDATE SET hash=excluded.hash,data=excluded.data,parser_version=3", params![mail.id,a.id,hash,serde_json::to_string(&mail).map_err(err)?]).map_err(err)?;
+            tx.execute("INSERT INTO messages(id,account_id,hash,data,parser_version) VALUES(?1,?2,?3,?4,?5) ON CONFLICT(id) DO UPDATE SET hash=excluded.hash,data=excluded.data,parser_version=excluded.parser_version", params![mail.id,a.id,hash,serde_json::to_string(&mail).map_err(err)?,archive::PARSER_VERSION]).map_err(err)?;
         }
         tx.execute("INSERT INTO sources(account_id,folder,remote_id,mail_id) VALUES(?1,?2,?3,?4) ON CONFLICT(account_id,folder,remote_id) DO UPDATE SET mail_id=excluded.mail_id,active=1",params![a.id,folder,remote,mail.id]).map_err(err)?;
         tx.commit().map_err(err)?;
@@ -1466,7 +1475,11 @@ impl Store {
     }
     fn apply_rules_inner(&self, id: &str, remote_only: bool) -> Result<u32> {
         let configured = self.rules()?;
-        if remote_only && !configured.iter().any(|r| r.enabled && rules::remote(r)) {
+        if remote_only
+            && !rules::expand(&configured)
+                .iter()
+                .any(|r| r.enabled && rules::remote(r))
+        {
             return Ok(0);
         }
         self.apply_configured_rules(self.mail(id)?, &configured, remote_only)
@@ -1477,72 +1490,123 @@ impl Store {
         configured: &[Rule],
         remote_only: bool,
     ) -> Result<u32> {
+        let expanded = rules::expand(configured);
+        let configured = expanded.as_slice();
+        // Freeze the state that first matched this rule chain. Ordered actions
+        // legitimately change read/star/folder flags, so later steps must not
+        // re-read those flags or "未读 → 标已读 → 归类" would stop after step one.
+        let observed = rules::ObservedStatus::of(&m);
+        if Self::rule_blocks_move(&self.db()?, &m.id)? {
+            return Ok(0);
+        }
         if m.saved_locally && !remote_only {
             self.read_archive(m.rel_path.as_deref(), &m.hash)?;
         }
-        // 冻结首次匹配时的已读/星标状态：同一条规则里的「未读 → 标已读 → 归类」
-        // 以及后续规则都按原始状态判断，不被前面的动作改写。
-        let observed = rules::ObservedStatus::of(&m);
-        let mut count = 0;
-        for r in configured {
+        let non_unread = crate::search::is_non_unread_mail(&self.db()?, &m.id)?;
+        // Determine all required reads/saves before scheduling any earlier MOVE.
+        // The continuation owns the full chain and keeps directory tasks held
+        // until every ordered step has finished successfully.
+        for rule in configured {
+            if non_unread && rule.action == "unread" {
+                continue;
+            }
             let state =
-                rules::match_state_observed(&r, &m, Some(observed), rules::body_available(&m));
+                rules::match_state_observed(rule, &m, Some(observed), rules::body_available(&m));
+            if rules::remote(rule) && !self.rule_has_source(rule, &m)? {
+                continue;
+            }
+            let applicable = !remote_only || rules::remote(rule) || rules::saves(rule) || rule.stop;
+            if applicable
+                && (state == rules::MatchState::NeedsBody
+                    || (state == rules::MatchState::Match
+                        && !m.saved_locally
+                        && (rules::saves(rule)
+                            || (rule.action == "serverMove"
+                                && !rule.source_folder.is_empty()
+                                && self.should_save_folder(
+                                    &self.account(&m.account_id)?,
+                                    &rule.source_folder,
+                                )?))))
+            {
+                self.defer_rules(&m, observed, configured, 0, remote_only)?;
+                return Ok(1);
+            }
+            if state == rules::MatchState::Match && rule.stop {
+                break;
+            }
+        }
+        let mut count = 0;
+        for (position, r) in configured.iter().enumerate() {
+            if non_unread && r.action == "unread" {
+                continue;
+            }
+            if rules::remote(r) && !self.rule_has_source(r, &m)? {
+                continue;
+            }
+            let state =
+                rules::match_state_observed(r, &m, Some(observed), rules::body_available(&m));
+            if state == rules::MatchState::NeedsBody
+                && (!remote_only || rules::remote(r) || rules::saves(r) || r.stop)
+            {
+                self.defer_rules(&m, observed, configured, position, remote_only)?;
+                count += 1;
+                break;
+            }
             if remote_only && !rules::remote(&r) {
+                if state == rules::MatchState::Match && rules::saves(r) && !m.saved_locally {
+                    self.defer_rules(&m, observed, configured, position, remote_only)?;
+                    count += 1;
+                    break;
+                }
                 if state == rules::MatchState::Match && r.stop {
                     break;
                 }
                 continue;
             }
             if state == rules::MatchState::Match {
-                let is_remote = rules::remote(&r);
-                if is_remote && !self.apply_remote_rule(&r, &m, false, Some(observed))? {
-                    // 服务器来源不适用（如已不在收件箱）：整条规则都不生效
+                if (rules::saves(r)
+                    || (r.action == "serverMove"
+                        && !r.source_folder.is_empty()
+                        && self
+                            .should_save_folder(&self.account(&m.account_id)?, &r.source_folder)?))
+                    && !m.saved_locally
+                {
+                    self.defer_rules(&m, observed, configured, position, remote_only)?;
+                    count += 1;
+                    break;
+                }
+                if rules::remote(&r) {
+                    if self.apply_remote_rule(&r, &m, false, Some(observed))? {
+                        count += 1;
+                    } else {
+                        continue;
+                    }
+                    if r.stop || Self::unqueued_rule_failure_in(&self.db()?, r, &m.id)? {
+                        break;
+                    }
                     continue;
                 }
-                // 本机动作立即应用；服务器规则只允许叠加 read/unread/star。
-                let actions = r.effective_actions_deduped();
-                let local: Vec<String> = if is_remote {
-                    actions
-                        .iter()
-                        .filter(|a| !matches!(a.as_str(), "serverCopy" | "serverMove"))
-                        .cloned()
-                        .collect()
-                } else {
-                    actions.clone()
-                };
-                for action in &local {
-                    match action.as_str() {
-                        "folder" => m.local_folder = r.destination.clone(),
-                        "read" => {
-                            m.is_read = true;
-                            m.local_read_override = Some(true);
-                        }
-                        "unread" => {
-                            m.is_read = false;
-                            m.local_read_override = Some(false);
-                        }
-                        "star" => {
-                            m.starred = true;
-                            m.local_star_override = Some(true);
-                        }
-                        "trash" => m.trashed = true,
-                        _ => return Err("未知动作".into()),
+                match r.action.as_str() {
+                    "folder" => m.local_folder = r.destination.clone(),
+                    "saveFolder" => m.local_folder = r.destination.clone(),
+                    "save" => {}
+                    "read" => {
+                        m.is_read = true;
+                        m.local_read_override = Some(true);
                     }
-                }
-                // 一次命中把该规则的所有动作都应用上，只写库、只记一次日志。
-                if !local.is_empty() {
-                    self.update_mail(&m)?;
-                    self.log(&format!(
-                        "规则「{}」已执行 · {}{}",
-                        r.name,
-                        m.subject,
-                        if actions.len() > 1 {
-                            format!("（{} 个动作）", actions.len())
-                        } else {
-                            String::new()
-                        }
-                    ))?;
-                }
+                    "unread" => {
+                        m.is_read = false;
+                        m.local_read_override = Some(false);
+                    }
+                    "star" => {
+                        m.starred = true;
+                        m.local_star_override = Some(true);
+                    }
+                    "trash" => m.trashed = true,
+                    _ => return Err("未知动作".into()),
+                };
+                self.update_mail(&m)?;
+                self.log(&format!("规则「{}」已执行 · {}", r.name, m.subject))?;
                 count += 1;
                 if r.stop {
                     break;
@@ -1573,7 +1637,7 @@ impl Store {
             )
             .map_err(err)?;
         }
-        tx.execute("DELETE FROM messages WHERE account_id=?1 AND json_extract(data,'$.savedLocally')=0 AND NOT EXISTS(SELECT 1 FROM sources WHERE mail_id=messages.id AND active=1) AND NOT EXISTS(SELECT 1 FROM directory_operations d WHERE d.account_id=messages.account_id AND json_extract(d.data,'$.mailId')=messages.id AND d.status NOT IN ('completed','cancelled'))", [account]).map_err(err)?;
+        tx.execute("DELETE FROM messages WHERE account_id=?1 AND json_extract(data,'$.savedLocally')=0 AND NOT EXISTS(SELECT 1 FROM sources WHERE mail_id=messages.id AND active=1) AND NOT EXISTS(SELECT 1 FROM rule_runs r WHERE r.mail_id=messages.id AND r.status NOT IN ('completed','cancelled')) AND NOT EXISTS(SELECT 1 FROM directory_operations d WHERE d.account_id=messages.account_id AND json_extract(d.data,'$.mailId')=messages.id AND d.status NOT IN ('completed','cancelled'))", [account]).map_err(err)?;
         tx.commit().map_err(err)
     }
     pub fn preview_rule(&self, rule: &Rule) -> Result<Vec<String>> {
@@ -1593,9 +1657,13 @@ impl Store {
                 let full = self.mail(&m.id)?;
                 state = rules::match_state(&rule, &full, rules::body_available(&full));
             }
-            if state != rules::MatchState::NoMatch
-                && (!rules::remote(&rule) || self.rule_has_source(&rule, &m)?)
-            {
+            let available = rules::expand(std::slice::from_ref(&rule)).iter().try_fold(
+                false,
+                |found, step| -> Result<bool> {
+                    Ok(found || !rules::remote(step) || self.rule_has_source(step, &m)?)
+                },
+            )?;
+            if state != rules::MatchState::NoMatch && available {
                 matches.push(if state == rules::MatchState::NeedsBody {
                     format!("{}（等待完整邮件核对）", m.subject)
                 } else {
@@ -1873,36 +1941,69 @@ impl Store {
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .map_err(err)?;
         let rows = tx
-            .prepare("SELECT data FROM messages WHERE parser_version < 3")
+            .prepare("SELECT data, parser_version FROM messages WHERE parser_version < ?1")
             .map_err(err)?
-            .query_map([], |r| r.get::<_, String>(0))
+            .query_map([archive::PARSER_VERSION], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+            })
             .map_err(err)?
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(err)?;
         let mut failed = 0;
-        for data in rows {
+        for (data, version) in rows {
             let mut mail: Mail = serde_json::from_str(&data).map_err(err)?;
-            let Ok((parsed, _, _)) = self.reparse(&mail) else {
-                // Missing/corrupt archives remain unchanged and retry next startup.
-                failed += 1;
-                continue;
-            };
-            mail.date = if parsed.date.is_empty() {
-                mail.server_date.clone()
+            if version >= 3 {
+                // 旧记录结构已经完整，只缺后来新增的头字段，不重新解码正文/附件。
+                let Ok(raw) = self.read_archive(mail.rel_path.as_deref(), &mail.hash) else {
+                    if !mail.saved_locally {
+                        // 仅在线记录没有原件，保留未知状态，等真正下载后再核对。
+                        tx.execute(
+                            "UPDATE messages SET parser_version=?2 WHERE id=?1",
+                            params![mail.id, archive::PARSER_VERSION],
+                        )
+                        .map_err(err)?;
+                        continue;
+                    }
+                    failed += 1;
+                    continue;
+                };
+                let Ok((cc, priority)) = archive::header_metadata(&raw) else {
+                    failed += 1;
+                    continue;
+                };
+                mail.cc = cc;
+                mail.priority = priority;
+                mail.header_metadata_known = true;
             } else {
-                parsed.date
-            };
-            mail.sender = parsed.sender;
-            mail.recipients = parsed.recipients;
-            mail.subject = parsed.subject;
-            mail.body = parsed.body;
-            mail.preview = parsed.preview;
-            mail.message_id = parsed.message_id;
-            mail.in_reply_to = parsed.in_reply_to;
-            mail.references = parsed.references;
+                let Ok((parsed, _, _)) = self.reparse(&mail) else {
+                    // Missing/corrupt archives remain unchanged and retry next startup.
+                    failed += 1;
+                    continue;
+                };
+                mail.date = if parsed.date.is_empty() {
+                    mail.server_date.clone()
+                } else {
+                    parsed.date
+                };
+                mail.sender = parsed.sender;
+                mail.recipients = parsed.recipients;
+                mail.cc = parsed.cc;
+                mail.priority = parsed.priority;
+                mail.header_metadata_known = parsed.header_metadata_known;
+                mail.subject = parsed.subject;
+                mail.body = parsed.body;
+                mail.preview = parsed.preview;
+                mail.message_id = parsed.message_id;
+                mail.in_reply_to = parsed.in_reply_to;
+                mail.references = parsed.references;
+            }
             tx.execute(
-                "UPDATE messages SET data=?2,parser_version=3 WHERE id=?1",
-                params![mail.id, serde_json::to_string(&mail).map_err(err)?],
+                "UPDATE messages SET data=?2,parser_version=?3 WHERE id=?1",
+                params![
+                    mail.id,
+                    serde_json::to_string(&mail).map_err(err)?,
+                    archive::PARSER_VERSION
+                ],
             )
             .map_err(err)?;
         }
@@ -1973,7 +2074,7 @@ impl Store {
             )?;
         }
         drop(stmt);
-        snap.execute_batch("DELETE FROM accounts; DELETE FROM folder_retention; DELETE FROM archive_jobs; DELETE FROM drafts; DELETE FROM compose_files; DELETE FROM compose_sessions; DELETE FROM outbox; DELETE FROM sent_uploads; DELETE FROM logs; DELETE FROM server_operations; DELETE FROM folder_health; DELETE FROM directory_operations; DELETE FROM rule_executions; VACUUM;").map_err(err)?;
+        snap.execute_batch("DELETE FROM accounts; DELETE FROM folder_retention; DELETE FROM archive_jobs; DELETE FROM rule_runs; DELETE FROM drafts; DELETE FROM compose_files; DELETE FROM compose_sessions; DELETE FROM outbox; DELETE FROM sent_uploads; DELETE FROM logs; DELETE FROM server_operations; DELETE FROM folder_health; DELETE FROM directory_operations; DELETE FROM rule_executions; VACUUM;").map_err(err)?;
         archive::atomic_write(
             &folder.join("manifest.json"),
             br#"{"format":"mail-desktop-archive","version":1}"#,

@@ -480,6 +480,8 @@ fn html_text(html: &str) -> String {
         .collect::<Vec<_>>()
         .join("\n")
 }
+/// 派生邮件记录的解析版本。新增字段时递增，让旧存档在下次启动时只补一次。
+pub const PARSER_VERSION: i64 = 5;
 /// 把邮件重要性归一化为 `high` / `normal` / `low`。不同客户端用的头与取值
 /// 不统一，这里同时接受 `X-Priority`、`Priority` 与 `Importance`。
 pub fn priority_of(headers: &[mailparse::MailHeader<'_>]) -> String {
@@ -503,6 +505,14 @@ fn priority_value(value: &str) -> Option<&'static str> {
         "4" | "5" | "low" | "lowest" | "non-urgent" => Some("low"),
         _ => None,
     }
+}
+/// 只读取已存档原件的头块，用于给旧解析版本补 cc/优先级，不重新解码正文与附件。
+pub fn header_metadata(raw: &[u8]) -> Result<(String, String)> {
+    let (headers, _) = mailparse::parse_headers(raw).map_err(err)?;
+    Ok((
+        headers.get_first_value("Cc").unwrap_or_default(),
+        priority_of(&headers),
+    ))
 }
 
 pub fn parse(

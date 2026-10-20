@@ -1,5 +1,5 @@
 import { SelectField, SelectOption } from "@/components/ui/select-field";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   AlertCircle,
   Bell,
@@ -35,6 +35,91 @@ function formatArchivedAt(value: string): string {
 
 // 发送倒计时可选档位；0 = 立即发送
 const SEND_COUNTDOWN_OPTIONS = [0, 3, 5, 10];
+const DEFAULT_RESTORE_SHORTCUT = "CommandOrControl+Alt+Backquote";
+const shortcutKeys: Record<string, string> = {
+  Space: "Space",
+  Enter: "Enter",
+  Tab: "Tab",
+  Backquote: "Backquote",
+  Minus: "Minus",
+  Equal: "Equal",
+  BracketLeft: "BracketLeft",
+  BracketRight: "BracketRight",
+  Semicolon: "Semicolon",
+  Quote: "Quote",
+  Comma: "Comma",
+  Period: "Period",
+  Slash: "Slash",
+  Backslash: "Backslash",
+  ArrowUp: "Up",
+  ArrowDown: "Down",
+  ArrowLeft: "Left",
+  ArrowRight: "Right",
+  Home: "Home",
+  End: "End",
+  PageUp: "PageUp",
+  PageDown: "PageDown",
+  Insert: "Insert",
+  Delete: "Delete",
+  Backspace: "Backspace",
+};
+const shortcutModifierLabels: Record<string, string> = {
+  CommandOrControl: "⌘",
+  Command: "⌘",
+  Control: "⌃",
+  Alt: "⌥",
+  Shift: "⇧",
+};
+const shortcutKeyLabels: Record<string, string> = {
+  Backquote: "`",
+  Minus: "-",
+  Equal: "=",
+  BracketLeft: "[",
+  BracketRight: "]",
+  Semicolon: ";",
+  Quote: "'",
+  Comma: ",",
+  Period: ".",
+  Slash: "/",
+  Backslash: "\\",
+  Space: "空格",
+  ArrowUp: "↑",
+  ArrowDown: "↓",
+  ArrowLeft: "←",
+  ArrowRight: "→",
+};
+function shortcutLabel(value: string) {
+  return value
+    .split("+")
+    .map(
+      (part) => shortcutModifierLabels[part] ?? shortcutKeyLabels[part] ?? part,
+    )
+    .join("");
+}
+function shortcutFromEvent(event: {
+  code: string;
+  metaKey: boolean;
+  ctrlKey: boolean;
+  altKey: boolean;
+  shiftKey: boolean;
+}) {
+  if (!(event.metaKey || event.ctrlKey || event.altKey)) return null;
+  const key = /^Key[A-Z]$/.test(event.code)
+    ? event.code.slice(3)
+    : /^Digit[0-9]$/.test(event.code)
+      ? event.code.slice(5)
+      : /^F([1-9]|1[0-9]|2[0-4])$/.test(event.code)
+        ? event.code
+        : shortcutKeys[event.code];
+  if (!key) return null;
+  const parts: string[] = [];
+  if (event.metaKey) parts.push("CommandOrControl");
+  if (event.ctrlKey) parts.push("Control");
+  if (event.altKey) parts.push("Alt");
+  if (event.shiftKey) parts.push("Shift");
+  parts.push(key);
+  return parts.join("+");
+}
 
 export function StorageTools() {
   const [preferences, setPreferences] = useState<Preferences>({
@@ -44,8 +129,20 @@ export function StorageTools() {
     }),
     [interval, setInterval] = useState(5),
     [countdown, setCountdown] = useState(5),
+    [shortcut, setShortcut] = useState(DEFAULT_RESTORE_SHORTCUT),
+    [recordingShortcut, setRecordingShortcut] = useState(false),
+    [shortcutBusy, setShortcutBusy] = useState(false),
     [ready, setReady] = useState(false),
     [scale, setScale] = useState(1);
+  const shortcutRef = useRef(shortcut);
+  const recordingRef = useRef(recordingShortcut);
+  const shortcutButtonRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    shortcutRef.current = shortcut;
+  }, [shortcut]);
+  useEffect(() => {
+    recordingRef.current = recordingShortcut;
+  }, [recordingShortcut]);
   const [desktop, setDesktop] = useState<{
     autoStart: boolean;
     autoStartAvailable: boolean;
@@ -67,6 +164,7 @@ export function StorageTools() {
               ? p.sendCountdownSeconds!
               : 5,
           );
+          setShortcut(p.restoreShortcut || DEFAULT_RESTORE_SHORTCUT);
           setScale(p.sidebarScale ?? 1);
           setReady(true);
         }
@@ -98,6 +196,7 @@ export function StorageTools() {
                 ? p.sendCountdownSeconds!
                 : 5,
             );
+            setShortcut(p.restoreShortcut || DEFAULT_RESTORE_SHORTCUT);
             setScale(p.sidebarScale ?? 1);
           })
           .catch(() => {});
@@ -178,6 +277,77 @@ export function StorageTools() {
       setDesktopBusy(false);
     }
   }
+  async function beginRecording() {
+    if (recordingShortcut) {
+      cancelRecording();
+      return;
+    }
+    if (native) {
+      try {
+        await call("suspend_restore_shortcut");
+      } catch (e) {
+        toast.error(String(e));
+        return;
+      }
+    }
+    setRecordingShortcut(true);
+  }
+  function cancelRecording() {
+    setRecordingShortcut(false);
+    if (!native) return;
+    void call("set_restore_shortcut", { shortcut: shortcutRef.current }).catch(
+      (e) => toast.error(String(e)),
+    );
+  }
+  useEffect(() => {
+    if (!recordingShortcut) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.key === "Escape") {
+        cancelRecording();
+        return;
+      }
+      if (["Meta", "Control", "Alt", "Shift"].includes(event.key)) return;
+      const next = shortcutFromEvent(event);
+      if (next) void saveShortcut(next);
+    };
+    const onPointerDown = (event: PointerEvent) => {
+      if (
+        event.target instanceof Node &&
+        !shortcutButtonRef.current?.contains(event.target)
+      )
+        cancelRecording();
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    window.addEventListener("pointerdown", onPointerDown, true);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown, true);
+      window.removeEventListener("pointerdown", onPointerDown, true);
+    };
+  });
+  useEffect(() => {
+    return () => {
+      if (!recordingRef.current || !native) return;
+      void call("set_restore_shortcut", {
+        shortcut: shortcutRef.current,
+      }).catch(() => {});
+    };
+  }, []);
+  async function saveShortcut(value: string) {
+    setRecordingShortcut(false);
+    setShortcutBusy(true);
+    try {
+      await call("set_restore_shortcut", { shortcut: value });
+      setShortcut(value);
+      setPreferences((current) => ({ ...current, restoreShortcut: value }));
+      toast.success(`恢复窗口快捷键已设为 ${shortcutLabel(value)}`);
+    } catch (e) {
+      toast.error(String(e));
+    } finally {
+      setShortcutBusy(false);
+    }
+  }
   return (
     <div className="storage-tools">
       <div className="storage-tools-top">
@@ -231,6 +401,30 @@ export function StorageTools() {
                 onCheckedChange={(enabled) => void autoStart(enabled)}
               />
             </div>
+            <div className="settings-tool-row justify-between">
+              <span className="text-sm">恢复窗口快捷键</span>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                ref={shortcutButtonRef}
+                className="min-w-24 font-mono"
+                aria-label="恢复窗口快捷键"
+                disabled={!ready || shortcutBusy}
+                title={
+                  recordingShortcut
+                    ? "请按包含 ⌘、⌃ 或 ⌥ 的组合键；Esc 取消"
+                    : `当前：${shortcutLabel(shortcut)}`
+                }
+                onClick={() => void beginRecording()}
+              >
+                {shortcutBusy
+                  ? "保存中…"
+                  : recordingShortcut
+                    ? "请按组合键…"
+                    : shortcutLabel(shortcut)}
+              </Button>
+            </div>
           </div>
           <p>
             新邮件和发送结果使用系统通知；首次导入旧邮件不通知，横幅由 macOS
@@ -244,6 +438,10 @@ export function StorageTools() {
             {desktop?.autoStartAvailable === false
               ? "开发预览依赖前端服务，请在正式应用中开启开机自启。"
               : "登录 Mac 后自动在后台启动，继续收信和处理定时发送。"}
+          </p>
+          <p>
+            恢复窗口快捷键：窗口隐藏或最小化后，按此组合键恢复并聚焦；点击后直接按新组合键，Esc
+            取消。被 macOS 占用的组合键无法录制，请换一个。
           </p>
           {isDemo() && <p>演示模式不修改系统启动项。</p>}
         </Card>

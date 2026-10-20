@@ -373,6 +373,7 @@ fn rule(id: &str, action: &str, stop: bool) -> Rule {
             operator: "contains".into(),
             value: "invoice".into(),
         }],
+        actions: Vec::new(),
         action: action.into(),
         destination: "财务/发票".into(),
         source_folder: String::new(),
@@ -839,6 +840,32 @@ fn metadata_upgrade_leaves_corrupt_archives_untouched_and_retries() {
         .unwrap()
         .sender
         .contains("腾讯企业邮箱"));
+}
+
+#[test]
+fn metadata_upgrade_backfills_cc_and_priority_without_reparsing_body() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = Store::new(dir.path().into()).unwrap();
+    let raw = b"From: Alice <alice@example.com>\r\nTo: test@example.com\r\nCc: team@example.com\r\nX-Priority: 1\r\nSubject: Priority mail\r\nContent-Type: text/plain\r\n\r\nOriginal body";
+    s.ingest(&account(), "INBOX", "1:8", raw, false).unwrap();
+    let id = s.snapshot(&query()).unwrap().messages[0].id.clone();
+    let mut old = s.mail(&id).unwrap();
+    old.cc.clear();
+    old.priority = "normal".into();
+    old.header_metadata_known = false;
+    old.body = "body marker".into();
+    s.update_mail(&old).unwrap();
+    s.db()
+        .unwrap()
+        .execute("UPDATE messages SET parser_version=3", [])
+        .unwrap();
+    drop(s);
+    let s = Store::new(dir.path().into()).unwrap();
+    let repaired = s.mail(&id).unwrap();
+    assert_eq!(repaired.cc, "team@example.com");
+    assert_eq!(repaired.priority, "high");
+    assert!(repaired.header_metadata_known);
+    assert_eq!(repaired.body, "body marker");
 }
 
 #[test]
@@ -2297,6 +2324,31 @@ fn notifications_skip_history_read_sent_duplicates_and_preserve_preferences() {
         crate::notifications::incoming(&store, &a, checkpoint, chrono::Utc::now())
             .unwrap()
             .is_empty()
+    );
+}
+#[test]
+fn restore_shortcut_defaults_and_validates_before_registration() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::new(dir.path().into()).unwrap();
+    let default = crate::models::default_restore_shortcut();
+    assert_eq!(store.preferences().unwrap().restore_shortcut, default);
+    let legacy: Preferences = serde_json::from_str(r#"{"syncIntervalMinutes":5}"#).unwrap();
+    assert_eq!(legacy.restore_shortcut, default);
+    let parsed = crate::parse_restore_shortcut(&default).unwrap().unwrap();
+    assert_eq!(parsed, default.parse().unwrap());
+    assert!(crate::parse_restore_shortcut("M").is_err());
+    assert!(crate::parse_restore_shortcut("CommandOrControl+Nope").is_err());
+    assert!(crate::parse_restore_shortcut("").unwrap().is_none());
+    let mut prefs = store.preferences().unwrap();
+    prefs.restore_shortcut = "Control+Alt+R".into();
+    store.save_preferences(&prefs).unwrap();
+    assert_eq!(
+        Store::new(dir.path().into())
+            .unwrap()
+            .preferences()
+            .unwrap()
+            .restore_shortcut,
+        "Control+Alt+R"
     );
 }
 #[test]
@@ -3855,6 +3907,7 @@ fn exported_rules_filter_by_account_and_keep_execution_order() {
             operator: "contains".into(),
             value: "x".into(),
         }],
+        actions: Vec::new(),
         action: "folder".into(),
         destination: "项目".into(),
         source_folder: String::new(),
@@ -3895,7 +3948,10 @@ fn exported_rules_filter_by_account_and_keep_execution_order() {
             .collect::<Vec<_>>(),
         vec!["全局规则"]
     );
-    assert!(s.export_rules(&["missing".to_string()], false).unwrap().is_empty());
+    assert!(s
+        .export_rules(&["missing".to_string()], false)
+        .unwrap()
+        .is_empty());
 }
 
 #[test]
@@ -3959,13 +4015,19 @@ fn outbox_records_delete_only_terminated_ones_and_clear_keeps_retryable_ones() {
     let mut failed = draft();
     failed.id = "failed-one".into();
     failed.subject = "Failed".into();
-    let raw = crate::network::build_message(&a, &failed).unwrap().formatted();
+    let raw = crate::network::build_message(&a, &failed)
+        .unwrap()
+        .formatted();
     s.schedule_mail(&failed, &raw, &at, now).unwrap();
     s.db()
         .unwrap()
-        .execute("UPDATE outbox SET status='sending' WHERE id=?1", [&failed.id])
+        .execute(
+            "UPDATE outbox SET status='sending' WHERE id=?1",
+            [&failed.id],
+        )
         .unwrap();
-    s.finish_send(&failed.id, "failed", "smtp rejected").unwrap();
+    s.finish_send(&failed.id, "failed", "smtp rejected")
+        .unwrap();
     s.db()
         .unwrap()
         .execute(
@@ -3979,7 +4041,9 @@ fn outbox_records_delete_only_terminated_ones_and_clear_keeps_retryable_ones() {
     assert!(s.sent_upload(&d.id).unwrap().is_none());
     let mut scheduled = draft();
     scheduled.id = "scheduled-one".into();
-    let raw = crate::network::build_message(&a, &scheduled).unwrap().formatted();
+    let raw = crate::network::build_message(&a, &scheduled)
+        .unwrap()
+        .formatted();
     s.schedule_mail(&scheduled, &raw, &at, now).unwrap();
     assert!(s.delete_outbox("scheduled-one").is_err());
     assert_eq!(s.clear_sent_outbox().unwrap(), 0);
@@ -3995,7 +4059,10 @@ fn outbox_records_delete_only_terminated_ones_and_clear_keeps_retryable_ones() {
     s.finish_send("failed-one", "failed", "").unwrap();
     let statuses = s.outbox().unwrap();
     assert_eq!(
-        statuses.iter().map(|r| r.status.clone()).collect::<Vec<_>>(),
+        statuses
+            .iter()
+            .map(|r| r.status.clone())
+            .collect::<Vec<_>>(),
         vec!["sent".to_string(), "failed".to_string()],
         "一条发送成功、一条仍失败"
     );
@@ -4024,7 +4091,8 @@ fn local_archive_excludes_sent_copies_but_keeps_received_copies() {
         ("sent-legacy", "Sent"),
     ] {
         let raw = format!("From: test@example.com\r\nSubject: {subject}\r\n\r\nbody");
-        s.ingest(&a, folder, subject, raw.as_bytes(), false).unwrap();
+        s.ingest(&a, folder, subject, raw.as_bytes(), false)
+            .unwrap();
     }
     let mut q = query();
     q.view = "archive".into();
@@ -4118,7 +4186,10 @@ fn window_fill_only_matches_windows_that_really_cover_the_screen() {
         (0, 76, 2940, 1752)
     ));
     // 完全相等、以及比可用区域略大一点（窗口被拖动过的旧尺寸）都算铺满。
-    assert!(crate::rect_fills_area((0, 0, 2940, 1752), (0, 0, 2940, 1752)));
+    assert!(crate::rect_fills_area(
+        (0, 0, 2940, 1752),
+        (0, 0, 2940, 1752)
+    ));
     assert!(crate::rect_fills_area(
         (-20, 0, 2980, 1772),
         (0, 0, 2940, 1752)
