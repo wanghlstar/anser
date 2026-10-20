@@ -927,3 +927,10 @@ GitHub CI 和两架构发布工作流已推送；首次 Checks 已成功，Relea
 - `TaskPanelHeader` 右侧操作区由 `justify-end` 改为 `justify-start`：规则数徽标与刷新按钮左缘对齐（实测同为 x=1254），箭头位置仍一致。
 - `TaskPanelHeader` 新增 `compact`：执行记录卡头行距 `gap-2 → gap-1`、内边距与说明字号收紧；卡头高度 **58 → 44px（约 -24%）**，命中记录列表不变。
 - **仍待用户验收，未提交。**
+
+## 0.20.1 本地检查点（2026-10-20）
+
+用户验收通过后，把本轮的规则条件扩展、首次匹配快照与折叠头统一提交，并做**本地检查点**：版本号统一升到 `0.20.1`（`package.json` / `package-lock.json` / `src-tauri/Cargo.toml` / `src-tauri/Cargo.lock` / `src-tauri/tauri.conf.json`），新增 `docs/releases/v0.20.1.md`。**不推送、不发布、不进入 Alpha 更新通道**；仅本地打 tag 并装机到 `/Applications/雁信.app`。
+
+- 门禁：`npm run release:check`、`format:check`、`check:ui`、`tsc --noEmit`、`vitest`（442 例）、`test:desktop`（18）、`build`、`cargo test`（354 passed / 1 ignored）。
+- 版本号按用户原话「0.20.1」字面执行（不是 0.2.1）。
