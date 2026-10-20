@@ -8,7 +8,7 @@
 ```text
 项目：雁信 / Anser（Tauri 2 + React/TypeScript + shadcn/ui + Rust + SQLite）。
 仓库 /Users/wanghlstar/Mytools/anser，基线分支 main。后续从 main 拉短分支开发，推送并发 PR。
-已推送 v0.2.1（Alpha，commit b890ad6）；GitHub Actions 正在构建/发布 Release。
+已发布 v0.2.1（Alpha）：release.yml 已直接发布，双架构资产与 latest.json 齐全，releases/latest 指向它。
 本地检查点：v0.20.1 / v0.20.2 / v0.20.3，均不推送、不发布。
 上游 upstream/main = 9398046（上游 0.1.23）。
 
@@ -16,7 +16,7 @@
 Dock/托盘行为、主窗关闭保留「继续写信」、悬浮条 X、旧规则组合动作兼容、Retina 写信窗定位。
 
 先读 AGENTS.md、本文件、docs/IMPLEMENTATION.md 最后几节、docs/RULES_PORT_UPSTREAM.md 关键发现 50–68。
-需要看效果时 `npm run desktop`；安装版 `/Applications/雁信.app` 仍是 0.20.2 构建（0.2.1 发布后可手动装一次）。
+需要看效果时 `npm run desktop`；安装版 `/Applications/雁信.app` 已是 0.2.1（arm64 Release DMG 安装）。
 铁律：中文界面；业务 UI 只用 shadcn/ui；改 UI 跑 `npm run check:ui`；改动先验收再提交；
 上游与本地无共同祖先，不能 cherry-pick，只能 `git show <sha>:<path>` / `git diff` 逐块搬；
 CSS 改动要在 `dist/assets/index-*.css` 里 grep；本机 browser.screenshot 不可用，布局只量 getBoundingClientRect。
@@ -24,12 +24,13 @@ CSS 改动要在 `dist/assets/index-*.css` 里 grep；本机 browser.screenshot 
 
 ## 二、当前基线
 
-- 基线 `main` = `7fbfe33`（含 `v0.2.1`）；后续从 `main` 拉 `feat/...` / `fix/...` 短分支，推送并发 PR，验收后合并。
-- 已推送：`v0.2.1` tag；`release.yml` 发布为正常 Release（标题 Alpha，不设 prerelease），完成后 `releases/latest` 指向它并支持应用内更新。
+- 基线 `main` = `021ae5f`；`v0.2.1` tag 指向 `ab97b9f`。后续从 `main` 拉 `feat/...` / `fix/...` 短分支，推送并发 PR，验收后合并。
+- 已发布：`v0.2.1` 为正常 Release（标题 Alpha，不设 prerelease），`releases/latest` 已指向它，支持应用内更新；双架构 DMG、app.tar.gz、sig、latest.json 已上传。
 - 历史发布：`v0.2.0` 是 Alpha 预发布；`v0.1.9` 及更早为上一稳定线。
 - 本地检查点：`v0.20.1`、`v0.20.2`、`v0.20.3`，**未推送、未发布**；版本号按用户当时原话使用 0.20.x，不是公开的 0.2.x 线。
-- 安装版：`/Applications/雁信.app` = **0.20.2 构建**，含最新窗口/规则修复；0.2.1 的版本号更小，semver 不会自动降级，需手动安装一次。
+- 安装版：`/Applications/雁信.app` = **0.2.1**（arm64 Release DMG，签名校验通过）。本地 0.20.x 检查点版本号更大，已手动装过 0.2.1；后续 0.2.x 可自动更新。
 - 上游：`upstream/main = 9398046`（0.1.23）；上游 tag 在同名命名空间 `refs/upstream/tags/*`。看 tag 先认作者：`v0.1.19–v0.1.23` 是上游，`v0.1.5–v0.1.9`、`v0.2.0`、`v0.2.1`、`v0.20.1/v0.20.2/v0.20.3` 是我们的。
+- 更新中心：当前 0.2.1 已是 latest，显示「没有可用更新」是正常结果；首次检查遇到过 GitHub 代理瞬断，重试即可。
 - 门禁基线（本轮）：前端 **54 文件 / 454 例**、Rust **373 passed / 2 ignored**；`npx tsc -b`、`npm run format:check`、`npm run check:ui`、`npm run test:desktop` 18、`npm run build` 通过。
 - 装机命令（本地签名；末尾 updater 私钥报错是预期的）：
   ```bash
@@ -49,6 +50,13 @@ CSS 改动要在 `dist/assets/index-*.css` 里 grep；本机 browser.screenshot 
 - 悬浮条按 `!focused` 渲染；「继续写信」右侧 X 在主窗内弹三选项（保存并关闭 / 不保存 / 取消），空白邮件直接舍弃；「查看邮件」右侧 X 直接调用 `close_mail_window`。
 - 写信窗位置按主窗逻辑坐标居中，并用当前显示器工作区钳制，修复 Retina 下出屏。
 - 旧规则的 `action: "read+trash"` / `"serverMove+read"` 由 `ruleActionSteps()` 拆成多步，编辑器不再空白。
+
+### 0.2.1 发布与流程
+
+- 版本号统一为 `0.2.1`，新增 `docs/releases/v0.2.1.md`；`release.yml` 先建草稿、上传双架构资产，再自动发布为正常 Release（标题 Alpha、非 prerelease），`releases/latest` 指向它。
+- 0.2.0 用户可应用内更新；本地 0.20.x 检查点版本号更大，semver 不会自动降级，已手动安装一次 0.2.1。
+- `main` 已合并并通过 fast-forward 到发布代码；旧的长期功能分支已删除。后续每次从 `main` 拉短分支，推送并发 PR，验收后合并。
+- CI 的 Vitest 超时放宽到 120s（`vite.config.ts`），避免 macOS runner 上分页/窗口用例误报；发布 Action 已完整通过。
 
 ## 三、本轮已完成（已验收）
 
