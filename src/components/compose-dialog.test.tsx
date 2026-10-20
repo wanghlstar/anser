@@ -779,6 +779,15 @@ describe("compose window management", () => {
     expect(document.querySelector('[aria-label="邮件正文"]')).toBeTruthy();
   });
 
+  it("Dock/托盘重新激活后的第一下点击不收起写信窗", async () => {
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    await pointer(document.body, "pointerdown", 4, 4);
+    await pointer(document.body, "pointerup", 4, 4);
+    expect(dialog().className).not.toContain("compose-minimized");
+  });
+
   it("点写信窗口自己的弹层不会把窗口收起来", async () => {
     // 字体/字号下拉这些弹层在 DOM 上挂在 .compose-dialog 之外，点它们不算离开写信窗口
     const listbox = document.createElement("div");

@@ -580,6 +580,15 @@ impl Store {
             }
             write(&tx, &mut job)?;
             tx.commit().map_err(err)?;
+            if !rules::remote(&r)
+                && (r.action == "folder" || (r.action == "saveFolder" && !job.remote_only))
+                && m.local_folder != "全部存档"
+            {
+                self.relocate_archive_after_move_unlocked(&m.local_folder, &m.id);
+                if let Ok(updated) = self.mail(&m.id) {
+                    m = updated;
+                }
+            }
             if job.status == "completed" {
                 return Ok(());
             }
@@ -766,6 +775,12 @@ mod tests {
         assert_eq!(m.id, before.id);
         assert!(m.saved_locally && m.starred);
         assert_eq!(m.local_folder, "Invoices");
+        let rel = m.rel_path.as_deref().unwrap();
+        assert!(
+            rel.contains("Invoices"),
+            "完整保存并归类后应在目标目录: {rel}"
+        );
+        assert!(store.root.join(rel).exists());
         let job = store.rule_run(&job.id).unwrap();
         assert_eq!(
             (job.status.as_str(), job.cursor, job.applied),

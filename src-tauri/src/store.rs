@@ -693,10 +693,14 @@ impl Store {
     /// 在数据库提交之后调用：文件失败只记录日志——relPath 不变，读取始终指向
     /// 真实文件，磁盘布局滞后但不会读坏；成功则磁盘/界面/服务器三方一致。
     pub(crate) fn relocate_archive_after_move(&self, target_folder: &str, mail_id: &str) {
-        let _archive = match self.archive_gate.read() {
+        let _archive = match self.archive_gate.write() {
             Ok(g) => g,
             Err(_) => return,
         };
+        self.relocate_archive_after_move_unlocked(target_folder, mail_id);
+    }
+    /// 调用方已持有 `archive_gate` 读锁时使用（规则执行/入库期间），避免读写锁自锁。
+    pub(crate) fn relocate_archive_after_move_unlocked(&self, target_folder: &str, mail_id: &str) {
         let db = match self.db() {
             Ok(d) => d,
             Err(_) => return,
@@ -723,30 +727,46 @@ impl Store {
         if old_rel == new_rel {
             return;
         }
-        let from = self.root.join(&old_rel);
-        let to = self.root.join(&new_rel);
-        if !from.exists() {
-            return; // 没有本地文件（在线阅读邮件）
-        }
-        if to.exists() {
-            // 目标已有同内容文件（另一文件夹存过）：校验后移除源文件
-            match std::fs::read(&to) {
-                Ok(bytes) if archive::digest(&bytes) == mail.hash => {
-                    let _ = std::fs::remove_file(&from);
+        let roots = match self.archive_roots.read() {
+            Ok(r) => r.clone(),
+            Err(_) => return,
+        };
+        let mut moved = false;
+        for root in roots {
+            let from = root.join(&old_rel);
+            if !from.exists() {
+                continue;
+            }
+            let to = root.join(&new_rel);
+            if to.exists() {
+                // 目标已有同内容文件（另一文件夹存过）：校验后移除源文件
+                match std::fs::read(&to) {
+                    Ok(bytes) if archive::digest(&bytes) == mail.hash => {
+                        let _ = std::fs::remove_file(&from);
+                        moved = true;
+                    }
+                    _ => return, // 目标不是同内容：保持原状
                 }
-                _ => return, // 目标不是同内容：保持原状
+            } else {
+                let result = (|| -> std::result::Result<(), String> {
+                    if let Some(parent) = to.parent() {
+                        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+                    }
+                    std::fs::rename(&from, &to).map_err(|e| e.to_string())
+                })();
+                if let Err(e) = result {
+                    let _ = self.log(&format!(
+                        "存档文件移动到「{target_folder}」失败（{}）：{e}",
+                        &mail.hash.get(..8).unwrap_or("")
+                    ));
+                    return;
+                }
+                moved = true;
             }
-        } else if let Err(e) = (|| -> std::result::Result<(), String> {
-            if let Some(parent) = to.parent() {
-                std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-            }
-            std::fs::rename(&from, &to).map_err(|e| e.to_string())
-        })() {
-            let _ = self.log(&format!(
-                "存档文件移动到「{target_folder}」失败（{}）：{e}",
-                &mail.hash.get(..8).unwrap_or("")
-            ));
-            return;
+            break;
+        }
+        if !moved {
+            return; // 没有本地文件（在线阅读邮件）
         }
         mail.rel_path = Some(new_rel);
         if let Err(e) = self.update_mail(&mail) {
@@ -1204,6 +1224,7 @@ impl Store {
             let mut mail = self.mail(id)?;
             mail.local_folder = "全部存档".into();
             self.update_mail(&mail)?;
+            self.relocate_archive_after_move(&mail.source_folder, &mail.id);
         }
         Ok(ids.len())
     }
@@ -1606,6 +1627,12 @@ impl Store {
                     _ => return Err("未知动作".into()),
                 };
                 self.update_mail(&m)?;
+                if matches!(r.action.as_str(), "folder" | "saveFolder") {
+                    self.relocate_archive_after_move_unlocked(&m.local_folder, &m.id);
+                    if let Ok(updated) = self.mail(&m.id) {
+                        m = updated;
+                    }
+                }
                 self.log(&format!("规则「{}」已执行 · {}", r.name, m.subject))?;
                 count += 1;
                 if r.stop {

@@ -102,16 +102,25 @@ export function ruleActions(rule: Rule): string[] {
     .map((a) => a.trim())
     .filter(Boolean);
 }
-/** 有序动作列表；旧规则自动补成单个动作。 */
+/** 有序动作列表；旧规则的 `read+trash` 组合串自动拆成多个步骤。 */
 export function ruleActionSteps(rule: Rule): RuleAction[] {
   if (rule.actions?.length) return rule.actions;
-  return [
-    {
-      action: rule.action,
-      destination: rule.destination,
-      sourceFolder: rule.sourceFolder || "",
-    },
-  ];
+  return rule.action
+    .split(/[+,,;；]/)
+    .map((action) => action.trim())
+    .filter(Boolean)
+    .map((action) => ({
+      action,
+      destination: [
+        "folder",
+        "saveFolder",
+        "serverMove",
+        "serverCopy",
+      ].includes(action)
+        ? rule.destination
+        : "",
+      sourceFolder: "",
+    }));
 }
 /** 保存有序动作，同时保留旧字段供旧版本/旧数据读取。 */
 export function withRuleActions(rule: Rule, next: RuleAction[]): Rule {

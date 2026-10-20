@@ -223,6 +223,11 @@ impl Store {
             .map_err(err)?;
         }
         tx.commit().map_err(err)?;
+        if action == "folder" {
+            for id in &row_ids {
+                self.relocate_archive_after_move(value, id);
+            }
+        }
         // 彻底删除：没有活跃服务器来源的邮件无需服务端操作，直接清除本地
         if action == "delete" {
             for id in row_ids {

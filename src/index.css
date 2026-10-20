@@ -35,6 +35,7 @@
 }
 :root {
   --window-titlebar-height: 32px;
+  --compose-sidebar-offset: calc(16rem + 40px);
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);
@@ -2136,6 +2137,17 @@ button.nav-collapse .collapse-chevron {
   overflow: hidden;
   gap: 12px !important;
 }
+/* 侧栏展开时，浮层按「侧栏右侧的主内容区」居中，避免视觉上偏左。 */
+body.sidebar-visible
+  .compose-dialog:not(.compose-floating):not(.compose-expanded):not(
+    .compose-native
+  ) {
+  left: var(--compose-sidebar-offset) !important;
+  max-width: min(
+    1120px,
+    calc(100vw - var(--compose-sidebar-offset) - 16px)
+  ) !important;
+}
 .compose-dialog.compose-expanded {
   width: calc(100vw - 24px) !important;
   max-width: none !important;
@@ -2566,6 +2578,9 @@ button.nav-collapse .collapse-chevron {
   padding: 12px 0 0;
 }
 @media (max-width: 760px) {
+  :root {
+    --compose-sidebar-offset: 0px;
+  }
   .compose-dialog {
     width: calc(100vw - 24px) !important;
     height: calc(100dvh - var(--window-titlebar-height) - 24px);
@@ -3546,6 +3561,9 @@ button.nav-collapse .collapse-chevron {
   background: #442220;
 }
 @media (max-width: 1180px) {
+  :root {
+    --compose-sidebar-offset: calc(244px + 40px);
+  }
   .app-shell {
     --sidebar-width: 244px !important;
   }

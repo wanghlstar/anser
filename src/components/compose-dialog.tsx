@@ -207,6 +207,8 @@ export function ComposeDialog({
   const sourceFile = useRef<HTMLInputElement>(null);
   const previewFrame = useRef<HTMLIFrameElement>(null);
   const dialogElement = useRef<HTMLDivElement>(null);
+  // Dock/托盘把主窗重新带到前台时，不要顺手把写信窗收成细条。
+  const outsideGuardUntil = useRef(0);
   // 浮动写信窗口：geometry 为 null 时保持默认居中布局，一旦拖动/缩放就切到显式定位。
   const [geometry, setGeometry] = useState<ComposeGeometry | null>(null);
   const [minimized, setMinimized] = useState(false);
@@ -346,6 +348,15 @@ export function ComposeDialog({
     if (isComposeControl(event.target)) return;
     toggleExpanded();
   };
+  // Dock/托盘激活会先让窗口重新获得焦点；这一下不是「点写信框外面」。
+  useEffect(() => {
+    if (nativeWindow) return;
+    const arm = () => {
+      outsideGuardUntil.current = performance.now() + 500;
+    };
+    window.addEventListener("focus", arm);
+    return () => window.removeEventListener("focus", arm);
+  }, [nativeWindow]);
   // 点写信框以外的区域自动把窗口收成底部细条（用户要求：写信时要能腾出手看别的邮件）。
   // 这里自己挂 document 监听，不用 Radix 的 onInteractOutside——那个只负责「别关闭草稿」，
   // 而且在 jsdom 里不触发，单测覆盖不到。注册时机在打开它的那次 pointerdown 之后，不会自伤。
@@ -361,6 +372,7 @@ export function ComposeDialog({
     )
       return;
     const handlePointerDown = (event: PointerEvent) => {
+      if (performance.now() < outsideGuardUntil.current) return;
       const target = event.target as Element | null;
       if (!target?.closest) return;
       // 写信窗派生出来的 UI 不算「离开写信窗口」：

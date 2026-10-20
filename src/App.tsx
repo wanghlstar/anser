@@ -41,6 +41,7 @@ import { ScrollPane } from "./components/scroll-pane";
 import { replyHeaders } from "./lib/conversations";
 import { signatureContent } from "./lib/signatures";
 import { preserveBlockFontStyles } from "./lib/compose-fonts";
+import { hasDraftContent } from "./lib/compose-format";
 import { Tabs, TabsList, TabsTrigger } from "./components/ui/tabs";
 import { disableNativeContextMenu } from "./lib/context-menu";
 import { NavigationLayout, MailLayout } from "./components/resizable-layout";
@@ -274,7 +275,12 @@ function queryScope(query: Query) {
 }
 // 原生写信窗口的登记（Rust 的 compose-windows-changed 同步过来）：窗口 label、正在
 // 编辑的草稿、是否在前台（不在前台时主窗口底部显示「继续写信」悬浮条）。
-type NativeComposeWindow = { label: string; draft: Compose; focused: boolean };
+type NativeComposeWindow = {
+  label: string;
+  draft: Compose;
+  focused: boolean;
+  minimized: boolean;
+};
 // 原生阅读窗口的登记（Rust 的 mail-windows-changed 同步过来）：窗口 label、邮件主题、
 // 是否在前台（不在前台时主窗口底部显示「查看邮件」悬浮条）。
 type NativeMailWindow = {
@@ -335,6 +341,8 @@ export default function App() {
       draft: Compose;
       seconds: number;
     } | null>(null),
+    [quickCloseCompose, setQuickCloseCompose] =
+      useState<NativeComposeWindow | null>(null),
     [syncing, setSyncing] = useState(false),
     [syncText, setSyncText] = useState(""),
     [loading, setLoading] = useState(true),
@@ -391,10 +399,6 @@ export default function App() {
     id: string;
     n: number;
   } | null>(null);
-  useEffect(() => {
-    if (!native) return;
-    void call("set_compose_open", { open: composing }).catch(() => {});
-  }, [composing]);
   useEffect(() => {
     if (!native) return;
     let cleanup = () => {};
@@ -785,6 +789,11 @@ export default function App() {
     );
     return () => clearTimeout(timer);
   }, [search]);
+  // 浮层按主内容区（侧栏右侧）居中，而不是按整个窗口居中。
+  useEffect(() => {
+    document.body.classList.toggle("sidebar-visible", sidebarOpen);
+    return () => document.body.classList.remove("sidebar-visible");
+  }, [sidebarOpen]);
   useEffect(() => {
     document.documentElement.classList.toggle("dark", dark);
     localStorage.setItem("mail-theme", dark ? "dark" : "light");
@@ -1183,6 +1192,21 @@ export default function App() {
     } catch (e) {
       toast.error(String(e));
       void refresh();
+    }
+  }
+  async function closeComposeBar(item: NativeComposeWindow, discard: boolean) {
+    const keep = !discard && hasDraftContent(item.draft);
+    try {
+      if (keep) await call("save_draft", { draft: item.draft });
+      else await call("delete_draft", { id: item.draft.id });
+      await call("close_compose_window", { label: item.label });
+      setComposeWindows((current) =>
+        current.filter((window) => window.label !== item.label),
+      );
+      setQuickCloseCompose(null);
+      toast.success(keep ? "已关闭写信窗口，草稿已保留" : "已关闭写信窗口");
+    } catch (e) {
+      toast.error(String(e));
     }
   }
   /// 删除本地文件夹：把邮件移回「全部存档」，文件夹随之从侧栏消失。
@@ -4491,6 +4515,40 @@ export default function App() {
         />
       )}
       {confirmationDialog}
+      {quickCloseCompose && (
+        <Dialog
+          open
+          onOpenChange={(open) => !open && setQuickCloseCompose(null)}
+        >
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>关闭这封邮件的窗口？</DialogTitle>
+              <DialogDescription>
+                邮件已经自动保存到草稿箱。选择「不保存」会删除这份草稿。
+              </DialogDescription>
+            </DialogHeader>
+            <div className="dialog-actions">
+              <Button
+                variant="outline"
+                onClick={() => setQuickCloseCompose(null)}
+              >
+                取消
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => void closeComposeBar(quickCloseCompose, true)}
+              >
+                不保存
+              </Button>
+              <Button
+                onClick={() => void closeComposeBar(quickCloseCompose, false)}
+              >
+                保存并关闭
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
       {folderDialog && (
         <Dialog open onOpenChange={(open) => !open && setFolderDialog(null)}>
           <DialogContent>
@@ -4582,6 +4640,20 @@ export default function App() {
               <ChevronUp size={14} />
               继续写信
             </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              aria-label={`关闭${composeTitle(item.draft)}窗口`}
+              title="关闭写信窗口"
+              onClick={() => {
+                if (!hasDraftContent(item.draft))
+                  void closeComposeBar(item, true);
+                else setQuickCloseCompose(item);
+              }}
+            >
+              <X size={15} />
+            </Button>
           </div>
         ))}
       {/* 原生阅读窗口不在前台时，主窗口底部给一条「查看邮件」：点它把阅读窗口抬回前台，
@@ -4614,6 +4686,26 @@ export default function App() {
             >
               <ChevronUp size={14} />
               查看邮件
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              aria-label="关闭阅读窗口"
+              title="关闭阅读窗口"
+              onClick={() =>
+                void invoke("close_mail_window", {
+                  label: item.label,
+                })
+                  .then(() =>
+                    setMailWindows((current) =>
+                      current.filter((window) => window.label !== item.label),
+                    ),
+                  )
+                  .catch((e) => toast.error(String(e)))
+              }
+            >
+              <X size={15} />
             </Button>
           </div>
         ))}

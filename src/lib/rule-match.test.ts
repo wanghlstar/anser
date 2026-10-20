@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   ruleMatches,
   ruleActions,
+  ruleActionSteps,
   ruleActionsDeduped,
   isRemoteRule,
   isMoveAction,
@@ -199,6 +200,18 @@ describe("merged move action", () => {
     expect(isMoveAction(asRule("read"))).toBe(false);
     expect(isRemoteRule(asRule("folder"))).toBe(false);
     expect(isRemoteRule(asRule("serverMove"))).toBe(true);
+  });
+  it("expands a legacy combined action string into editable steps", () => {
+    expect(ruleActionSteps(asRule("serverMove+read"))).toEqual([
+      { action: "serverMove", destination: "", sourceFolder: "" },
+      { action: "read", destination: "", sourceFolder: "" },
+    ]);
+    expect(
+      ruleActionSteps({ ...asRule("folder+read"), destination: "财务" }),
+    ).toEqual([
+      { action: "folder", destination: "财务", sourceFolder: "" },
+      { action: "read", destination: "", sourceFolder: "" },
+    ]);
   });
   it("lands the move on serverMove for IMAP and folder otherwise", () => {
     expect(toggleMergedAction(asRule(""), "move", true, true)).toBe(

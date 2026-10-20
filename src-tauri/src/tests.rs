@@ -505,6 +505,12 @@ fn rule_order_stop_and_idempotence() {
     let snap = s.snapshot(&query()).unwrap();
     assert_eq!(snap.stats.saved, 1);
     assert_eq!(snap.messages[0].local_folder, "财务/发票");
+    let rel = snap.messages[0].rel_path.as_deref().unwrap();
+    assert!(
+        rel.contains("财务/发票"),
+        "规则归类后文件应落入目标目录: {rel}"
+    );
+    assert!(s.root.join(rel).exists());
     assert!(!snap.messages[0].trashed);
 }
 #[test]
@@ -4121,17 +4127,19 @@ fn compose_window_registry_reports_open_drafts_and_the_latest_window() {
     windows.insert("compose-window-3".to_string(), serde_json::json!({}));
     // 快照按开启顺序给出 label + 草稿 + 是否在前台，没有草稿的登记不会混进来。
     assert_eq!(
-        crate::compose_window_infos(&windows, |label| label == "compose-window-2"),
+        crate::compose_window_infos(&windows, |label| label == "compose-window-2", |_| false),
         vec![
             serde_json::json!({
                 "label": "compose-window-2",
                 "draft": { "id": "b" },
-                "focused": true
+                "focused": true,
+                "minimized": false
             }),
             serde_json::json!({
                 "label": "compose-window-10",
                 "draft": { "id": "a" },
-                "focused": false
+                "focused": false,
+                "minimized": false
             }),
         ]
     );
@@ -4141,7 +4149,7 @@ fn compose_window_registry_reports_open_drafts_and_the_latest_window() {
         Some("compose-window-10")
     );
     let empty = std::collections::HashMap::new();
-    assert!(crate::compose_window_infos(&empty, |_| false).is_empty());
+    assert!(crate::compose_window_infos(&empty, |_| false, |_| false).is_empty());
     assert_eq!(crate::latest_compose_label(&empty), None);
 }
 

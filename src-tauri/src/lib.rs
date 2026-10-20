@@ -1100,6 +1100,7 @@ fn compose_label_seq(label: &str) -> Option<usize> {
 fn compose_window_infos(
     windows: &std::collections::HashMap<String, serde_json::Value>,
     focused: impl Fn(&str) -> bool,
+    minimized: impl Fn(&str) -> bool,
 ) -> Vec<serde_json::Value> {
     let mut labels: Vec<&String> = windows.keys().collect();
     labels.sort_by_key(|label| compose_label_seq(label.as_str()));
@@ -1110,6 +1111,7 @@ fn compose_window_infos(
                 "label": label,
                 "draft": windows.get(label)?.pointer("/draft")?.clone(),
                 "focused": focused(label),
+                "minimized": minimized(label),
             }))
         })
         .collect()
@@ -1117,11 +1119,19 @@ fn compose_window_infos(
 /// 写信窗口开、关、或前后台切换时，把登记快照同步给主窗口。
 fn emit_compose_windows(app: &tauri::AppHandle, state: &AppState) {
     let infos = match state.compose_windows.lock() {
-        Ok(windows) => compose_window_infos(&windows, |label| {
-            app.get_webview_window(label)
-                .and_then(|window| window.is_focused().ok())
-                .unwrap_or(false)
-        }),
+        Ok(windows) => compose_window_infos(
+            &windows,
+            |label| {
+                app.get_webview_window(label)
+                    .and_then(|window| window.is_focused().ok())
+                    .unwrap_or(false)
+            },
+            |label| {
+                app.get_webview_window(label)
+                    .and_then(|window| window.is_minimized().ok())
+                    .unwrap_or(false)
+            },
+        ),
         Err(_) => Vec::new(),
     };
     let _ = app.emit_to("main", "compose-windows-changed", infos);
@@ -1213,14 +1223,34 @@ async fn open_compose_window(
             .title(title)
             .inner_size(980.0, 720.0)
             .min_inner_size(640.0, 420.0);
-    // 从主窗口位置逐层错开，避免连开几封完全叠在一起。
+    // 默认在主窗口内居中；多开时再逐层错开，避免完全叠在一起。
+    // outer_position/outer_size 是物理像素，builder.position 要逻辑坐标，Retina 下必须除 scale。
     if let Some(main) = app.get_webview_window("main") {
-        if let Ok(position) = main.outer_position() {
+        if let (Ok(position), Ok(size)) = (main.outer_position(), main.outer_size()) {
+            let scale = main.scale_factor().unwrap_or(1.0);
             let step = (seq % 6) as f64 * 28.0;
-            builder = builder.position(
-                position.x as f64 + 60.0 + step,
-                position.y as f64 + 60.0 + step,
-            );
+            let mut x = position.x as f64 / scale
+                + (size.width as f64 / scale - 980.0).max(0.0) / 2.0
+                + step;
+            let mut y = position.y as f64 / scale
+                + (size.height as f64 / scale - 720.0).max(0.0) / 2.0
+                + step;
+            if let Ok(Some(monitor)) = main.current_monitor() {
+                let monitor_scale = monitor.scale_factor();
+                let left = monitor.position().x as f64 / monitor_scale + 8.0;
+                let top = monitor.position().y as f64 / monitor_scale + 8.0;
+                let right = (monitor.position().x as f64 + monitor.size().width as f64)
+                    / monitor_scale
+                    - 980.0
+                    - 8.0;
+                let bottom = (monitor.position().y as f64 + monitor.size().height as f64)
+                    / monitor_scale
+                    - 720.0
+                    - 8.0;
+                x = x.clamp(left, right.max(left));
+                y = y.clamp(top, bottom.max(top));
+            }
+            builder = builder.position(x, y);
         }
     }
     builder.build().map_err(err)?;
@@ -1252,6 +1282,22 @@ fn close_compose_window(
     if let Some(window) = app.get_webview_window(&label) {
         window.close().map_err(err)?;
     }
+    Ok(())
+}
+#[tauri::command]
+fn close_mail_window(
+    app: tauri::AppHandle,
+    state: tauri::State<AppState>,
+    label: String,
+) -> Result<()> {
+    {
+        let mut windows = state.mail_windows.lock().map_err(err)?;
+        windows.remove(&label);
+    }
+    if let Some(window) = app.get_webview_window(&label) {
+        window.close().map_err(err)?;
+    }
+    emit_mail_windows(&app, &state);
     Ok(())
 }
 #[tauri::command]
@@ -2126,6 +2172,26 @@ fn activate_app() {
 }
 
 fn show_main_window(app: &tauri::AppHandle) {
+    // 写信/阅读独立窗口在前台时，Dock/托盘/全局快捷键不做任何处理。
+    if let Some(state) = app.try_state::<AppState>() {
+        let compose_focused = state.compose_windows.lock().ok().is_some_and(|windows| {
+            windows.keys().any(|label| {
+                app.get_webview_window(label)
+                    .and_then(|window| window.is_focused().ok())
+                    .unwrap_or(false)
+            })
+        });
+        let mail_focused = state.mail_windows.lock().ok().is_some_and(|windows| {
+            windows.keys().any(|label| {
+                app.get_webview_window(label)
+                    .and_then(|window| window.is_focused().ok())
+                    .unwrap_or(false)
+            })
+        });
+        if compose_focused || mail_focused {
+            return;
+        }
+    }
     #[cfg(target_os = "macos")]
     let _ = app.show();
     if let Some(window) = app.get_webview_window("main") {
@@ -3076,19 +3142,8 @@ pub fn run() {
             if label == "main" {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                     api.prevent_close();
-                    // ⌘W：正在写信时先把写信窗口的关闭流程交给前端（弹
-                    //「保存/不保存/取消」），不把整个主窗口收进托盘。
-                    let composing = window
-                        .app_handle()
-                        .state::<AppState>()
-                        .compose_open
-                        .load(std::sync::atomic::Ordering::Relaxed);
-                    if composing {
-                        let _ = window
-                            .app_handle()
-                            .emit_to("main", "compose-close-requested", ());
-                        return;
-                    }
+                    // 主窗收到关闭请求时，写信窗一定不在前台（否则 ⌘W 会先到写信窗）。
+                    // 这里只隐藏主窗；写信窗自然进入「继续写信」状态。
                     let _ = save_main_window_state(window.app_handle());
                     let _ = window.hide();
                 }
@@ -3191,6 +3246,7 @@ pub fn run() {
             open_compose_window,
             compose_window_draft,
             close_compose_window,
+            close_mail_window,
             close_latest_compose_window,
             focus_compose_window,
             prepare_forward_files,
