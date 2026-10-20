@@ -859,3 +859,71 @@ GitHub CI 和两架构发布工作流已推送；首次 Checks 已成功，Relea
 - 浏览器实测（1380×900）：后台任务首卡为「最近活动」；签名内容左缘 560 → 551px、问候语预览高 82px；账号配置「服务器与高级配置」`aria-expanded=false` 且无 `.advanced-fields`；无控制台错误。
 - 收件箱勾选的三列布局由 `inbox-scope.test.tsx` 断言 `.inbox-scope-grid` 与收件箱 `disabled`，保存范围含 INBOX；App 用例同步改为「收件箱 + 工作」= `10 / 8`。
 - **仍待用户验收，未提交。**
+
+## 规则条件扩展与首次匹配快照（2026-10-19）
+
+用户定稿：规则批**先做条件扩展 + 首次匹配状态快照**；上游 8 动作顺序引擎 `rule_runs.rs` 留到后续批次。
+
+**后端**
+
+- `models.rs` 的 `Mail` 新增 `cc`、`priority`（high/normal/low）、`attachment_metadata_known`、`header_metadata_known`（均 `serde(default)`，旧记录自动回退）。
+- `archive.rs` 新增 `priority_of()`，同时识别 `X-Priority` / `Priority` / `Importance` 并归一化；解析时填充 `Cc`、优先级，并把两个 metadata 标记置为 true（正文与原始头都是从原始 MIME 解析的）。
+- `rules.rs` 重写条件校验与匹配：支持 13 个字段（含 `cc`、`recipientsOrCc`、`priority`、`sizeKb`、`ageDays`、`read`、`starred`）与 9 种比较（含 `startsWith` / `endsWith` / `greaterThan` / `lessThan`）；新增 `MatchState::{Match,NoMatch,NeedsBody}`、`ObservedStatus`、`match_state` / `match_state_observed`。正文/大小未完整保存、抄送/优先级头未确认、附件元数据未知时返回 `NeedsBody`，由预览显示「等待完整邮件核对」。
+- `store.rs`：`apply_configured_rules` 在应用任何动作前捕获一次 `ObservedStatus`，整条规则链都用该快照判断已读/星标（「未读 → 标已读 → 归类」与后续规则均不受前面动作影响）；`run_rules` 把 `NeedsBody` 也作为候选读完整记录后再判定；`preview_rule` 改用 `message_listing` 投影，需要正文/大小/未知头时读取完整记录，并在等待项后追加「（等待完整邮件核对）」。`apply_remote_rule` 也接收同一快照。
+- **未做**：`PARSER_VERSION` 升级与旧存档头块回填（原批次 4）。因此升级前已存档的邮件 `header_metadata_known=false`，抄送/优先级规则会显示等待核对；升级后新收到的邮件立即具备这些头。
+
+**前端**
+
+- `rules-panel.tsx`：条件字段与比较方式扩展；`priority` / `read` / `starred` / `attachment` 用下拉选择值，`sizeKb` / `ageDays` 用数字输入，`date` 改用 shadcn `Calendar` + `Popover`（不再用原生 `date` 输入）；规则弹窗宽度 `620px → 900px`；规则摘要按新字段/比较方式渲染；预览显示「N 项匹配，另有 M 项等待完整邮件核对后确认」。
+- `rule-match.ts` 同步上述匹配语义（供演示模式预览/执行），`types.ts` 的 `Mail` 补 `cc` / `priority` / 两个 metadata 可选项。
+- `index.css`：条件行字段/比较固定 110px，值控件占满剩余宽度。
+
+**验证**
+
+- Rust：`cargo test` **354 passed / 1 ignored**。新增覆盖：开头/结尾、大小 KB 的 `NeedsBody`、抄送/优先级/收件人或抄送、优先级归一化、已接收天数、状态快照、后续规则仍按原始未读状态判断、预览等待标记。
+- 前端：`npx vitest run` **54 文件 / 440 例**、`check:ui`、`format:check`、`tsc --noEmit`、`test:desktop` 18、`npm run build` 全绿。
+- 浏览器（演示模式，1380×900）：规则弹窗宽 900px；优先级值下拉、`2026-10-15` 日期经 Calendar 选中、无原生 date 输入；条件行宽 110 / 110 / 570px；无控制台错误。
+- **待用户验收，未提交。**
+
+### 规则页账号分组改用整块折叠头（同日）
+
+用户指出规则按账号汇聚，但分组标题只有一个小箭头按钮，页面显得单薄。现改为与后台任务一致的 `TaskPanelHeader`：
+
+- 每个账号分组一张 `Card`：卡头标题=账号（全局组为「全部账号」），说明=「规则按执行顺序匹配；命中后按「命中后停止」决定是否继续。」，右侧为规则数 `Badge`；**标题与说明整块可点击**折叠/展开，箭头只是提示。
+- 分组默认展开（`defaultOpen`），规则行仍按原有顺序与操作；分组卡改为零内边距 + `.rule-group-body` 内边距，组内规则间距 12px。
+- `TaskPanelHeader` 的刷新按钮改为可选：不传 `onRefresh` 时渲染可选的 `action`（规则分组传规则数 Badge），后台任务五卡行为不变。
+- 浏览器实测（1380×900）：分组卡 1021px 宽、卡头 58px、组内首条规则 64px；点说明或标题均可收起/展开，无横向溢出与控制台错误。
+
+- **仍待用户验收，未提交。**
+
+### 签名与「全部收件箱」统一折叠头（同日）
+
+用户要求把剩下的两处「只点箭头」也统一成后台任务/规则分组的整块折叠头。
+
+- `TaskPanelHeader` 增加可选 `disabled` 与 `controls`：禁用时整块触发器不可点（签名未启用、没有账号时），`aria-controls` 继续指向内容区，原有测试语义不变。
+- **邮件签名**：卡头改为「邮件签名」标题+说明，右侧独立放账号选择与「启用」开关；点标题/说明任意位置展开收起，未启用时整块不可展开。`Collapsible` 改为受控（`onOpenChange` 同步 `expanded`）。
+- **全部收件箱**：卡头改为「全部收件箱」标题+说明，右侧放账号选择与「已配置 N 个文件夹 / 未配置：只含收件箱」状态；点标题/说明展开，保存成功仍自动折叠。
+- 测试选择器从旧的「展开/折叠签名设置」「展开/折叠收件箱范围」更新为「展开或收起邮件签名 / 全部收件箱」；`aria-controls` 断言保留。
+- 浏览器实测（1380×900，演示模式）：签名卡 792px 宽、折叠态高 131px，启用后可点说明展开；收件范围卡 792px 宽、折叠态高 110px；1000px 宽时两卡自动换行到 128px 高卡头，无横向溢出与控制台错误。
+- **仍待用户验收，未提交。**
+
+### 服务器规则执行记录并入整块折叠头（同日）
+
+用户指出「服务器规则执行记录」下面还单独有一行「命中记录（N / N）」，要求去掉或收进展开内容，并改成点卡头展开。
+
+- `rule-executions.tsx` 改用 `TaskPanelHeader`：标题+说明整块可点，右上独立刷新；**默认折叠**。
+- 删除卡片内部的「命中记录（N / N）」折叠行；命中数量并入说明「最近 50 次命中，当前 N 条」。
+- `TaskPanelHeader` 现在可以同时渲染 `onRefresh` 与 `action`（之前二选一），后台任务五卡、签名/收件范围行为不变。
+- 测试新增「默认收起、点卡头才出现命中记录、旧行已移除」；浏览器实测折叠/展开与数量文案正常，无控制台错误。
+- 箭头对齐：规则分组（右侧规则数徽标，宽 41px）与执行记录（刷新按钮，宽 68px）原来箭头相差 27px。`TaskPanelHeader` 的右侧操作区改为固定最小 88px、右对齐后，两处箭头实测同为 x=1206。
+- **仍待用户验收，未提交。**
+
+### 规则页布局微调（同日）
+
+用户反馈：规则页账号分组应更宽、账号名整体下移；「N 条」徽标与刷新按钮左缘对齐；服务器规则执行记录卡头再收紧一些。
+
+- 规则页 `section` 增加 `.rules-workspace`：`max-width 1300 → 1800px`、横向内边距 `24 → 12px`。1380×900 下账号分组卡宽 **1021 → 1045px**，大屏可继续用到 1800px。
+- 账号分组卡头改为**上下居中**：`align-items: center` + `padding-block: 14px`，标题/说明整块与右侧徽标、箭头的中心线对齐（实测均为 y=251），不再靠单边 `padding-top` 下压。
+- `TaskPanelHeader` 右侧操作区由 `justify-end` 改为 `justify-start`：规则数徽标与刷新按钮左缘对齐（实测同为 x=1254），箭头位置仍一致。
+- `TaskPanelHeader` 新增 `compact`：执行记录卡头行距 `gap-2 → gap-1`、内边距与说明字号收紧；卡头高度 **58 → 44px（约 -24%）**，命中记录列表不变。
+- **仍待用户验收，未提交。**
