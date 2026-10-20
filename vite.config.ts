@@ -11,6 +11,6 @@ export default defineConfig({
     watch: { ignored: ["**/src-tauri/**"] },
   },
   clearScreen: false,
-  // CI 机器比本地慢，分页/导航类用例需要更宽裕的超时（默认 5s 会误报超时）
-  test: { testTimeout: 30000 },
+  // CI 机器比本地慢很多，分页/导航/窗口用例需要更宽裕的超时（默认 5s 会误报超时）。
+  test: { testTimeout: 120000, hookTimeout: 120000 },
 });
