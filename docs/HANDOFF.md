@@ -92,7 +92,7 @@ CSS 改动要在 `dist/assets/index-*.css` 里 grep；本机 browser.screenshot 
 | 11     | workflow 许可校验                                              | `release.yml` 加 4 行 `test -s`，断言包内 `LICENSE` / `NOTICE` / `LICENSING.md` / `licenses/shadcn-ui-MIT.txt`。                                                                                                | 小；防配置回归。                                                                                                                       |
 | 不跟   | Homebrew / preview / signing-check / 上游发布脚本 / Apple 证书 | 仓库与发布基建不同，**不要搬**。                                                                                                                                                                                | 见 `RULES_PORT_UPSTREAM.md` 第 55 条。                                                                                                 |
 
-**旧清单缺口**：上游 0.1.15–0.1.18（全局代理、原生邮件链接、双语翻译、邮件图片/字体）此前从未进清单；0.1.22/0.1.23 又新增了中英文界面，均已并入本表。逐版本差异跑 `npm run upstream:matrix` → `docs/UPSTREAM_VERSION_MATRIX.md`，判定是启发式，需人工归类。
+**旧清单缺口**：上游 0.1.15–0.1.18（全局代理、原生邮件链接、双语翻译、邮件图片/字体）此前从未进清单；0.1.22/0.1.23 又新增了中英文界面，均已并入本表。逐版本差异跑 `npm run upstream:matrix` → `docs/UPSTREAM_VERSION_MATRIX.md`，判定是启发式，需人工归类；本轮已按 0.1.23 重跑，i18n 文件全部报「本地缺」符合预期。
 
 **待用户决策**：中英文界面是否做；未读口径是否改「全部邮件」；双语翻译是否做（含代理）；原生邮件链接是否补；workflow 许可校验是否做。
 
