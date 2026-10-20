@@ -101,7 +101,7 @@ export function ContactsPanel({
             <Button
               variant="ghost"
               size="icon-sm"
-              title="写邮件"
+              title="撰写邮件"
               onClick={() => onCompose(c)}
             >
               <Mail size={16} />

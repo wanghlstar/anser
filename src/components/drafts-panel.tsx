@@ -68,7 +68,7 @@ export function DraftsPanel({
           {onCompose && (
             <Button onClick={onCompose}>
               <SquarePen size={16} />
-              写邮件
+              撰写邮件
             </Button>
           )}
         </div>

@@ -1204,7 +1204,7 @@ async fn open_compose_window(
         .trim()
         .to_string();
     let title = if subject.is_empty() {
-        "写邮件".to_string()
+        "撰写邮件".to_string()
     } else {
         subject
     };

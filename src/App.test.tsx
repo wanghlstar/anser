@@ -61,7 +61,7 @@ async function openRowMenu(
 function menuLabels() {
   return [
     ...document.querySelectorAll('[role="menuitem"],[role="menuitemcheckbox"]'),
-  ].map((el) => (el.textContent || "").replace(/[⌘⇧A-Za-z]+$/, "").trim());
+  ].map((el) => (el.textContent || "").replace(/[⌘⇧⌥⌃A-Za-z]+$/, "").trim());
 }
 async function seedReplyThread() {
   const seed = await snapshot(localQuery);
@@ -823,7 +823,7 @@ describe("reading unread mail within its current category", () => {
     );
     await click(
       [...host.querySelectorAll("button")].find((b) =>
-        b.textContent?.startsWith("写邮件"),
+        b.textContent?.startsWith("撰写邮件"),
       )!,
     );
     await key(document.querySelector('[role="dialog"] button')!, "ArrowDown");
@@ -834,7 +834,7 @@ describe("reading unread mail within its current category", () => {
   it("keeps a second compose window instead of overwriting the first draft", async () => {
     const writeButton = () =>
       [...host.querySelectorAll("button")].find((b) =>
-        b.textContent?.startsWith("写邮件"),
+        b.textContent?.startsWith("撰写邮件"),
       )!;
     await click(writeButton());
     expect(document.querySelectorAll(".compose-dialog")).toHaveLength(1);
@@ -1896,10 +1896,10 @@ it("lists an account's local drafts in its drafts folder", async () => {
   expect(host.textContent).toContain("草稿正文");
   // 只显示该账号的草稿
   expect(host.textContent).not.toContain("另一个账号的草稿");
-  // 账号内草稿箱同样带「写邮件」入口
+  // 账号内草稿箱同样带「撰写邮件」入口
   expect(
     [...host.querySelectorAll("button")].some(
-      (b) => b.textContent === "写邮件",
+      (b) => b.textContent === "撰写邮件",
     ),
   ).toBe(true);
 });
@@ -2059,17 +2059,19 @@ describe("mail action shortcuts", () => {
     return event;
   }
   it.each([
-    ["r", false, "Re:"],
-    ["R", true, "Re:"],
-    ["F", true, "Fwd:"],
+    ["r", { altKey: true }, "Re:"],
+    ["R", { shiftKey: true }, "Re:"],
+    ["F", { shiftKey: true }, "Fwd:"],
   ] as const)(
-    "opens the current message in compose for %s (shift=%s)",
-    async (shortcut, shiftKey, prefix) => {
+    "opens the current message in compose for %s",
+    async (shortcut, options, prefix) => {
       await click(nav("全部收件箱"));
       await click(host.querySelector("button.mail-row-main"));
-      const event = await key(host.querySelector(".reader")!, shortcut, {
-        shiftKey,
-      });
+      const event = await key(
+        host.querySelector(".reader")!,
+        shortcut,
+        options,
+      );
       expect(event.defaultPrevented).toBe(true);
       const subject = document.querySelector("#subject") as HTMLInputElement;
       expect(subject.value.startsWith(prefix)).toBe(true);
@@ -2247,8 +2249,66 @@ describe("mail list receive actions", () => {
       (el) => el.textContent?.trim(),
     );
     expect(labels).toContain("全部账号");
-    expect(labels.some((label) => label?.includes("工作邮箱"))).toBe(true);
-    expect(labels.some((label) => label?.includes("个人邮箱"))).toBe(true);
+    expect(labels).toContain("工作邮箱");
+    expect(labels).toContain("个人邮箱");
+    expect(labels.some((label) => label?.includes("@"))).toBe(false);
+  });
+  it("lists every account in the sidebar receive dropdown", async () => {
+    const trigger = host.querySelector(
+      '[aria-label="选择收取账号"]',
+    ) as HTMLElement | null;
+    expect(trigger).not.toBeNull();
+    await act(async () => {
+      trigger!.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }),
+      );
+    });
+    const labels = [...document.querySelectorAll('[role="menuitem"]')].map(
+      (el) => el.textContent?.trim(),
+    );
+    expect(labels).toContain("全部账号");
+    expect(labels).toContain("工作邮箱");
+    expect(labels).toContain("个人邮箱");
+    expect(labels.some((label) => label?.includes("@"))).toBe(false);
+  });
+  it("keeps the list receive icon only in inbox views", async () => {
+    await click(nav("全部收件箱"));
+    expect(host.querySelector('[aria-label="收取全部账号"]')).not.toBeNull();
+    for (const label of ["星标邮件", "已发送", "本地存档", "本地废纸篓"]) {
+      await click(nav(label));
+      expect(host.querySelector('[aria-label="收取全部账号"]')).toBeNull();
+    }
+  });
+  it("receives all accounts with Command+R", async () => {
+    const seed = await snapshot(localQuery);
+    await act(async () => root.unmount());
+    leaveDemo();
+    vi.spyOn(api, "mailPage").mockResolvedValue({
+      ...seed,
+      messages: [],
+      nextCursor: null,
+      revision: 1,
+      reset: false,
+      bodyCoverage: { known: 0, unknown: 0 },
+    });
+    const calls = vi
+      .spyOn(api, "call")
+      .mockImplementation(
+        async <T,>(command: string): Promise<T> =>
+          (command === "sync_mail" ? 2 : []) as T,
+      );
+    root = createRoot(host);
+    await act(async () => root.render(<App />));
+    await act(async () => {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "r",
+          metaKey: true,
+          bubbles: true,
+        }),
+      );
+    });
+    expect(calls.mock.calls).toContainEqual(["sync_mail", {}]);
   });
   it("shows the account receive dropdown only in the all-inbox view", async () => {
     for (const label of ["星标邮件", "已发送", "本地存档", "本地废纸篓"]) {

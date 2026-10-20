@@ -1006,6 +1006,7 @@ GitHub CI 和两架构发布工作流已推送；首次 Checks 已成功，Relea
 
 - 版本号：`package.json` / `src-tauri/tauri.conf.json` / `src-tauri/Cargo.toml` / `Cargo.lock` 统一为 **0.20.2**；新增 `docs/releases/v0.20.2.md` 作为 `release:check` 的说明来源。
 - 内容：0.20.1 之后的旧存档头块回填、`rule_runs` 顺序动作引擎、Dock 未读角标、更新说明 Markdown/历史版本、全局恢复窗口快捷键与偏好布局。
-- 验证：前端 54 文件 / 449 例；Rust 373 passed / 2 ignored；`tsc`、Prettier、`check:ui`、`test:desktop` 18、生产构建通过；已安装并实测快捷键录制/最小化恢复前置。
+- 补充：「撰写邮件」下新增全账号「收取邮件」分体按钮（刷新图标兼账号下拉，`⌘ R`，深浅色与撰写按钮同底）；列表头收取入口只保留在全部收件箱/账号收件箱；回复改为 `⌘⌥R`；全站「写邮件」更名「撰写邮件」。
+- 验证：前端 54 文件 / 452 例；Rust 373 passed / 2 ignored；`tsc`、Prettier、`check:ui`、`test:desktop` 18、生产构建通过；已安装并实测快捷键录制/最小化恢复前置。
 - 上游基线更新为 `upstream/main = 9398046`（0.1.23）：0.1.22 新增中英文界面，0.1.23 仅版本一致性；尚未移植，任务见 `docs/HANDOFF.md` 第四节。
 - tag：`v0.20.2` 仅本地，不推送 `origin`。

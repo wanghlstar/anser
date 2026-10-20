@@ -763,7 +763,7 @@ describe("compose window management", () => {
     expect(dialog().className).toContain("compose-minimized");
     const bar = document.querySelector(".compose-restore-bar");
     expect(bar).toBeTruthy();
-    expect(bar!.textContent).toContain("写邮件");
+    expect(bar!.textContent).toContain("撰写邮件");
     await click("继续写信");
     expect(dialog().className).not.toContain("compose-minimized");
     expect(document.querySelector(".compose-restore-bar")).toBeNull();

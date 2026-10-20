@@ -998,6 +998,16 @@ export default function App() {
         }
         return;
       }
+      if (
+        (e.metaKey || e.ctrlKey) &&
+        !e.altKey &&
+        !e.shiftKey &&
+        e.key.toLowerCase() === "r"
+      ) {
+        e.preventDefault();
+        void sync(undefined, true);
+        return;
+      }
       const action = mailShortcut(e);
       if (action) {
         // 只作用于“当前正在阅读且落在选中集内”的单封邮件，多选/加载/跳转中不抢键
@@ -1058,6 +1068,7 @@ export default function App() {
     selected,
     data,
     detail,
+    sync,
     query,
     loading,
     checked,
@@ -1503,7 +1514,7 @@ export default function App() {
     }
   }
 
-  async function sync(accountId?: string) {
+  async function sync(accountId?: string, allAccounts = false) {
     if (syncing) return;
     if (demo) {
       toast.info("演示模式不连接真实邮箱");
@@ -1512,7 +1523,7 @@ export default function App() {
     setSyncing(true);
     try {
       const n =
-        !accountId && query.remoteFolder && query.accountId
+        !allAccounts && !accountId && query.remoteFolder && query.accountId
           ? await call<number>("sync_remote_folder", {
               id: query.accountId,
               folder: query.remoteFolder,
@@ -2024,6 +2035,14 @@ export default function App() {
           return folder ? remoteFolderLabel(folder) : query.remoteFolder;
         })()
       : query.folder || activeAccount?.name || viewNames[query.view];
+  // 只有「全部收件箱」和账号收件箱保留列表头的收取入口；
+  // 已发送、草稿、星标、自定义文件夹底部都是同一套收取逻辑，不再重复显示。
+  const inboxSyncView =
+    page === "mail" &&
+    (query.view === "all" ||
+      (query.view === "remote" &&
+        !!query.remoteFolder &&
+        folderRoles(query.accountId, query.remoteFolder).includes("inbox")));
   // 账号内「草稿」文件夹：显示该账号的本地草稿（雁信草稿只存本机）
   const draftsFolderView =
     page === "mail" &&
@@ -2179,8 +2198,57 @@ export default function App() {
               </div>
               <Button className="compose-button" onClick={() => compose()}>
                 <SquarePen size={17} />
-                写邮件<kbd>⌘ N</kbd>
+                撰写邮件<kbd>⌘ N</kbd>
               </Button>
+              <ButtonGroup className="sidebar-sync-actions">
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      variant="default"
+                      className="sync-account"
+                      disabled={syncing || !data.accounts.length}
+                      title="选择收取邮件的账号"
+                      aria-label="选择收取账号"
+                    >
+                      <RefreshCw
+                        size={16}
+                        className={syncing ? "animate-spin" : ""}
+                      />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start">
+                    <DropdownMenuLabel>收取邮件</DropdownMenuLabel>
+                    <DropdownMenuItem
+                      onSelect={() => void sync(undefined, true)}
+                    >
+                      全部账号
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    {data.accounts
+                      .filter((a) => a.enabled)
+                      .map((a) => (
+                        <DropdownMenuItem
+                          key={a.id}
+                          onSelect={() => void sync(a.id)}
+                        >
+                          {a.name}
+                        </DropdownMenuItem>
+                      ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+                <Button
+                  variant="default"
+                  className="sync-main"
+                  disabled={syncing || !data.accounts.length}
+                  title="收取全部账号（⌘R）"
+                  aria-label="收取全部账号（侧栏）"
+                  aria-keyshortcuts="Meta+R Control+R"
+                  onClick={() => void sync(undefined, true)}
+                >
+                  收取邮件
+                  <kbd>⌘ R</kbd>
+                </Button>
+              </ButtonGroup>
             </SidebarHeader>
             <SidebarContent className="sidebar sb-host">
               <ScrollPane>
@@ -3009,56 +3077,70 @@ export default function App() {
                           <Trash2 size={16} />
                         </Button>
                       )}
-                      <ButtonGroup>
-                        <Button
-                          variant="ghost"
-                          size="icon-sm"
-                          disabled={syncing || !data.accounts.length}
-                          title="收取全部账号"
-                          aria-label="收取全部账号"
-                          onClick={() => void sync()}
-                        >
-                          <RefreshCw
-                            size={16}
-                            className={syncing ? "animate-spin" : ""}
-                          />
-                        </Button>
-                        {query.view === "all" &&
-                          !query.accountId &&
-                          !query.folder &&
-                          !query.remoteFolder && (
-                            <DropdownMenu>
-                              <DropdownMenuTrigger asChild>
-                                <Button
-                                  variant="ghost"
-                                  size="icon-sm"
-                                  disabled={syncing || !data.accounts.length}
-                                  title="选择收取邮件的账号"
-                                  aria-label="选择收取邮件的账号"
-                                >
-                                  <ChevronDown size={16} />
-                                </Button>
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end">
-                                <DropdownMenuLabel>收取邮件</DropdownMenuLabel>
-                                <DropdownMenuItem onSelect={() => void sync()}>
-                                  全部账号
-                                </DropdownMenuItem>
-                                <DropdownMenuSeparator />
-                                {data.accounts
-                                  .filter((a) => a.enabled)
-                                  .map((a) => (
-                                    <DropdownMenuItem
-                                      key={a.id}
-                                      onSelect={() => void sync(a.id)}
-                                    >
-                                      {a.name} · {a.email}
-                                    </DropdownMenuItem>
-                                  ))}
-                              </DropdownMenuContent>
-                            </DropdownMenu>
-                          )}
-                      </ButtonGroup>
+                      {inboxSyncView && (
+                        <ButtonGroup>
+                          <Button
+                            variant="ghost"
+                            size="icon-sm"
+                            disabled={syncing || !data.accounts.length}
+                            title={
+                              query.view === "all"
+                                ? "收取全部账号"
+                                : "收取此收件箱"
+                            }
+                            aria-label={
+                              query.view === "all"
+                                ? "收取全部账号"
+                                : "收取此收件箱"
+                            }
+                            onClick={() => void sync()}
+                          >
+                            <RefreshCw
+                              size={16}
+                              className={syncing ? "animate-spin" : ""}
+                            />
+                          </Button>
+                          {query.view === "all" &&
+                            !query.accountId &&
+                            !query.folder &&
+                            !query.remoteFolder && (
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon-sm"
+                                    disabled={syncing || !data.accounts.length}
+                                    title="选择收取邮件的账号"
+                                    aria-label="选择收取邮件的账号"
+                                  >
+                                    <ChevronDown size={16} />
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end">
+                                  <DropdownMenuLabel>
+                                    收取邮件
+                                  </DropdownMenuLabel>
+                                  <DropdownMenuItem
+                                    onSelect={() => void sync()}
+                                  >
+                                    全部账号
+                                  </DropdownMenuItem>
+                                  <DropdownMenuSeparator />
+                                  {data.accounts
+                                    .filter((a) => a.enabled)
+                                    .map((a) => (
+                                      <DropdownMenuItem
+                                        key={a.id}
+                                        onSelect={() => void sync(a.id)}
+                                      >
+                                        {a.name}
+                                      </DropdownMenuItem>
+                                    ))}
+                                </DropdownMenuContent>
+                              </DropdownMenu>
+                            )}
+                        </ButtonGroup>
+                      )}
                     </div>
                   </div>
                   {serverFolders.find(
@@ -4063,7 +4145,7 @@ export default function App() {
                                 size="sm"
                                 aria-label="回复"
                                 title="回复"
-                                aria-keyshortcuts="Meta+R Control+R"
+                                aria-keyshortcuts="Meta+Alt+R Control+Alt+R"
                                 onClick={() => compose(detail.mail)}
                               >
                                 <Reply size={15} />

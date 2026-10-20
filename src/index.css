@@ -1911,11 +1911,10 @@ button.nav-collapse .collapse-chevron {
   max-width: 820px;
 }
 .storage-tools-top .settings-tool-selects {
-  flex: 1;
+  flex: 0 1 auto;
 }
 .storage-tools-top .settings-tool-selects .select-field {
-  flex: 1 1 0;
-  min-width: 0;
+  flex: none;
 }
 .settings-about {
   padding: 12px 16px;
@@ -3574,6 +3573,44 @@ button.nav-collapse .collapse-chevron {
 }
 .mail-sidebar-header .compose-button {
   margin-bottom: 4px;
+}
+.sidebar-sync-actions {
+  display: flex;
+  width: calc(100% - 16px);
+  margin: 0 8px 12px;
+}
+.sidebar-sync-actions .sync-main {
+  flex: 1;
+  height: 34px;
+  justify-content: flex-start;
+  padding: 0 13px 0 5px;
+  font-size: 14px;
+  color: var(--primary-foreground);
+  background: var(--primary);
+  border-color: transparent;
+}
+.sidebar-sync-actions .sync-account {
+  width: 32px;
+  height: 34px;
+  justify-content: flex-start;
+  padding: 0 3px 0 13px;
+  color: var(--primary-foreground);
+  background: var(--primary);
+  border-color: transparent;
+}
+.sidebar-sync-actions .sync-main:hover,
+.sidebar-sync-actions .sync-account:hover,
+.sidebar-sync-actions .sync-account[data-state="open"] {
+  color: var(--primary-foreground);
+  background: color-mix(in srgb, var(--primary) 90%, var(--background));
+}
+.sidebar-sync-actions .sync-account[data-state="open"] svg {
+  animation: spin 1s linear infinite;
+}
+.sidebar-sync-actions kbd {
+  margin-left: auto;
+  color: var(--primary-foreground);
+  opacity: 0.65;
 }
 .mail-sidebar-footer {
   padding: 4px 8px 6px;

@@ -148,7 +148,7 @@ function isComposeControl(target: EventTarget | null) {
 export function composeTitle(draft: Compose | null | undefined): string {
   if (draft?.subject.startsWith("Re:")) return "回复邮件";
   if (draft?.subject.startsWith("Fwd:")) return "转发邮件";
-  return "写邮件";
+  return "撰写邮件";
 }
 export function ComposeDialog({
   draft,

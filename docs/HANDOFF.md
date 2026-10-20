@@ -30,7 +30,7 @@ CSS 改动要在 `dist/assets/index-*.css` 里 grep；本机 browser.screenshot 
 - 本地检查点：`v0.20.1`、`v0.20.2`，**未推送、未发布**；版本号按用户原话使用 0.20.x（不是 0.2.x）。
 - 安装版：`/Applications/雁信.app` = **0.20.2 构建**（含全局恢复快捷键，PID 会变）。
 - 上游：`upstream/main = 9398046`（0.1.23）；上游 tag 在同名命名空间 `refs/upstream/tags/*`。看 tag 先认作者：`v0.1.19–v0.1.23` 是上游，`v0.1.5–v0.1.9`、`v0.2.0`、`v0.20.1/v0.20.2` 是我们的。
-- 门禁基线（本轮）：`npx tsc --noEmit`、`npm run format:check`、`npm run check:ui`、`npx vitest run` = **54 文件 / 449 例**、`npm run test:desktop` = **18**、`npm run build`；Rust `cargo test --manifest-path src-tauri/Cargo.toml` = **373 passed / 2 ignored**（`network::tests::idle_notification_*` 全量并发偶发失败，单跑通过）。
+- 门禁基线（本轮）：`npx tsc --noEmit`、`npm run format:check`、`npm run check:ui`、`npx vitest run` = **54 文件 / 452 例**、`npm run test:desktop` = **18**、`npm run build`；Rust `cargo test --manifest-path src-tauri/Cargo.toml` = **373 passed / 2 ignored**（`network::tests::idle_notification_*` 全量并发偶发失败，单跑通过）。
 - 装机命令（本地签名；末尾 updater 私钥报错是预期的）：
   ```bash
   cd ~/Mytools/anser
