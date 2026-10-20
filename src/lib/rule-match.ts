@@ -1,4 +1,4 @@
-import type { Mail, Rule } from "./types";
+import type { Condition, Mail, Rule } from "./types";
 export function ruleMatches(rule: Rule, mail: Mail): boolean {
   if (
     !rule.enabled ||
@@ -6,43 +6,89 @@ export function ruleMatches(rule: Rule, mail: Mail): boolean {
     (rule.accountId && rule.accountId !== mail.accountId)
   )
     return false;
+  const bodyAvailable =
+    mail.savedLocally !== false &&
+    !mail.parseWarnings?.some(
+      (w) =>
+        w.startsWith("text/plain 正文片段无法解码：") ||
+        w.startsWith("text/html 正文片段无法解码："),
+    );
+  const headerKnown = mail.headerMetadataKnown !== false;
+  const textMatch = (text: string, c: Condition) => {
+    const value = text.toLowerCase(),
+      expected = c.value.toLowerCase();
+    switch (c.operator) {
+      case "contains":
+        return value.includes(expected);
+      case "notContains":
+        return !value.includes(expected);
+      case "equals":
+        return value === expected;
+      case "startsWith":
+        return value.startsWith(expected);
+      case "endsWith":
+        return value.endsWith(expected);
+      case "before":
+        return value.slice(0, 10) < expected;
+      case "after":
+        return value.slice(0, 10) > expected;
+      default:
+        return false;
+    }
+  };
   const results = rule.conditions.map((c) => {
-    if (
-      c.field === "body" &&
-      (mail.savedLocally === false ||
-        mail.parseWarnings?.some(
-          (w) =>
-            w.startsWith("text/plain 正文片段无法解码：") ||
-            w.startsWith("text/html 正文片段无法解码："),
-        ))
-    )
+    if ((c.field === "body" || c.field === "sizeKb") && !bodyAvailable)
       return false;
+    if (c.field === "sizeKb") {
+      const bytes = Number(c.value) * 1024;
+      return c.operator === "greaterThan"
+        ? mail.size > bytes
+        : c.operator === "lessThan"
+          ? mail.size < bytes
+          : c.operator === "equals"
+            ? mail.size === bytes
+            : false;
+    }
+    if (c.field === "recipientsOrCc") {
+      if (!headerKnown) return false;
+      const to = textMatch(mail.recipients ?? "", c),
+        cc = textMatch(mail.cc ?? "", c);
+      return c.operator === "notContains" ? to && cc : to || cc;
+    }
+    if (c.field === "priority") {
+      if (!headerKnown) return false;
+      const priority = ["high", "low"].includes(mail.priority ?? "")
+        ? mail.priority
+        : "normal";
+      return priority === c.value;
+    }
+    if (c.field === "ageDays") {
+      const at = new Date(mail.date).getTime();
+      if (Number.isNaN(at)) return false;
+      const days = Math.floor((Date.now() - at) / 86_400_000);
+      return c.operator === "greaterThan"
+        ? days > Number(c.value)
+        : c.operator === "lessThan"
+          ? days < Number(c.value)
+          : c.operator === "equals"
+            ? days === Number(c.value)
+            : false;
+    }
     if (c.field === "attachment")
       return mail.hasAttachments === (c.value !== "false");
+    if (c.field === "read") return mail.isRead === (c.value !== "false");
+    if (c.field === "starred") return mail.starred === (c.value !== "false");
+    if (c.field === "cc" && !headerKnown) return false;
     const values: Record<string, string> = {
-      sender: mail.sender,
-      recipients: mail.recipients,
+      sender: mail.sender ?? "",
+      recipients: mail.recipients ?? "",
+      cc: mail.cc ?? "",
       subject: mail.subject,
       body: mail.body,
       date: mail.date,
     };
     if (!(c.field in values)) return false;
-    const text = values[c.field].toLowerCase(),
-      value = c.value.toLowerCase();
-    switch (c.operator) {
-      case "contains":
-        return text.includes(value);
-      case "notContains":
-        return !text.includes(value);
-      case "equals":
-        return text === value;
-      case "before":
-        return text.slice(0, 10) < value;
-      case "after":
-        return text.slice(0, 10) > value;
-      default:
-        return false;
-    }
+    return textMatch(values[c.field], c);
   });
   return rule.mode === "any" ? results.some(Boolean) : results.every(Boolean);
 }

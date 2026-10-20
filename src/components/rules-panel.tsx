@@ -1,11 +1,14 @@
 import { SelectField, SelectOption } from "@/components/ui/select-field";
 import { useEffect, useState } from "react";
+import { format } from "date-fns";
+import { zhCN } from "date-fns/locale";
 import {
   Plus,
   Upload,
   ArrowDown,
   ArrowUp,
   ArrowRight,
+  CalendarDays,
   SlidersHorizontal,
   Trash2,
   Play,
@@ -14,12 +17,16 @@ import {
   MailCheck,
   MoreHorizontal,
   Download,
-  ChevronRight,
 } from "lucide-react";
 import { SidebarTrigger } from "./ui/sidebar";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
+import { Badge } from "./ui/badge";
+import { Card } from "./ui/card";
+import { TaskPanelHeader } from "./task-panel-header";
+import { Calendar } from "./ui/calendar";
+import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
 import { Switch } from "./ui/switch";
 import {
   Dialog,
@@ -28,7 +35,7 @@ import {
   DialogTitle,
   DialogDescription,
 } from "./ui/dialog";
-import type { Rule, Snapshot, FolderSettings } from "@/lib/types";
+import type { Condition, Rule, Snapshot, FolderSettings } from "@/lib/types";
 import { call, isDemo } from "@/lib/api";
 import { toast } from "sonner";
 import { SelectGroup } from "./ui/select";
@@ -43,20 +50,56 @@ import {
 import { RuleServerFolders } from "./rule-server-folders";
 import { RuleExecutions } from "./rule-executions";
 import { FolderInput } from "./folder-input";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "./ui/collapsible";
+import { Collapsible, CollapsibleContent } from "./ui/collapsible";
 
 const fields: { [key: string]: string } = {
   sender: "发件人",
   recipients: "收件人",
+  cc: "抄送",
+  recipientsOrCc: "收件人或抄送",
   subject: "主题",
   body: "正文",
   attachment: "有附件",
+  read: "已读状态",
+  starred: "星标状态",
+  priority: "优先级",
   date: "邮件日期",
+  ageDays: "已接收天数",
+  sizeKb: "邮件大小（KB）",
 };
+const choiceConditions: Record<string, [string, string][]> = {
+  attachment: [
+    ["true", "有附件"],
+    ["false", "无附件"],
+  ],
+  read: [
+    ["true", "已读"],
+    ["false", "未读"],
+  ],
+  starred: [
+    ["true", "有星标"],
+    ["false", "无星标"],
+  ],
+  priority: [
+    ["high", "高"],
+    ["normal", "普通"],
+    ["low", "低"],
+  ],
+};
+const conditionOperators: Record<string, string> = {
+  contains: "包含",
+  notContains: "不包含",
+  equals: "等于",
+  startsWith: "以此开头",
+  endsWith: "以此结尾",
+  before: "早于",
+  after: "晚于",
+  greaterThan: "大于",
+  lessThan: "小于",
+};
+const conditionValueLabel = (c: Condition) =>
+  choiceConditions[c.field]?.find(([value]) => value === c.value)?.[1] ??
+  `「${c.value}」`;
 const actions: { [key: string]: string } = {
   // 用户层只有一个「移动到文件夹」：IMAP 落地为服务器移动，POP3 退化为本地归类。
   // serverCopy 仅用于兼容旧规则展示。
@@ -77,6 +120,55 @@ const ALL_ACTIONS: [string, string][] = [
   ["star", "添加星标"],
   ["trash", "移到本地废纸篓"],
 ];
+function ConditionDatePicker({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const selected = value ? new Date(`${value}T00:00:00`) : undefined;
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="condition-value justify-start"
+          aria-label="条件日期"
+        >
+          <CalendarDays data-icon="inline-start" />
+          <span className="truncate">
+            {selected ? format(selected, "yyyy/MM/dd") : "选择日期"}
+          </span>
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent
+        align="start"
+        className="w-auto max-h-[var(--radix-popover-content-available-height)] overflow-y-auto p-0"
+        aria-label="选择条件日期"
+      >
+        <Calendar
+          mode="single"
+          selected={selected}
+          onSelect={(date) => {
+            if (!date) return;
+            onChange(format(date, "yyyy-MM-dd"));
+            setOpen(false);
+          }}
+          locale={zhCN}
+          captionLayout="dropdown"
+          startMonth={new Date(1900, 0)}
+          endMonth={new Date(2100, 11)}
+          defaultMonth={selected}
+          autoFocus
+        />
+      </PopoverContent>
+    </Popover>
+  );
+}
 export function RulesPanel({
   data,
   onChange,
@@ -92,6 +184,8 @@ export function RulesPanel({
     [exportAccounts, setExportAccounts] = useState<string[]>([]),
     [exportGlobal, setExportGlobal] = useState(true),
     [preview, setPreview] = useState<string[] | null>(null);
+  const waitingPreview =
+    preview?.filter((s) => s.endsWith("（等待完整邮件核对）")).length ?? 0;
   const [folderNames, setFolderNames] = useState<
     Record<string, Record<string, string>>
   >({});
@@ -233,7 +327,7 @@ export function RulesPanel({
     void save(rs);
   }
   return (
-    <section className="workspace-panel">
+    <section className="workspace-panel rules-workspace">
       <div className="panel-heading">
         <div>
           <span className="eyebrow">A LITTLE ORDER</span>
@@ -301,109 +395,111 @@ export function RulesPanel({
       </div>
       <div className="rule-list">
         {groupRulesByAccount(data.rules, data.accounts).map((group) => (
-          <Collapsible key={group.key} className="rule-group-card">
-            <div className="rule-group-heading">
-              <CollapsibleTrigger asChild>
-                <Button variant="ghost" size="sm" className="gap-1 px-0">
-                  <ChevronRight size={14} className="collapse-chevron" />
-                  {group.label}
-                  <span className="rule-group-count">
-                    {group.rules.length} 条
-                  </span>
-                </Button>
-              </CollapsibleTrigger>
-            </div>
-            <CollapsibleContent className="flex flex-col gap-3">
-              {group.rules.map(({ rule: r, order }) => (
-                <article
-                  className={`rule-card ${r.enabled ? "" : "disabled-rule"}`}
-                  key={r.id}
-                >
-                  <div className="rule-number">
-                    {String(order + 1).padStart(2, "0")}
-                  </div>
-                  <div className="rule-body">
-                    <div className="rule-title">
-                      <h3>{r.name}</h3>
-                      {r.stop && <span>命中后停止</span>}
+          <Collapsible key={group.key} asChild>
+            <Card className="rule-group-card">
+              <TaskPanelHeader
+                title={group.label}
+                description="规则按执行顺序匹配；命中后按「命中后停止」决定是否继续。"
+                action={
+                  <Badge variant="secondary">{group.rules.length} 条</Badge>
+                }
+              />
+              <CollapsibleContent className="rule-group-body">
+                {group.rules.map(({ rule: r, order }) => (
+                  <article
+                    className={`rule-card ${r.enabled ? "" : "disabled-rule"}`}
+                    key={r.id}
+                  >
+                    <div className="rule-number">
+                      {String(order + 1).padStart(2, "0")}
                     </div>
-                    <p className="rule-summary">
-                      <span className="rule-conditions">
-                        {r.conditions
-                          .map(
-                            (c) =>
-                              `${fields[c.field]} ${c.operator === "equals" ? "等于" : c.operator === "notContains" ? "不包含" : c.operator === "before" ? "早于" : c.operator === "after" ? "晚于" : "包含"}「${c.value}」`,
-                          )
-                          .join(r.mode === "all" ? " 且 " : " 或 ")}
-                      </span>
-                      <span className="rule-action">
-                        <ArrowRight size={13} />
-                        {ruleActionsDeduped(r).map((action) => (
-                          <span className="rule-action-item" key={action}>
-                            {isMoveAction({ action } as Rule) ? (
-                              <Folder size={13} />
-                            ) : action === "star" ? (
-                              <Star size={13} />
-                            ) : (
-                              <MailCheck size={13} />
-                            )}
-                            {actions[action]}
-                            {isMoveAction({ action } as Rule) &&
-                              r.destination && (
-                                <strong>
-                                  {folderLabel(r, r.destination, r.destination)}
-                                </strong>
+                    <div className="rule-body">
+                      <div className="rule-title">
+                        <h3>{r.name}</h3>
+                        {r.stop && <span>命中后停止</span>}
+                      </div>
+                      <p className="rule-summary">
+                        <span className="rule-conditions">
+                          {r.conditions
+                            .map(
+                              (c) =>
+                                `${fields[c.field]} ${conditionOperators[c.operator] ?? c.operator}${conditionValueLabel(c)}`,
+                            )
+                            .join(r.mode === "all" ? " 且 " : " 或 ")}
+                        </span>
+                        <span className="rule-action">
+                          <ArrowRight size={13} />
+                          {ruleActionsDeduped(r).map((action) => (
+                            <span className="rule-action-item" key={action}>
+                              {isMoveAction({ action } as Rule) ? (
+                                <Folder size={13} />
+                              ) : action === "star" ? (
+                                <Star size={13} />
+                              ) : (
+                                <MailCheck size={13} />
                               )}
-                          </span>
-                        ))}
-                      </span>
-                    </p>
-                  </div>
-                  <div className="rule-controls">
-                    <Switch
-                      checked={r.enabled}
-                      aria-label={`启用 ${r.name}`}
-                      onCheckedChange={(v) =>
-                        void save(
-                          data.rules.map((x) =>
-                            x.id === r.id ? { ...x, enabled: v } : x,
-                          ),
-                        )
-                      }
-                    />
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      title="上移"
-                      disabled={order === 0}
-                      onClick={() => move(order, -1)}
-                    >
-                      <ArrowUp size={15} />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      title="下移"
-                      disabled={order === data.rules.length - 1}
-                      onClick={() => move(order, 1)}
-                    >
-                      <ArrowDown size={15} />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      title="编辑规则"
-                      onClick={() => {
-                        setPreview(null);
-                        setEditing(structuredClone(r));
-                      }}
-                    >
-                      <MoreHorizontal size={18} />
-                    </Button>
-                  </div>
-                </article>
-              ))}
-            </CollapsibleContent>
+                              {actions[action]}
+                              {isMoveAction({ action } as Rule) &&
+                                r.destination && (
+                                  <strong>
+                                    {folderLabel(
+                                      r,
+                                      r.destination,
+                                      r.destination,
+                                    )}
+                                  </strong>
+                                )}
+                            </span>
+                          ))}
+                        </span>
+                      </p>
+                    </div>
+                    <div className="rule-controls">
+                      <Switch
+                        checked={r.enabled}
+                        aria-label={`启用 ${r.name}`}
+                        onCheckedChange={(v) =>
+                          void save(
+                            data.rules.map((x) =>
+                              x.id === r.id ? { ...x, enabled: v } : x,
+                            ),
+                          )
+                        }
+                      />
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        title="上移"
+                        disabled={order === 0}
+                        onClick={() => move(order, -1)}
+                      >
+                        <ArrowUp size={15} />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        title="下移"
+                        disabled={order === data.rules.length - 1}
+                        onClick={() => move(order, 1)}
+                      >
+                        <ArrowDown size={15} />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        title="编辑规则"
+                        onClick={() => {
+                          setPreview(null);
+                          setEditing(structuredClone(r));
+                        }}
+                      >
+                        <MoreHorizontal size={18} />
+                      </Button>
+                    </div>
+                  </article>
+                ))}
+              </CollapsibleContent>
+            </Card>
           </Collapsible>
         ))}
         {!data.rules.length && (
@@ -424,7 +520,7 @@ export function RulesPanel({
           if (!v) setEditing(null);
         }}
       >
-        <DialogContent className="sm:max-w-[620px] sm:max-h-[85vh] overflow-y-auto">
+        <DialogContent className="sm:max-w-[900px] sm:max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>编辑过滤规则</DialogTitle>
             <DialogDescription>
@@ -534,10 +630,17 @@ export function RulesPanel({
                                   operator:
                                     value === "date"
                                       ? "after"
-                                      : value === "attachment"
-                                        ? "equals"
-                                        : "contains",
-                                  value: value === "attachment" ? "true" : "",
+                                      : ["sizeKb", "ageDays"].includes(value)
+                                        ? "greaterThan"
+                                        : choiceConditions[value]
+                                          ? "equals"
+                                          : "contains",
+                                  value:
+                                    value === "priority"
+                                      ? "normal"
+                                      : choiceConditions[value]
+                                        ? "true"
+                                        : "",
                                 }
                               : x,
                           ),
@@ -558,6 +661,7 @@ export function RulesPanel({
                     </SelectField>
                     <SelectField
                       aria-label="条件比较"
+                      key={`${i}-${c.field}`}
                       value={c.operator}
                       onValueChange={(value) =>
                         setEditing({
@@ -574,13 +678,21 @@ export function RulesPanel({
                               ["before", "早于"],
                               ["after", "晚于"],
                             ]
-                          : c.field === "attachment"
+                          : choiceConditions[c.field]
                             ? [["equals", "等于"]]
-                            : [
-                                ["contains", "包含"],
-                                ["equals", "等于"],
-                                ["notContains", "不包含"],
-                              ]
+                            : c.field === "ageDays" || c.field === "sizeKb"
+                              ? [
+                                  ["greaterThan", "大于"],
+                                  ["lessThan", "小于"],
+                                  ["equals", "等于"],
+                                ]
+                              : [
+                                  ["contains", "包含"],
+                                  ["equals", "等于"],
+                                  ["notContains", "不包含"],
+                                  ["startsWith", "以此开头"],
+                                  ["endsWith", "以此结尾"],
+                                ]
                         ).map(([k, v]) => (
                           <SelectOption key={k} value={k}>
                             {v}
@@ -588,23 +700,81 @@ export function RulesPanel({
                         ))}
                       </SelectGroup>
                     </SelectField>
-                    <Input
-                      aria-label="条件值"
-                      required
-                      type={c.field === "date" ? "date" : "text"}
-                      placeholder={
-                        c.field === "attachment" ? "true / false" : "关键词"
-                      }
-                      value={c.value}
-                      onChange={(e) =>
-                        setEditing({
-                          ...editing,
-                          conditions: editing.conditions.map((x, j) =>
-                            j === i ? { ...x, value: e.target.value } : x,
-                          ),
-                        })
-                      }
-                    />
+                    {choiceConditions[c.field] ? (
+                      <SelectField
+                        className="condition-value"
+                        aria-label="条件值"
+                        value={c.value}
+                        onValueChange={(value) =>
+                          setEditing({
+                            ...editing,
+                            conditions: editing.conditions.map((x, j) =>
+                              j === i ? { ...x, value } : x,
+                            ),
+                          })
+                        }
+                      >
+                        <SelectGroup>
+                          {choiceConditions[c.field].map(([k, v]) => (
+                            <SelectOption key={k} value={k}>
+                              {v}
+                            </SelectOption>
+                          ))}
+                        </SelectGroup>
+                      </SelectField>
+                    ) : c.field === "date" ? (
+                      <ConditionDatePicker
+                        value={c.value}
+                        onChange={(value) =>
+                          setEditing({
+                            ...editing,
+                            conditions: editing.conditions.map((x, j) =>
+                              j === i ? { ...x, value } : x,
+                            ),
+                          })
+                        }
+                      />
+                    ) : (
+                      <Input
+                        aria-label="条件值"
+                        required
+                        type={
+                          ["sizeKb", "ageDays"].includes(c.field)
+                            ? "number"
+                            : "text"
+                        }
+                        min={
+                          ["sizeKb", "ageDays"].includes(c.field)
+                            ? 0
+                            : undefined
+                        }
+                        step={
+                          ["sizeKb", "ageDays"].includes(c.field)
+                            ? 1
+                            : undefined
+                        }
+                        placeholder={
+                          c.field === "sizeKb"
+                            ? "整数 KB"
+                            : c.field === "ageDays"
+                              ? "天数"
+                              : c.field === "cc"
+                                ? "例如：抄送地址或关键词"
+                                : c.field === "recipientsOrCc"
+                                  ? "收件人或抄送地址"
+                                  : "关键词"
+                        }
+                        value={c.value}
+                        onChange={(e) =>
+                          setEditing({
+                            ...editing,
+                            conditions: editing.conditions.map((x, j) =>
+                              j === i ? { ...x, value: e.target.value } : x,
+                            ),
+                          })
+                        }
+                      />
+                    )}
                     <Button
                       type="button"
                       variant="ghost"
@@ -741,7 +911,11 @@ export function RulesPanel({
               </Button>
               {preview && (
                 <div className="rule-preview">
-                  本次预览匹配 {preview.length} 封
+                  {`本次预览 ${preview.length - waitingPreview} 项匹配${
+                    waitingPreview > 0
+                      ? `，另有 ${waitingPreview} 项等待完整邮件核对后确认`
+                      : ""
+                  }。`}
                   {preview.slice(0, 3).map((s, i) => (
                     <p key={i}>{s}</p>
                   ))}

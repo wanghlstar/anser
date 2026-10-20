@@ -1480,17 +1480,22 @@ impl Store {
         if m.saved_locally && !remote_only {
             self.read_archive(m.rel_path.as_deref(), &m.hash)?;
         }
+        // 冻结首次匹配时的已读/星标状态：同一条规则里的「未读 → 标已读 → 归类」
+        // 以及后续规则都按原始状态判断，不被前面的动作改写。
+        let observed = rules::ObservedStatus::of(&m);
         let mut count = 0;
         for r in configured {
+            let state =
+                rules::match_state_observed(&r, &m, Some(observed), rules::body_available(&m));
             if remote_only && !rules::remote(&r) {
-                if rules::matches(&r, &m) && r.stop {
+                if state == rules::MatchState::Match && r.stop {
                     break;
                 }
                 continue;
             }
-            if rules::matches(&r, &m) {
+            if state == rules::MatchState::Match {
                 let is_remote = rules::remote(&r);
-                if is_remote && !self.apply_remote_rule(&r, &m, false)? {
+                if is_remote && !self.apply_remote_rule(&r, &m, false, Some(observed))? {
                     // 服务器来源不适用（如已不在收件箱）：整条规则都不生效
                     continue;
                 }
@@ -1576,14 +1581,26 @@ impl Store {
         let mut rule = rule.clone();
         rule.enabled = true;
         let db = self.db()?;
-        let mut q = db.prepare("SELECT data FROM messages").map_err(err)?;
+        let mut q = db
+            .prepare("SELECT data FROM message_listing ORDER BY rowid")
+            .map_err(err)?;
         let mut matches = Vec::new();
         for row in q.query_map([], |r| r.get::<_, String>(0)).map_err(err)? {
             let m: Mail = serde_json::from_str(&row.map_err(err)?).map_err(err)?;
-            if rules::matches(&rule, &m)
+            let mut state = rules::match_state(&rule, &m, false);
+            // 列表投影没有正文；需要正文/大小/未知头时才读取完整记录。
+            if state == rules::MatchState::NeedsBody && m.saved_locally {
+                let full = self.mail(&m.id)?;
+                state = rules::match_state(&rule, &full, rules::body_available(&full));
+            }
+            if state != rules::MatchState::NoMatch
                 && (!rules::remote(&rule) || self.rule_has_source(&rule, &m)?)
             {
-                matches.push(m.subject);
+                matches.push(if state == rules::MatchState::NeedsBody {
+                    format!("{}（等待完整邮件核对）", m.subject)
+                } else {
+                    m.subject
+                });
             }
         }
         Ok(matches)
@@ -1596,19 +1613,9 @@ impl Store {
         if !configured.iter().any(|r| r.enabled) {
             return Ok(0);
         }
-        let needs_body = configured.iter().any(|r| {
-            r.enabled
-                && r.conditions
-                    .iter()
-                    .any(|condition| condition.field == "body")
-        });
         let db = self.db()?;
         let mut q = db
-            .prepare(if needs_body {
-                "SELECT data FROM messages ORDER BY rowid"
-            } else {
-                "SELECT data FROM message_listing ORDER BY rowid"
-            })
+            .prepare("SELECT data FROM message_listing ORDER BY rowid")
             .map_err(err)?;
         let candidates = q
             .query_map([], |r| r.get::<_, String>(0))
@@ -1618,7 +1625,11 @@ impl Store {
         let mut n = 0;
         for data in candidates {
             let mail: Mail = serde_json::from_str(&data).map_err(err)?;
-            if configured.iter().any(|rule| rules::matches(rule, &mail)) {
+            // NeedsBody 也要作为候选：完整记录可能就在本地，读取后可以确认。
+            if configured
+                .iter()
+                .any(|rule| rules::match_state(rule, &mail, false) != rules::MatchState::NoMatch)
+            {
                 // Load the current full record only for candidates. Conditions
                 // and stop ordering are evaluated again before any mutation.
                 n += self.apply_configured_rules(self.mail(&mail.id)?, &configured, false)?;

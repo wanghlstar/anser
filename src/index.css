@@ -1212,20 +1212,15 @@ button.nav-collapse .collapse-chevron {
 .rule-group-card {
   border: 1px solid var(--border);
   border-radius: 9px;
-  padding: 10px 14px;
+  padding: 0;
+  gap: 0;
+  overflow: hidden;
+}
+.rule-group-body {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-}
-.rule-group-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-.rule-group-count {
-  font-size: 12px;
-  color: var(--muted);
-  margin-left: 6px;
+  gap: 12px;
+  padding: 4px 14px 14px;
 }
 .rule-card {
   border: 1px solid var(--border);
@@ -4515,4 +4510,32 @@ button.nav-collapse .collapse-chevron {
   .inbox-scope-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+}
+
+/* 规则条件：字段/比较固定宽，值控件占满剩余宽度 */
+.condition > .select-field {
+  width: 110px;
+  flex-shrink: 0;
+}
+.condition > .select-field.condition-value,
+.condition > button.condition-value {
+  flex: 1;
+  width: auto;
+  min-width: 0;
+}
+
+/* 规则页：内容区适当加宽；账号分组卡头整体下移，避免贴着卡片上缘 */
+.rules-workspace {
+  max-width: 1800px;
+  padding-inline: 12px;
+}
+.rule-group-card [data-slot="card-header"] {
+  align-items: center;
+  padding-block: 14px;
+}
+.rule-group-card [data-slot="card-header"] > button {
+  align-items: center;
+}
+.rule-group-card [data-slot="card-header"] > button > svg {
+  margin-top: 0;
 }

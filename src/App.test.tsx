@@ -1601,7 +1601,7 @@ describe("inbox scope of the aggregate badges", () => {
   }
   function expandScope() {
     return host.querySelector(
-      '[aria-label="折叠收件箱范围"],[aria-label="展开收件箱范围"]',
+      '[aria-label="展开或收起全部收件箱"]',
     ) as HTMLButtonElement;
   }
   it("defaults unconfigured accounts to INBOX when counting badges", async () => {

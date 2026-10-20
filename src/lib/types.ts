@@ -65,6 +65,8 @@ export interface Mail {
   accountEmail: string;
   sender: string;
   recipients: string;
+  cc?: string;
+  priority?: string;
   subject: string;
   preview: string;
   body: string;
@@ -74,6 +76,8 @@ export interface Mail {
   localFolder: string;
   trashed: boolean;
   hasAttachments: boolean;
+  attachmentMetadataKnown?: boolean;
+  headerMetadataKnown?: boolean;
   hash: string;
   size: number;
   savedAt: string;

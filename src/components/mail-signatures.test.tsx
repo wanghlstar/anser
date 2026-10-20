@@ -19,7 +19,7 @@ function toggle() {
 }
 function collapseToggle() {
   return host.querySelector(
-    '[aria-label="折叠签名设置"],[aria-label="展开签名设置"]',
+    '[aria-label="展开或收起邮件签名"]',
   ) as HTMLButtonElement;
 }
 async function click(element: HTMLElement) {

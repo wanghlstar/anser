@@ -80,7 +80,7 @@ function button(label: string) {
 }
 function collapseToggle() {
   return host.querySelector(
-    '[aria-label="折叠收件箱范围"],[aria-label="展开收件箱范围"]',
+    '[aria-label="展开或收起全部收件箱"]',
   ) as HTMLButtonElement;
 }
 function collapsed() {

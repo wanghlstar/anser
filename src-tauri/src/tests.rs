@@ -590,6 +590,53 @@ fn historical_rule_candidates_preserve_body_conditions_and_stop_order() {
     assert!(!after.trashed);
 }
 #[test]
+fn later_rules_use_the_original_read_state_after_an_earlier_rule_marks_read() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = Store::new(dir.path().into()).unwrap();
+    s.ingest(&account(), "INBOX", "1", &raw(), false).unwrap();
+    let m = s.snapshot(&query()).unwrap().messages[0].clone();
+    let mut mark = rule("mark-read", "read", false);
+    mark.conditions[0].value = m.subject.clone();
+    let mut unread_star = rule("star-unread", "star", false);
+    unread_star.conditions = vec![Condition {
+        field: "read".into(),
+        operator: "equals".into(),
+        value: "false".into(),
+    }];
+    s.save_rules(&[mark, unread_star]).unwrap();
+    assert_eq!(s.run_rules().unwrap(), 2);
+    let after = s.mail(&m.id).unwrap();
+    assert!(after.is_read);
+    // 第二条规则按首次匹配时的「未读」判断，不被第一条的标已读动作改写。
+    assert!(after.starred);
+}
+
+#[test]
+fn preview_waits_for_unknown_headers_and_matches_after_they_are_known() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = Store::new(dir.path().into()).unwrap();
+    s.ingest(&account(), "INBOX", "1", &raw(), false).unwrap();
+    let id = s.snapshot(&query()).unwrap().messages[0].id.clone();
+    let mut r = rule("cc-preview", "star", false);
+    r.conditions = vec![Condition {
+        field: "cc".into(),
+        operator: "contains".into(),
+        value: "copy@example.com".into(),
+    }];
+    let mut old = s.mail(&id).unwrap();
+    old.header_metadata_known = false;
+    s.update_mail(&old).unwrap();
+    let preview = s.preview_rule(&r).unwrap();
+    assert_eq!(preview.len(), 1);
+    assert!(preview[0].ends_with("（等待完整邮件核对）"));
+    let mut fresh = s.mail(&id).unwrap();
+    fresh.header_metadata_known = true;
+    fresh.cc = "Copy Team <copy@example.com>".into();
+    s.update_mail(&fresh).unwrap();
+    assert_eq!(s.preview_rule(&r).unwrap(), vec![fresh.subject.clone()]);
+}
+
+#[test]
 fn rule_conditions_and_validation() {
     let (m, _, _) = archive::parse(&raw(), &account(), "INBOX").unwrap();
     let mut r = rule("r", "star", false);

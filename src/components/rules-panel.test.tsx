@@ -55,7 +55,7 @@ async function select(label: string, option: string) {
   expect(item).toBeTruthy();
   await act(async () => (item as HTMLElement).click());
 }
-async function render(rules: Rule[] = []) {
+async function render(rules: Rule[] = [], expand = true) {
   await act(async () =>
     root.render(
       <SidebarProvider>
@@ -67,15 +67,15 @@ async function render(rules: Rule[] = []) {
       </SidebarProvider>,
     ),
   );
-  await expandRecords();
+  if (expand) await expandRecords();
 }
-// 命中记录默认折叠，测试需先展开
+// 执行记录默认折叠，测试需先展开
 async function expandRecords() {
-  await act(async () => {
-    host
-      .querySelectorAll("button")
-      .forEach((b) => b.textContent?.includes("命中记录") && b.click());
-  });
+  const trigger = host.querySelector(
+    '[aria-label="展开或收起服务器规则执行记录"]',
+  ) as HTMLButtonElement | null;
+  if (trigger && trigger.getAttribute("aria-expanded") === "false")
+    await act(async () => trigger.click());
 }
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -166,6 +166,81 @@ it("merges the folder action into one move with a server target list", async () 
     ],
   });
 });
+it("uses the whole account group header to expand and collapse", async () => {
+  const groupRule: Rule = {
+    id: "group-rule",
+    name: "发票归类",
+    accountId: "",
+    enabled: true,
+    mode: "all",
+    conditions: [{ field: "subject", operator: "contains", value: "发票" }],
+    action: "read",
+    destination: "",
+    stop: false,
+  };
+  await render([groupRule]);
+  const trigger = document.querySelector(
+    '[aria-label="展开或收起全部账号"]',
+  ) as HTMLButtonElement;
+  expect(trigger).not.toBeNull();
+  // 分组默认隐藏，和改造前一致。
+  expect(trigger.getAttribute("aria-expanded")).toBe("false");
+  expect(document.querySelector(".rule-group-card")?.textContent).toContain(
+    "1 条",
+  );
+  // 点标题整块展开。
+  await act(async () =>
+    (trigger.querySelector("span span:first-child") as HTMLElement).click(),
+  );
+  expect(trigger.getAttribute("aria-expanded")).toBe("true");
+  // 点说明文字也能收起，不要求点箭头。
+  await act(async () =>
+    (trigger.querySelector("span span:last-child") as HTMLElement).click(),
+  );
+  expect(trigger.getAttribute("aria-expanded")).toBe("false");
+});
+
+it("offers choice, number and calendar condition values", async () => {
+  await render();
+  await click("新建规则");
+  // 优先级：比较方式固定为等于，值改为下拉选择
+  await select("条件字段", "优先级");
+  expect(document.querySelector('[aria-label="条件值"]')).not.toBeNull();
+  await select("条件值", "高");
+  // 邮件大小/已接收天数：数字输入
+  await select("条件字段", "邮件大小（KB）");
+  expect(
+    document
+      .querySelector<HTMLInputElement>('[aria-label="条件值"]')
+      ?.getAttribute("type"),
+  ).toBe("number");
+  // 日期：必须走 shadcn Calendar + Popover，不用原生 date 输入
+  await select("条件字段", "邮件日期");
+  expect(document.querySelector('[aria-label="条件日期"]')).not.toBeNull();
+  expect(document.querySelector('input[type="date"]')).toBeNull();
+  // 文字条件提供「以此开头 / 以此结尾」
+  await select("条件字段", "主题");
+  await select("条件比较", "以此开头");
+  expect(
+    document.querySelector('[aria-label="条件比较"]')?.textContent,
+  ).toContain("以此开头");
+});
+
+it("shows how many previews wait for the full message", async () => {
+  vi.mocked(api.call).mockImplementation(async <T,>(command: string) => {
+    if (command === "folder_settings") return settings as T;
+    if (command === "rule_executions") return hits as T;
+    if (command === "preview_rule") return ["等待项（等待完整邮件核对）"] as T;
+    return undefined as T;
+  });
+  await render();
+  await click("新建规则");
+  await click("预览匹配，不执行动作");
+  expect(document.body.textContent).toContain(
+    "本次预览 0 项匹配，另有 1 项等待完整邮件核对后确认",
+  );
+});
+
 it("stacks a local mark with the merged move and keeps its target", async () => {
   await render();
   await click("新建规则");
@@ -185,6 +260,39 @@ it("stacks a local mark with the merged move and keeps its target", async () => 
     }),
   });
 });
+it("keeps server execution records collapsed until the card header is clicked", async () => {
+  hits = [
+    {
+      id: "one",
+      ruleName: "发票归类",
+      accountEmail: account.email,
+      subject: "发票",
+      action: "serverMove",
+      source: "收件箱",
+      target: "归档",
+      status: "completed",
+      error: "",
+      operationId: "task",
+      updatedAt: "",
+    },
+  ];
+  await render([], false);
+  const trigger = document.querySelector(
+    '[aria-label="展开或收起服务器规则执行记录"]',
+  ) as HTMLButtonElement;
+  expect(trigger.getAttribute("aria-expanded")).toBe("false");
+  expect(
+    document.querySelector('[aria-label="服务器规则命中记录"]'),
+  ).toBeNull();
+  // 旧的「命中记录（N / N）」独立行已移除。
+  expect(document.body.textContent).not.toContain("命中记录（");
+  await act(async () => trigger.click());
+  expect(trigger.getAttribute("aria-expanded")).toBe("true");
+  expect(
+    document.querySelector('[aria-label="服务器规则命中记录"]'),
+  ).not.toBeNull();
+});
+
 it("shows task uncertainty without offering replay and retries only a failed enqueue", async () => {
   hits = ["uncertain", "blocked", "completed"].map((status) => ({
     id: status,

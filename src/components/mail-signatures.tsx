@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { AlertCircle, ChevronDown, FileUp, X } from "lucide-react";
+import { AlertCircle, FileUp, X } from "lucide-react";
 import { toast } from "sonner";
 import { call } from "@/lib/api";
 import type { Account, MailSignature } from "@/lib/types";
@@ -11,15 +11,9 @@ import {
 import { sanitizeComposeHtml, textToHtml } from "@/lib/compose-format";
 import { cn } from "@/lib/utils";
 import { MailContent } from "./mail-content";
+import { TaskPanelHeader } from "./task-panel-header";
 import { Button } from "./ui/button";
-import {
-  Card,
-  CardHeader,
-  CardTitle,
-  CardDescription,
-  CardContent,
-  CardAction,
-} from "./ui/card";
+import { Card, CardContent } from "./ui/card";
 import { Field, FieldGroup, FieldLabel, FieldDescription } from "./ui/field";
 import { Textarea } from "./ui/textarea";
 import { Input } from "./ui/input";
@@ -111,59 +105,52 @@ export function MailSignatures({ accounts }: { accounts: Account[] }) {
   }
   const content = signatureContent(accountId, signature);
   return (
-    <Collapsible open={signature.enabled && expanded} asChild>
+    <Collapsible
+      open={signature.enabled && expanded}
+      onOpenChange={setExpanded}
+      asChild
+    >
       <Card>
-        <CardHeader>
-          <CardTitle>邮件签名</CardTitle>
-          <CardDescription>
-            按发件账号设置。签名与正文分开保存，切换账号会换用对应签名；已保存的草稿保留自己的签名。
-          </CardDescription>
-          <CardAction className="flex flex-wrap items-center gap-3">
-            <Field className="w-56 max-w-full">
-              <FieldLabel className="sr-only">发件账号</FieldLabel>
-              <SelectField
-                aria-label="签名所属账号"
-                value={accountId}
-                disabled={busy || !accounts.length}
-                onValueChange={setAccountId}
-              >
-                {accounts.map((a) => (
-                  <SelectOption key={a.id} value={a.id}>
-                    {a.name} · {a.email}
-                  </SelectOption>
-                ))}
-              </SelectField>
-            </Field>
-
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              aria-label={expanded ? "折叠签名设置" : "展开签名设置"}
-              aria-expanded={expanded}
-              aria-controls="signature-settings-content"
-              disabled={!signature.enabled}
-              onClick={() => setExpanded((v) => !v)}
-            >
-              <ChevronDown
-                className={cn(
-                  "transition-transform",
-                  !expanded && "-rotate-90",
-                )}
-              />
-            </Button>
-
-            <Switch
-              id="signature-enabled"
-              aria-label="启用邮件签名"
-              checked={signature.enabled}
-              disabled={
-                busy || loading || loadedAccountId !== accountId || !accountId
-              }
-              onCheckedChange={(enabled) => void toggle(enabled)}
-            />
-          </CardAction>
-        </CardHeader>
+        <TaskPanelHeader
+          title="邮件签名"
+          description="按发件账号设置。签名与正文分开保存，切换账号会换用对应签名；已保存的草稿保留自己的签名。"
+          controls="signature-settings-content"
+          disabled={!signature.enabled}
+          action={
+            <div className="flex flex-wrap items-center gap-3">
+              <Field className="w-56 max-w-full">
+                <FieldLabel className="sr-only">发件账号</FieldLabel>
+                <SelectField
+                  aria-label="签名所属账号"
+                  value={accountId}
+                  disabled={busy || !accounts.length}
+                  onValueChange={setAccountId}
+                >
+                  {accounts.map((a) => (
+                    <SelectOption key={a.id} value={a.id}>
+                      {a.name} · {a.email}
+                    </SelectOption>
+                  ))}
+                </SelectField>
+              </Field>
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-muted-foreground">启用</span>
+                <Switch
+                  id="signature-enabled"
+                  aria-label="启用邮件签名"
+                  checked={signature.enabled}
+                  disabled={
+                    busy ||
+                    loading ||
+                    loadedAccountId !== accountId ||
+                    !accountId
+                  }
+                  onCheckedChange={(enabled) => void toggle(enabled)}
+                />
+              </div>
+            </div>
+          }
+        />
         {error && (
           <CardContent>
             <Alert variant="destructive">

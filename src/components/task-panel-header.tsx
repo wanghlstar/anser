@@ -10,10 +10,18 @@ export function TaskPanelHeader({
   title,
   description,
   onRefresh,
+  action,
+  disabled = false,
+  controls,
+  compact = false,
 }: {
   title: string;
   description: ReactNode;
-  onRefresh: () => Promise<void>;
+  onRefresh?: () => Promise<void>;
+  action?: ReactNode;
+  disabled?: boolean;
+  controls?: string;
+  compact?: boolean;
 }) {
   const [refreshing, setRefreshing] = useState(false);
   const pending = useRef(false);
@@ -28,7 +36,7 @@ export function TaskPanelHeader({
   }, []);
 
   async function refresh() {
-    if (pending.current) return;
+    if (!onRefresh || pending.current) return;
     pending.current = true;
     setRefreshing(true);
     const started = performance.now();
@@ -56,33 +64,55 @@ export function TaskPanelHeader({
         <Button
           variant="ghost"
           aria-label={`展开或收起${title}`}
-          className="group h-auto min-w-0 flex-1 items-start justify-start gap-4 px-2 py-1 text-left whitespace-normal"
+          aria-controls={controls}
+          disabled={disabled}
+          className={cn(
+            "group h-auto min-w-0 flex-1 items-start justify-start gap-4 px-2 text-left whitespace-normal",
+            compact ? "py-0.5" : "py-1",
+          )}
         >
-          <span className="flex min-w-0 flex-1 flex-col gap-2">
+          <span
+            className={cn(
+              "flex min-w-0 flex-1 flex-col",
+              compact ? "gap-1" : "gap-2",
+            )}
+          >
             <span className="font-semibold">{title}</span>
-            <span className="text-sm leading-relaxed font-normal text-muted-foreground">
+            <span
+              className={cn(
+                "leading-relaxed font-normal text-muted-foreground",
+                compact ? "text-xs" : "text-sm",
+              )}
+            >
               {description}
             </span>
           </span>
           <ChevronDown className="mt-0.5 transition-transform group-data-[state=open]:rotate-180 motion-reduce:transition-none" />
         </Button>
       </CollapsibleTrigger>
-      <Button
-        variant="ghost"
-        size="sm"
-        aria-label={`刷新${title}`}
-        aria-busy={refreshing}
-        disabled={refreshing}
-        onClick={() => void refresh()}
-      >
-        <RefreshCw
-          data-icon="inline-start"
-          className={cn(
-            refreshing && "animate-spin motion-reduce:animate-none",
+      {(onRefresh || action) && (
+        <div className="flex min-w-[88px] shrink-0 items-center justify-start gap-2">
+          {onRefresh && (
+            <Button
+              variant="ghost"
+              size="sm"
+              aria-label={`刷新${title}`}
+              aria-busy={refreshing}
+              disabled={refreshing}
+              onClick={() => void refresh()}
+            >
+              <RefreshCw
+                data-icon="inline-start"
+                className={cn(
+                  refreshing && "animate-spin motion-reduce:animate-none",
+                )}
+              />
+              <span aria-live="polite">{refreshing ? "刷新中" : "刷新"}</span>
+            </Button>
           )}
-        />
-        <span aria-live="polite">{refreshing ? "刷新中" : "刷新"}</span>
-      </Button>
+          {action}
+        </div>
+      )}
     </CardHeader>
   );
 }

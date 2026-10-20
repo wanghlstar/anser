@@ -71,9 +71,22 @@ impl Store {
         }
         self.db()?.query_row("SELECT EXISTS(SELECT 1 FROM sources WHERE account_id=?1 AND mail_id=?2 AND folder=?3 AND active=1)",params![mail.account_id,mail.id,rule.source_folder],|r|r.get(0)).map_err(err)
     }
-    pub fn apply_remote_rule(&self, rule: &Rule, mail: &Mail, retry: bool) -> Result<bool> {
+    pub fn apply_remote_rule(
+        &self,
+        rule: &Rule,
+        mail: &Mail,
+        retry: bool,
+        observed: Option<rules::ObservedStatus>,
+    ) -> Result<bool> {
         rules::validate(rule)?;
-        if !rules::remote(rule) || !rules::matches(rule, mail) {
+        if !rules::remote(rule)
+            || rules::match_state_observed(
+                rule,
+                mail,
+                observed,
+                rules::body_available(mail),
+            ) != rules::MatchState::Match
+        {
             return Err("邮件不匹配此服务器规则".into());
         }
         let frozen = fingerprint(rule)?;
@@ -177,7 +190,7 @@ impl Store {
         if !rules::matches(&rule, &mail) {
             return Err("邮件已不再匹配规则".into());
         }
-        self.apply_remote_rule(&rule, &mail, true)?;
+        self.apply_remote_rule(&rule, &mail, true, None)?;
         Ok(())
     }
     pub fn rule_executions(&self) -> Result<Vec<RuleExecution>> {

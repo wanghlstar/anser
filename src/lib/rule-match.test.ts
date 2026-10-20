@@ -13,6 +13,7 @@ const mail = {
   accountId: "work",
   subject: "项目 INVOICE",
   sender: "alice@example.com",
+  recipients: "me@example.com",
   hasAttachments: true,
   date: "2026-09-30T01:00:00Z",
 } as Mail;
@@ -68,6 +69,43 @@ describe("rule preview semantics", () => {
     ).toBe(false);
   });
 });
+it("supports the extended text, cc, priority, size and age conditions", () => {
+  const extended = {
+    ...mail,
+    cc: "Copy Team <copy@example.com>",
+    priority: "high",
+    size: 2048,
+    isRead: false,
+    starred: true,
+    headerMetadataKnown: true,
+  };
+  const matches = (field: string, operator: string, value: string) =>
+    ruleMatches(
+      { ...rule, conditions: [{ field, operator, value }] },
+      extended,
+    );
+  expect(matches("subject", "startsWith", "项目")).toBe(true);
+  expect(matches("subject", "endsWith", "invoice")).toBe(true);
+  expect(matches("cc", "contains", "copy@example.com")).toBe(true);
+  expect(matches("recipientsOrCc", "contains", "copy@example.com")).toBe(true);
+  expect(matches("priority", "equals", "high")).toBe(true);
+  expect(matches("sizeKb", "lessThan", "3")).toBe(true);
+  expect(matches("sizeKb", "greaterThan", "3")).toBe(false);
+  expect(matches("ageDays", "greaterThan", "7")).toBe(true);
+  expect(matches("read", "equals", "false")).toBe(true);
+  expect(matches("starred", "equals", "true")).toBe(true);
+  // 旧记录未知头信息时，抄送/优先级条件不把缺失当成空值。
+  expect(
+    ruleMatches(
+      {
+        ...rule,
+        conditions: [{ field: "cc", operator: "contains", value: "copy" }],
+      },
+      { ...extended, headerMetadataKnown: false },
+    ),
+  ).toBe(false);
+});
+
 it("does not treat an online or undecodable body as an empty matching body", () => {
   const negative = {
     ...rule,

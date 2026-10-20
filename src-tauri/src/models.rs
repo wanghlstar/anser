@@ -101,6 +101,11 @@ pub struct Mail {
     pub account_email: String,
     pub sender: String,
     pub recipients: String,
+    #[serde(default)]
+    pub cc: String,
+    /// 归一化的重要性：high / normal / low（读 X-Priority / Priority / Importance）。
+    #[serde(default)]
+    pub priority: String,
     pub subject: String,
     pub preview: String,
     pub body: String,
@@ -114,6 +119,13 @@ pub struct Mail {
     pub local_folder: String,
     pub trashed: bool,
     pub has_attachments: bool,
+    /// 是否已从原始邮件确认过附件元数据；旧记录为 false 时附件条件等待完整保存。
+    #[serde(default)]
+    pub attachment_metadata_known: bool,
+    /// 旧记录可能没有归档原始头信息；为 false 时抄送/优先级条件等待完整邮件，
+    /// 不把缺失的头误判成空值。
+    #[serde(default)]
+    pub header_metadata_known: bool,
     pub hash: String,
     /// 本地存档相对路径（archive/<账号>/<文件夹>/<hash>.eml）；升级前数据为空，按旧平面布局寻址
     #[serde(default, skip_serializing_if = "Option::is_none")]

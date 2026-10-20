@@ -5,20 +5,9 @@ import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import { Alert, AlertDescription } from "./ui/alert";
 import { Skeleton } from "./ui/skeleton";
-import {
-  Card,
-  CardHeader,
-  CardTitle,
-  CardDescription,
-  CardContent,
-  CardAction,
-} from "./ui/card";
-import { ChevronRight, RefreshCw } from "lucide-react";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "./ui/collapsible";
+import { Card, CardContent } from "./ui/card";
+import { TaskPanelHeader } from "./task-panel-header";
+import { Collapsible, CollapsibleContent } from "./ui/collapsible";
 
 export type RuleExecution = {
   id: string;
@@ -90,46 +79,31 @@ export function RuleExecutions({ onShowTasks }: { onShowTasks: () => void }) {
     }
   }
   return (
-    <Card className="mt-4">
-      <CardHeader>
-        <CardTitle>服务器规则执行记录</CardTitle>
-        <CardDescription>
-          最近 50 次命中。任务完成后才显示成功；结果未确认时不会自动重发。
-        </CardDescription>
-        <CardAction>
-          <Button variant="ghost" size="sm" onClick={() => void reload()}>
-            <RefreshCw />
-            刷新
-          </Button>
-        </CardAction>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-4">
-        {error && (
-          <Alert variant="destructive">
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
-        )}
-        {!items && !error && (
-          <Skeleton className="h-16" aria-label="正在加载规则记录" />
-        )}
-        {items?.length === 0 && (
-          <p className="text-sm text-muted-foreground">
-            暂无服务器规则命中。预览匹配不会创建任务。
-          </p>
-        )}
-        <Collapsible defaultOpen={false}>
-          <CollapsibleTrigger asChild>
-            <Button
-              variant="outline"
-              size="sm"
-              className="w-full justify-between"
-            >
-              命中记录（{Math.min(items?.length ?? 0, 50)} /{" "}
-              {items?.length ?? 0}）
-              <ChevronRight size={14} className="collapse-chevron" />
-            </Button>
-          </CollapsibleTrigger>
-          <CollapsibleContent>
+    <Collapsible defaultOpen={false} asChild>
+      <Card className="mt-4 rule-executions-card">
+        <TaskPanelHeader
+          title="服务器规则执行记录"
+          description={`最近 50 次命中${
+            items ? `，当前 ${items.length} 条` : ""
+          }。任务完成后才显示成功；结果未确认时不会自动重发。`}
+          onRefresh={() => reload()}
+          compact
+        />
+        <CollapsibleContent asChild>
+          <CardContent className="flex flex-col gap-4">
+            {error && (
+              <Alert variant="destructive">
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            )}
+            {!items && !error && (
+              <Skeleton className="h-16" aria-label="正在加载规则记录" />
+            )}
+            {items?.length === 0 && (
+              <p className="text-sm text-muted-foreground">
+                暂无服务器规则命中。预览匹配不会创建任务。
+              </p>
+            )}
             <ul className="flex flex-col gap-4" aria-label="服务器规则命中记录">
               {items?.map((item) => (
                 <li
@@ -178,9 +152,9 @@ export function RuleExecutions({ onShowTasks }: { onShowTasks: () => void }) {
                 </li>
               ))}
             </ul>
-          </CollapsibleContent>
-        </Collapsible>
-      </CardContent>
-    </Card>
+          </CardContent>
+        </CollapsibleContent>
+      </Card>
+    </Collapsible>
   );
 }

@@ -480,6 +480,31 @@ fn html_text(html: &str) -> String {
         .collect::<Vec<_>>()
         .join("\n")
 }
+/// 把邮件重要性归一化为 `high` / `normal` / `low`。不同客户端用的头与取值
+/// 不统一，这里同时接受 `X-Priority`、`Priority` 与 `Importance`。
+pub fn priority_of(headers: &[mailparse::MailHeader<'_>]) -> String {
+    for name in ["X-Priority", "Priority", "Importance"] {
+        for value in headers.get_all_values(name) {
+            if let Some(priority) = priority_value(&value) {
+                return priority.into();
+            }
+        }
+    }
+    "normal".into()
+}
+fn priority_value(value: &str) -> Option<&'static str> {
+    let lower = value.trim().to_ascii_lowercase();
+    let token = lower
+        .split(|c: char| c.is_whitespace() || matches!(c, '(' | ')' | ';' | ','))
+        .find(|part| !part.is_empty())?;
+    match token {
+        "1" | "2" | "high" | "highest" | "urgent" => Some("high"),
+        "3" | "normal" | "medium" => Some("normal"),
+        "4" | "5" | "low" | "lowest" | "non-urgent" => Some("low"),
+        _ => None,
+    }
+}
+
 pub fn parse(
     raw: &[u8],
     account: &Account,
@@ -559,6 +584,8 @@ pub fn parse(
         account_email: account.email.clone(),
         sender: header(&parsed, &parts, "From").unwrap_or_default(),
         recipients: header(&parsed, &parts, "To").unwrap_or_default(),
+        cc: header(&parsed, &parts, "Cc").unwrap_or_default(),
+        priority: priority_of(&parsed.headers),
         subject: header(&parsed, &parts, "Subject").unwrap_or_else(|| "（无主题）".into()),
         preview: text
             .split_whitespace()
@@ -576,6 +603,8 @@ pub fn parse(
         local_folder: "全部存档".into(),
         trashed: false,
         has_attachments: !attachments.is_empty(),
+        attachment_metadata_known: true,
+        header_metadata_known: true,
         hash: digest(raw),
         rel_path: None, // 由保存流程（store_raw）按账号/文件夹填充
         size: raw.len() as u64,

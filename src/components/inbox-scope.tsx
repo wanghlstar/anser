@@ -1,20 +1,13 @@
 import { useEffect, useRef, useState } from "react";
-import { AlertCircle, ChevronDown } from "lucide-react";
+import { AlertCircle } from "lucide-react";
 import { toast } from "sonner";
 import { call } from "@/lib/api";
 import { compareFolders } from "@/lib/remote-folders";
-import { cn } from "@/lib/utils";
 import type { Account, RemoteFolder } from "@/lib/types";
 import { Alert, AlertTitle, AlertDescription } from "./ui/alert";
 import { Button } from "./ui/button";
-import {
-  Card,
-  CardHeader,
-  CardTitle,
-  CardDescription,
-  CardContent,
-  CardAction,
-} from "./ui/card";
+import { TaskPanelHeader } from "./task-panel-header";
+import { Card, CardContent } from "./ui/card";
 import { Checkbox } from "./ui/checkbox";
 import { Collapsible, CollapsibleContent } from "./ui/collapsible";
 import { Field, FieldGroup, FieldLabel } from "./ui/field";
@@ -97,53 +90,38 @@ export function InboxScope({
     }
   }
   return (
-    <Collapsible open={expanded} asChild>
+    <Collapsible open={expanded} onOpenChange={setExpanded} asChild>
       <Card className="settings-scope-card">
-        <CardHeader>
-          <CardTitle>全部收件箱</CardTitle>
-          <CardDescription>
-            收件箱始终计入全部/未读视图；再选择要合并的其他文件夹。
-          </CardDescription>
-          <CardAction className="flex flex-wrap items-center gap-3">
-            <Field className="w-56 max-w-full">
-              <FieldLabel className="sr-only">配置账号</FieldLabel>
-              <SelectField
-                aria-label="配置账号"
-                value={accountId}
-                disabled={busy || !accounts.length}
-                onValueChange={setAccountId}
-              >
-                {accounts.map((a) => (
-                  <SelectOption key={a.id} value={a.id}>
-                    {a.name} · {a.email}
-                  </SelectOption>
-                ))}
-              </SelectField>
-            </Field>
-            <span className="text-sm text-muted-foreground">
-              {configured?.length
-                ? `已配置 ${configured.length} 个文件夹`
-                : "未配置：只含收件箱"}
-            </span>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              aria-label={expanded ? "折叠收件箱范围" : "展开收件箱范围"}
-              aria-expanded={expanded}
-              aria-controls="inbox-scope-content"
-              disabled={!accountId}
-              onClick={() => setExpanded((v) => !v)}
-            >
-              <ChevronDown
-                className={cn(
-                  "transition-transform",
-                  !expanded && "-rotate-90",
-                )}
-              />
-            </Button>
-          </CardAction>
-        </CardHeader>
+        <TaskPanelHeader
+          title="全部收件箱"
+          description="收件箱始终计入全部/未读视图；再选择要合并的其他文件夹。"
+          controls="inbox-scope-content"
+          disabled={!accountId}
+          action={
+            <div className="flex flex-col items-end gap-1">
+              <Field className="w-56 max-w-full">
+                <FieldLabel className="sr-only">配置账号</FieldLabel>
+                <SelectField
+                  aria-label="配置账号"
+                  value={accountId}
+                  disabled={busy || !accounts.length}
+                  onValueChange={setAccountId}
+                >
+                  {accounts.map((a) => (
+                    <SelectOption key={a.id} value={a.id}>
+                      {a.name} · {a.email}
+                    </SelectOption>
+                  ))}
+                </SelectField>
+              </Field>
+              <span className="text-sm text-muted-foreground">
+                {configured?.length
+                  ? `已配置 ${configured.length} 个文件夹`
+                  : "未配置：只含收件箱"}
+              </span>
+            </div>
+          }
+        />
         {error && (
           <CardContent>
             <Alert variant="destructive">
