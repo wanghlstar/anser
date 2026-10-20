@@ -1,6 +1,6 @@
 [package]
 name = "yanxin"
-version = "0.20.2"
+version = "0.2.1"
 edition = "2021"
 license-file = "../LICENSE"
 [lib]

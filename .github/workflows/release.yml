@@ -129,19 +129,20 @@ jobs:
           path: release-assets
           merge-multiple: true
       - run: node scripts/release-assets.mjs manifest release-assets
-      - name: Create or update draft Release
+      - name: Create or update Alpha Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VERSION=$(node -p "require('./src-tauri/tauri.conf.json').version")
           TAG="v$VERSION"
+          TITLE="雁信 $VERSION（Alpha）"
           if gh release view "$TAG" >/dev/null 2>&1; then
             DRAFT=$(gh release view "$TAG" --json isDraft --jq .isDraft)
             test "$DRAFT" = true || { echo 'Published releases are immutable; bump the version.'; exit 1; }
           else
-            # 0.2.x 走 Alpha 通道：标记为预发布，GitHub 的 releases/latest 不指向它，
-            # 已装用户不会被自动升级；测试者手动下载 DMG 或取该 tag 下的 latest.json。
-            # 转正式版时去掉 --prerelease 再重跑。
-            gh release create "$TAG" --draft --prerelease --target "$GITHUB_SHA" --title "雁信 $VERSION" --notes-file "docs/releases/$TAG.md"
+            # 先建草稿，资产上传完再发布；标题保留 Alpha，但不标记 prerelease，
+            # 这样 releases/latest 能指向它，应用内更新可用。
+            gh release create "$TAG" --draft --target "$GITHUB_SHA" --title "$TITLE" --notes-file "docs/releases/$TAG.md"
           fi
           gh release upload "$TAG" release-assets/*.dmg release-assets/*.tar.gz release-assets/*.sig release-assets/latest.json --clobber
+          gh release edit "$TAG" --draft=false --prerelease=false --latest --title "$TITLE" --notes-file "docs/releases/$TAG.md"
