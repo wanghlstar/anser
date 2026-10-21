@@ -1032,3 +1032,11 @@ GitHub CI 和两架构发布工作流已推送；首次 Checks 已成功，Relea
 - 验证：前端 55 文件 / 466 例、Rust 375 passed / 2 ignored；`tsc`、Prettier、`check:ui`、`cargo fmt --check`、生产构建通过；本地 `0.2.2` 已签名安装并验证写信窗布局。
 - 暂缓（用户 2026-10-21 决定）：中英文界面与 0.1.24 英文原生文案、正文双语翻译、全局代理/邮件图片样式、未读口径改「全部邮件」、原生邮件链接。
 - tag：正式 `v0.2.2` 推送 origin 触发发布；本地检查点 `0.2.2.0` = `fe1878a`、`0.2.2.1` = `7fd5382`，不推送。
+
+## 本地日历首版（2026-10-21，feat/calendar）
+
+- 范围：纯本地 SQLite；月/周/日三视图 + 全天行、双击/拖拽新建、拖动改期、下拉改结束；简单重复（每天/每周/每月/每年）与分段提醒；仅邮件转日程。不做 CalDAV、ICS、会议邀请、多日历账户与单次例外。
+- 设计/计划：`docs/plans/2026-10-21-calendar-design.md`、`docs/plans/2026-10-21-calendar.md`。
+- 后端：`src-tauri/src/calendar.rs` 新增 `calendar_events` / `calendar_reminder_log`，范围查询在 Rust 展开重复；`list_calendar_events` / `save_calendar_event` / `delete_calendar_event`；后台每 30 秒检查提醒，启动补查 60 分钟内错过的实例。
+- 前端：`src/components/calendar-page.tsx` 独立页面，侧栏「日历」位于「通讯录」之前；`src/lib/calendar.ts` 日期/布局/吸附工具；邮件阅读工具栏与右键菜单新增「创建日程」，默认下一个整点。
+- 验证：`src-tauri/src/calendar.rs` 7 个单测、`calendar.test.ts` 5 例、`mail-to-event.test.ts` 2 例、`calendar-page.test.tsx` 2 例；`tsc`、`check:ui`、Prettier、生产构建通过；浏览器演示模式实测月/周/日切换、新建、拖拽移动、缩放结束时间与邮件转日程。
