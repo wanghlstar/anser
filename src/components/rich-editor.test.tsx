@@ -515,3 +515,71 @@ it("survives the greeting insert when the editor was destroyed before the effect
   expect(editor.isDestroyed).toBe(true);
   expect(vi.mocked(toast.error).mock.calls).toEqual([]);
 });
+it("keeps pasted table structure and spans in the editor HTML", async () => {
+  const change = vi.fn();
+  await act(async () =>
+    root.render(
+      <RichEditor
+        body=""
+        html=""
+        disabled={false}
+        onChange={change}
+        onBusy={vi.fn()}
+        readImages={vi.fn()}
+      />,
+    ),
+  );
+  await vi.waitFor(() => expect(captured.editor).not.toBeNull());
+  await act(async () => {
+    (captured.editor as Editor).commands.insertContent(
+      '<table><tbody><tr><th colspan="2">项目</th></tr><tr><td>收信</td><td>完成</td></tr></tbody></table>',
+    );
+  });
+  const table = document.querySelector(".rich-body table");
+  expect(table).not.toBeNull();
+  expect(table?.querySelector("th")?.getAttribute("colspan")).toBe("2");
+  expect(table?.querySelectorAll("tr")).toHaveLength(2);
+  expect(change.mock.calls.at(-1)?.[1]).toContain("<table");
+  expect(change.mock.calls.at(-1)?.[1]).toContain('colspan="2"');
+});
+it("applies a preset text color through the toolbar and stores it as hex", async () => {
+  const change = vi.fn();
+  await act(async () =>
+    root.render(
+      <RichEditor
+        body="红色文字"
+        html={'<p><span style="color: rgb(197, 34, 31)">红色文字</span></p>'}
+        disabled={false}
+        onChange={change}
+        onBusy={vi.fn()}
+        readImages={vi.fn()}
+      />,
+    ),
+  );
+  await vi.waitFor(() => expect(captured.editor).not.toBeNull());
+  await act(async () => {
+    (captured.editor as Editor).commands.selectAll();
+    (
+      document.querySelector('button[aria-label="字体颜色"]') as HTMLElement
+    ).dispatchEvent(
+      new MouseEvent("pointerdown", {
+        bubbles: true,
+        cancelable: true,
+        button: 0,
+      }),
+    );
+  });
+  await vi.waitFor(() =>
+    expect(document.querySelector('[role="menuitem"]')).toBeTruthy(),
+  );
+  const blue = [...document.querySelectorAll('[role="menuitem"]')].find(
+    (node) => node.textContent?.trim() === "蓝色",
+  );
+  expect(blue).toBeTruthy();
+  await act(async () =>
+    blue!.dispatchEvent(new MouseEvent("click", { bubbles: true })),
+  );
+  await vi.waitFor(() =>
+    expect(change.mock.calls.at(-1)?.[1]).toContain("color: #1a56b0"),
+  );
+});

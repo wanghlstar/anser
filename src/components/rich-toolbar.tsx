@@ -25,6 +25,7 @@ import {
   AlignCenter,
   AlignRight,
   AlignJustify,
+  Baseline,
   Highlighter,
   RemoveFormatting,
   Minus,
@@ -56,6 +57,15 @@ import {
 import { native, isDemo } from "@/lib/api";
 import { RichSearch } from "./rich-search";
 
+const textColors = [
+  { label: "灰色", value: "#5f6368" },
+  { label: "红色", value: "#c5221f" },
+  { label: "橙色", value: "#b06000" },
+  { label: "绿色", value: "#1e7b34" },
+  { label: "蓝色", value: "#1a56b0" },
+  { label: "紫色", value: "#7627bb" },
+  { label: "粉色", value: "#a4295a" },
+];
 const colors = [
   { label: "黄色", value: "#fff59d" },
   { label: "绿色", value: "#b9f6ca" },
@@ -90,6 +100,7 @@ export function RichToolbar({
   const state = useEditorState({
     editor,
     selector: ({ editor }) => ({
+      color: editor.getAttributes("textStyle").color || "",
       font: editor.getAttributes("textStyle").fontFamily || "",
       size: editor.getAttributes("textStyle").fontSize || SIZE_DEFAULT,
       heading: editor.getAttributes("heading").level || "paragraph",
@@ -384,6 +395,50 @@ export function RichToolbar({
           </Tooltip>
         ))}
       </div>
+      <DropdownMenu>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <DropdownMenuTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                aria-label="字体颜色"
+                aria-pressed={Boolean(state.color)}
+                disabled={disabled}
+              >
+                <Baseline
+                  style={state.color ? { color: state.color } : undefined}
+                />
+              </Button>
+            </DropdownMenuTrigger>
+          </TooltipTrigger>
+          <TooltipContent>字体颜色</TooltipContent>
+        </Tooltip>
+        <DropdownMenuContent
+          className="rich-format-menu"
+          onCloseAutoFocus={focus}
+        >
+          <DropdownMenuGroup>
+            {textColors.map((color) => (
+              <DropdownMenuItem
+                key={color.value}
+                onSelect={() =>
+                  editor.chain().focus().setColor(color.value).run()
+                }
+              >
+                <Baseline style={{ color: color.value }} />
+                {color.label}
+              </DropdownMenuItem>
+            ))}
+            <DropdownMenuItem
+              onSelect={() => editor.chain().focus().unsetColor().run()}
+            >
+              默认颜色
+            </DropdownMenuItem>
+          </DropdownMenuGroup>
+        </DropdownMenuContent>
+      </DropdownMenu>
       <DropdownMenu>
         <Tooltip>
           <TooltipTrigger asChild>

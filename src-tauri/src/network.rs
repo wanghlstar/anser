@@ -1,10 +1,7 @@
 use crate::{
     archive,
     auth::{self, Secret},
-    idle::{
-        ConnectionControl, MailboxActivity, ObservedStream, ProbeDeadline,
-        TimedStream,
-    },
+    idle::{ConnectionControl, MailboxActivity, ObservedStream, ProbeDeadline, TimedStream},
     models::*,
     store::Store,
 };

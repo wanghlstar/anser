@@ -25,7 +25,7 @@ import { RichImageZoom } from "./rich-image-zoom";
 import { NodeSelection, type Transaction } from "@tiptap/pm/state";
 import DOMPurify from "dompurify";
 import { Button } from "./ui/button";
-import { textToHtml } from "@/lib/compose-format";
+import { textToHtml, hexColorStyles } from "@/lib/compose-format";
 import { call, native, isDemo } from "@/lib/api";
 import { toast } from "sonner";
 import { TooltipProvider } from "./ui/tooltip";
@@ -195,7 +195,7 @@ export function RichEditor({
     onUpdate: ({ editor }) =>
       onChange(
         editor.getText({ blockSeparator: "\n" }),
-        DOMPurify.sanitize(editor.getHTML()),
+        hexColorStyles(DOMPurify.sanitize(editor.getHTML())),
       ),
   });
   instance.current = editor;

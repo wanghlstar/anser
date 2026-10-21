@@ -88,7 +88,24 @@ it("completes a pointer selection and closes the shadcn suggestion popup", async
   );
 });
 
-it("collapses more than three recipients behind +N and expands all of them", async () => {
+it("fills the row before folding excess recipients and expands all of them", async () => {
+  const rect = Element.prototype.getBoundingClientRect;
+  vi.spyOn(Element.prototype, "clientWidth", "get").mockImplementation(
+    function (this: Element) {
+      return this.classList.contains("recipient-input") ? 400 : 0;
+    },
+  );
+  vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(
+    function (this: Element) {
+      const element = this as HTMLElement;
+      const width = element.classList.contains("recipient-more")
+        ? 35
+        : element.classList.contains("recipient-chip")
+          ? 90
+          : null;
+      return width === null ? rect.call(element) : new DOMRect(0, 0, width, 20);
+    },
+  );
   function Many() {
     const [value, setValue] = useState(
       "a@example.com, b@example.com, c@example.com, d@example.com, ",
@@ -108,7 +125,9 @@ it("collapses more than three recipients behind +N and expands all of them", asy
   document.body.append(host);
   root = createRoot(host);
   await act(async () => root.render(<Many />));
-  expect(host.querySelectorAll(".recipient-chip")).toHaveLength(3);
+  expect(
+    host.querySelectorAll(".recipient-chips .recipient-chip"),
+  ).toHaveLength(3);
   expect(host.textContent).toContain("+2");
   const more = host.querySelector('[aria-label="展开另外 2 个收件人"]');
   expect(more).toBeTruthy();

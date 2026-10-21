@@ -4,7 +4,7 @@
 >
 > 继续「雁信（Anser）」开发。仓库 `/Users/wanghlstar/Mytools/anser`（活跃；旧仓库 `wanghlstar/yanxin` 已废弃）。先读 `AGENTS.md` 和本文件。
 >
-> **当前基线**：`main` = `7fbfe33`（tag `v0.2.1`，已推送）；后续从 `main` 拉短分支并经 PR 合并。上游 `upstream/main = 9398046`（0.1.23）。旧功能分支 `feat/port-upstream-a` 已并入 main 并删除。
+> **当前基线**：`main` = 本地轻量 tag `0.2.2.1` 所在提交（未推送；`0.2.2.0` = `fe1878a`；上一发布 tag 为 `v0.2.1`）。后续从 `main` 拉短分支并经 PR 合并。上游 `upstream/main = 490a432`（0.1.24）。旧功能分支 `feat/port-upstream-a` 已并入 main 并删除。
 >
 > **本分支已完成（上游 A 类移植，均已提交）**：阅读快捷键、单封打印、清空草稿/废纸篓、精简版转发带原附件、正文图片超时重试、通知点击定位，以及一轮用户反馈修复（自寄邮件菜单/通知、重新编辑原样载入、问候语顶格、写信拖拽/粘贴附件、阅读器图片复制保存、废纸篓按当前文件夹独立、待确认删除按视图作用域清理）。
 >
@@ -102,9 +102,9 @@
 
 51. **「逐行对齐」与「紧凑」互斥，控件数量不等时要先量真实宽度再定排布**：第 50 条那套（单列 + 统一行高）能对齐，但把两卡撑到 445px 高；用户看过装机版后要求回到紧凑形态 —— 开关横排一行、三个下拉同行、去掉文字标签。**先量再排**：四个「标签 + 开关」的自然宽度 112 / 126 / 108 / 98（合计 444px），默认窗口 1380 时单卡内宽只有 471px，等宽两卡放不下（组间距 14px → 486px，第四组掉第二行）；顶卡改 `1.3fr 1fr` 后左卡内宽 543px 才有余量。**别用 `repeat(4, 1fr)` 等分网格**：每格分到 108px 时「新邮件通知」「发送结果通知」会被折成两行 —— `label` 高度 14 → 28px，但盒子 `scrollWidth == clientWidth`、没有溢出，**光查溢出查不出来，必须量 `label` 的 `height`**。开关组用 `flex: 0 0 auto` + 容器 `justify-content: space-between`（组内自然宽度，多出来的宽度摊在组间），窄窗口整组换行；`@media (max-width: 1279px)` 退成 `flex: 0 0 calc(50% - 7px)` 两行两列。子面板折叠形态也别自己发明：用户要的「活动与诊断」是 **0.1.5/0.1.6 的「高级与诊断」**——外层折叠区默认关闭（折叠时 `CollapsibleContent` 被卸载，五个小项一个都不渲染），展开后「最近活动」折叠、其余四项展开；`Collapsible` 的 `defaultOpen` 是**逐行**给，不要行行都省。
 
-52. **上游同步的两个坑：tag 同名不同物、移植清单会漏版本**。① `git fetch upstream --tags` 时 `v0.1.5`–`v0.1.9` 被拒（`would clobber existing tag`）——本地 `v0.1.5`(`432f441` 完结基线)…`v0.1.9`(`9e1e8e0`) 是**我们自己的**发布 tag，上游另有一套同名 tag（不同提交）；而 `v0.1.19–v0.1.23` 是**上游**的 tag。看到 `v0.1.x` 先 `git log -1 --format="%an %s" <tag>` 认作者，别默认是自己发的。② 本文件与 `AGENTS.md` 的「上游基线」写法让上游 **0.1.15–0.1.18** 直接从清单里消失了（全局代理、原生邮件链接、**大模型逐段双语翻译** 1444+267 行、邮件图片/字体），一直到看上游截图才发现有「大模型翻译」这个功能我们完全没有。**规则：同步时按上游 tag 列表逐个核对（`git tag -l 'v0.1.*'` + `git log v<旧的>..upstream/main`），不能只看自己的清单；清单本身也要写明它覆盖到哪个 tag 为止。** 另：本仓库历史是重写过的单一初始提交 `432f441`，与 `upstream/main` **无共同祖先**（`git merge-base` 无输出），所以上游改动一律 `git show <sha>:<path>` / `git diff` 逐块搬，**`cherry-pick` 不可用**。评估记录见 `docs/UPSTREAM_REVIEW_0_1_20_0_1_21.md`。
+52. **上游同步的两个坑：tag 同名不同物、移植清单会漏版本**。① `git fetch upstream --tags` 时 `v0.1.5`–`v0.1.9` 被拒（`would clobber existing tag`）——本地 `v0.1.5`(`432f441` 完结基线)…`v0.1.9`(`9e1e8e0`) 是**我们自己的**发布 tag，上游另有一套同名 tag（不同提交）；而 `v0.1.19–v0.1.24` 是**上游**的 tag。看到 `v0.1.x` 先 `git log -1 --format="%an %s" <tag>` 认作者，别默认是自己发的。② 本文件与 `AGENTS.md` 的「上游基线」写法让上游 **0.1.15–0.1.18** 直接从清单里消失了（全局代理、原生邮件链接、**大模型逐段双语翻译** 1444+267 行、邮件图片/字体），一直到看上游截图才发现有「大模型翻译」这个功能我们完全没有。**规则：同步时按上游 tag 列表逐个核对（`git tag -l 'v0.1.*'` + `git log v<旧的>..upstream/main`），不能只看自己的清单；清单本身也要写明它覆盖到哪个 tag 为止。** 另：本仓库历史是重写过的单一初始提交 `432f441`，与 `upstream/main` **无共同祖先**（`git merge-base` 无输出），所以上游改动一律 `git show <sha>:<path>` / `git diff` 逐块搬，**`cherry-pick` 不可用**。评估记录见 `docs/UPSTREAM_REVIEW_0_1_20_0_1_21.md`。
 
-53. **全量版本比较的做法（不靠人记清单）**。① 上游 tag 与我们的同名，先把上游那半套抓进独立命名空间：`git fetch upstream '+refs/tags/*:refs/upstream/tags/*' --no-tags`（本地 `refs/tags/v0.1.0–v0.1.9` 是我们的，上游的只在 `refs/upstream/tags/*`）。② 跑 `npm run upstream:matrix`（`scripts/upstream-matrix.mjs`），逐上游版本（v0.1.0→v0.1.23）对照本地 HEAD，输出 `docs/UPSTREAM_VERSION_MATRIX.md`：总览表 + 本地缺 / 本地偏薄 / 本地更大三档。③ 判定是启发式（路径同名 + 行数比例），只用来找候选：**改名或重写过的功能会误报「本地缺」**（例：上游 `archive_location.rs`/`archive-integrity.tsx` 其实对应我们 App.tsx 里的存档位置与「校验存档」），逐项结论必须人工归类。④ 首轮结果证实漏项集中在 **0.1.2–0.1.9**（`rule_runs.rs` 1159 行、`rule-runs.tsx`、`archive_location.rs`+`archive-location.tsx`+`archive-integrity.tsx`、`LICENSE`/`NOTICE`）与 **0.1.15–0.1.18**（`proxy.rs`、`mail_images.rs`、`mail_styles.rs`、`translation.rs`）；`src-tauri/src/rules.rs` 上游 690 行 / 本地 176 行是唯一的「核心功能本地偏薄」。
+53. **全量版本比较的做法（不靠人记清单）**。① 上游 tag 与我们的同名，先把上游那半套抓进独立命名空间：`git fetch upstream '+refs/tags/*:refs/upstream/tags/*' --no-tags`（本地 `refs/tags/v0.1.0–v0.1.9` 是我们的，上游的只在 `refs/upstream/tags/*`）。② 跑 `npm run upstream:matrix`（`scripts/upstream-matrix.mjs`），逐上游版本（v0.1.0→v0.1.24）对照本地 HEAD，输出 `docs/UPSTREAM_VERSION_MATRIX.md`：总览表 + 本地缺 / 本地偏薄 / 本地更大三档。③ 判定是启发式（路径同名 + 行数比例），只用来找候选：**改名或重写过的功能会误报「本地缺」**（例：上游 `archive_location.rs`/`archive-integrity.tsx` 其实对应我们 App.tsx 里的存档位置与「校验存档」），逐项结论必须人工归类。④ 首轮结果证实漏项集中在 **0.1.2–0.1.9**（`rule_runs.rs` 1159 行、`rule-runs.tsx`、`archive_location.rs`+`archive-location.tsx`+`archive-integrity.tsx`、`LICENSE`/`NOTICE`）与 **0.1.15–0.1.18**（`proxy.rs`、`mail_images.rs`、`mail_styles.rs`、`translation.rs`）；`src-tauri/src/rules.rs` 上游 690 行 / 本地 176 行是唯一的「核心功能本地偏薄」。
 
 54. **补齐许可证要三层一起补，否则只算半套**。上游的「许可」其实是三层：① 仓库根 `LICENSE`（3951 字节，Anser Personal Use License 1.0）+ `NOTICE`（1435 字节，第三方边界：shadcn/ui 走 MIT、patched `imap-proto 0.10.2` 走 vendor 内的 MIT/Apache-2.0）；② `docs/LICENSING.md`（中文说明）+ `docs/licenses/shadcn-ui-MIT.txt`（`NOTICE` 指向的落地路径）；③ **交付面** —— `src-tauri/tauri.conf.json` 的 `bundle.resources` 四条映射（`"../LICENSE":"LICENSE"`、`"../NOTICE":"NOTICE"`、`"../docs/LICENSING.md":"LICENSING.md"`、`"../docs/licenses/shadcn-ui-MIT.txt":"licenses/shadcn-ui-MIT.txt"`，**顺序与目标路径照抄，`licenses/` 子目录不能省**，因为 `NOTICE` 正文就写着 `licenses/shadcn-ui-MIT.txt in App resources`）与 `README.md` 的 `## 使用许可` 段。**只补 ①② 等于没发给用户**：我们改前的 0.2.0 包里 `Contents/Resources/` 只有 `icon.icns`；补上 `resources` 重打后才有那 4 个文件。**验证必须拆包看**，用「三方 sha256 对照」（仓库原文 = App 包内副本 = 上游原文），**别用 `diff … | wc -l`** —— 路径写错时 diff 的报错行会被算成 1 行，看起来像「内容不同」的假警报（本轮就踩了）。重打包验证时加 `--config '{"bundle":{"createUpdaterArtifacts":false}}'` 可避免覆盖已有的 `雁信.app.tar.gz`/`.sig`。另外 `prettier --check` 覆盖 `src-tauri/*.json` 与 `package*.json`，但**不覆盖** `LICENSE`/`NOTICE`/`docs/LICENSING.md`/`src-tauri/Cargo.toml`。最后：补了许可证要回头改过期陈述（本轮删掉 `docs/DEVELOPMENT_STATUS.md` 里「仓库根目录未发现项目 LICENSE」那一条）。
 
@@ -114,9 +114,9 @@
 
 ## 移植清单（上游基线 `v0.1.19`）
 
-> 2026-10-20 更新：上游 `upstream/main` 已同步到 **`9398046`（上游 0.1.23）**。本清单仍是**已移植**基线（上游 `v0.1.19` = `037d7aa`）；
-> 0.1.20 / 0.1.21 评估见 `docs/UPSTREAM_REVIEW_0_1_20_0_1_21.md`；0.1.22/0.1.23 中英文界面与**旧清单缺口 0.1.15–0.1.18（含大模型双语翻译）**见 `docs/HANDOFF.md` 第四节。
-> tag 提醒：`v0.1.19–v0.1.23` 是**上游**的，`v0.1.5–v0.1.9`、`v0.2.0`、`v0.2.1`、`v0.20.1/v0.20.2/v0.20.3` 是**我们的**。
+> 2026-10-21 更新：上游 `upstream/main` 已同步到 **`490a432`（上游 0.1.24）**。本清单仍是**已移植**基线（上游 `v0.1.19` = `037d7aa`）；
+> 0.1.20 / 0.1.21 评估见 `docs/UPSTREAM_REVIEW_0_1_20_0_1_21.md`；0.1.22/0.1.23 中英文界面、0.1.24 的实时/钥匙串/表格/颜色与**旧清单缺口 0.1.15–0.1.18（含大模型双语翻译）**见 `docs/HANDOFF.md` 第四节。
+> tag 提醒：`v0.1.19–v0.1.24` 是**上游**的，`v0.1.5–v0.1.9`、`v0.2.0`、`v0.2.1`、`0.2.2.0`、`0.2.2.1`、`v0.20.1/v0.20.2/v0.20.3` 是**我们的**。
 
 **后端**
 

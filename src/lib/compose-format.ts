@@ -151,6 +151,32 @@ export function textToHtml(text: string) {
     .join("");
 }
 
+const hexColor = (value: string) => {
+  const match =
+    /^rgba?\(\s*(\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\s*\)$/i.exec(
+      value.trim(),
+    );
+  if (!match || (match[4] !== undefined && Number(match[4]) < 1)) return value;
+  return `#${match
+    .slice(1, 4)
+    .map((part) => Number(part).toString(16).padStart(2, "0"))
+    .join("")}`;
+};
+
+// ProseMirror renders inline styles through CSSOM, so editor colors come back
+// as rgb(). Store hex instead; desktop mail clients prefer it.
+export function hexColorStyles(html: string) {
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  for (const element of doc.querySelectorAll("[style]")) {
+    const style = element.getAttribute("style") || "";
+    element.setAttribute(
+      "style",
+      style.replace(/rgba?\([^)]+\)/g, (value) => hexColor(value)),
+    );
+  }
+  return doc.body.innerHTML;
+}
+
 function quoteHeader(draft: Compose) {
   const quote = draft.quote!;
   return [

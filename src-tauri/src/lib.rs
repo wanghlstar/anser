@@ -418,7 +418,8 @@ async fn connect_account(
             .map_err(|_| "正在发送邮件，请稍后修改账号")?;
         network::test_with_progress(&account, &secret, &progress)?;
         progress("saving");
-        auth::save(&account.id, &secret)?;
+        // Explicit account setup may ask the Keychain once.
+        auth::save_interactive(&account.id, &secret)?;
         account.error = None;
         store.save_account(&account)?;
         realtime.restart();
@@ -510,7 +511,7 @@ async fn edit_account(
         }
         network::test_with_progress(&account, &secret, &progress)?;
         progress("saving");
-        auth::save(&account.id, &secret)?;
+        auth::save_interactive(&account.id, &secret)?;
         store.edit_account(&account)?;
         realtime.restart();
         store.log(&format!("账号 {} 配置已更新，收发验证通过", account.email))?;
@@ -894,6 +895,15 @@ fn sync_scope(
                 "{} {}本轮结束，新增 {} 封邮件",
                 account.email, scope, count
             ));
+            // The provider keeps accepting the in-memory token, so mail flow is
+            // unaffected; record the denied write once per episode instead of
+            // failing every round and showing an account error.
+            if auth::pending_write(&account.id) && auth::take_pending_notice(&account.id) {
+                let _ = store.log(&format!(
+                    "{} 授权已在内存中更新并正常使用；系统尚未允许写入钥匙串，下次手动检查邮件时重试保存",
+                    account.email
+                ));
+            }
         }
         Err(error) => {
             account.error = Some(error.clone());
@@ -950,6 +960,25 @@ fn collect_mail(store: &Store, app: &tauri::AppHandle, only: Option<&str>) -> Re
             None => true,
         })
         .collect::<Vec<_>>();
+    // This path only runs from a user action (toolbar, tray menu or finishing
+    // account setup), so a deferred Keychain write may prompt once here.
+    for account in &accounts {
+        if !auth::pending_write(&account.id) {
+            continue;
+        }
+        match auth::flush_pending(&account.id) {
+            Ok(true) => {
+                let _ = store.log(&format!("{} 凭据已重新写入系统钥匙串", account.email));
+            }
+            Ok(false) => {}
+            Err(error) => {
+                let _ = store.log(&format!(
+                    "{} 凭据仍未能写入钥匙串，本次收取继续使用内存中的授权：{}",
+                    account.email, error
+                ));
+            }
+        }
+    }
     let (count, errors) = std::thread::scope(|scope| {
         let jobs = accounts
             .into_iter()

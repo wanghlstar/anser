@@ -1,4 +1,4 @@
-# 会话交接（2026-10-20：0.2.1 Alpha 发布）
+# 会话交接（2026-10-21：0.2.2.1 检查点 / 同步上游 0.1.24）
 
 > 本文件供新会话/新助手快速接手，**每次交接时整体重写**，只保留当前有效信息。
 > 长期约定在 `AGENTS.md`，进度记录在 `docs/IMPLEMENTATION.md`，踩过的坑在 `docs/RULES_PORT_UPSTREAM.md`。
@@ -9,14 +9,14 @@
 项目：雁信 / Anser（Tauri 2 + React/TypeScript + shadcn/ui + Rust + SQLite）。
 仓库 /Users/wanghlstar/Mytools/anser，基线分支 main。后续从 main 拉短分支开发，推送并发 PR。
 已发布 v0.2.1（Alpha）：release.yml 已直接发布，双架构资产与 latest.json 齐全，releases/latest 指向它。
-本地检查点：v0.20.1 / v0.20.2 / v0.20.3，均不推送、不发布。
-上游 upstream/main = 9398046（上游 0.1.23）。
+本地检查点：v0.20.1 / v0.20.2 / v0.20.3 / 0.2.2.0 / 0.2.2.1，均不推送、不发布。
+上游 upstream/main = 490a432（上游 0.1.24）。
 
-当前状态（一句话）：0.2.1 包含 0.20.x 全部本地改进，重点是独立写信/阅读窗口的
-Dock/托盘行为、主窗关闭保留「继续写信」、悬浮条 X、旧规则组合动作兼容、Retina 写信窗定位。
+当前状态：0.2.2.1 检查点已包含 0.1.24 的实时单连接、Gmail 钥匙串待写容错、
+整行自适应的收件人行、Tiptap 表格与字体颜色。
 
 先读 AGENTS.md、本文件、docs/IMPLEMENTATION.md 最后几节、docs/RULES_PORT_UPSTREAM.md 关键发现 50–68。
-需要看效果时 `npm run desktop`；安装版 `/Applications/雁信.app` 已是 0.2.1（arm64 Release DMG 安装）。
+需要看效果时 `npm run desktop`；安装版 `/Applications/雁信.app` 已重装当前构建（版本号仍 0.2.1；0.2.2.1 是本地检查点 tag）。
 铁律：中文界面；业务 UI 只用 shadcn/ui；改 UI 跑 `npm run check:ui`；改动先验收再提交；
 上游与本地无共同祖先，不能 cherry-pick，只能 `git show <sha>:<path>` / `git diff` 逐块搬；
 CSS 改动要在 `dist/assets/index-*.css` 里 grep；本机 browser.screenshot 不可用，布局只量 getBoundingClientRect。
@@ -24,14 +24,14 @@ CSS 改动要在 `dist/assets/index-*.css` 里 grep；本机 browser.screenshot 
 
 ## 二、当前基线
 
-- 基线 `main` = `021ae5f`；`v0.2.1` tag 指向 `ab97b9f`。后续从 `main` 拉 `feat/...` / `fix/...` 短分支，推送并发 PR，验收后合并。
+- 基线 `main` = `0.2.2.1` 轻量 tag 所在提交（`git log -1` 查看哈希），仅本地不推送；上一检查点 `0.2.2.0` = `fe1878a`。`v0.2.1` tag 指向 `ab97b9f`；后续从 `main` 拉 `feat/...` / `fix/...` 短分支，推送并发 PR，验收后合并。
 - 已发布：`v0.2.1` 为正常 Release（标题 Alpha，不设 prerelease），`releases/latest` 已指向它，支持应用内更新；双架构 DMG、app.tar.gz、sig、latest.json 已上传。
 - 历史发布：`v0.2.0` 是 Alpha 预发布；`v0.1.9` 及更早为上一稳定线。
-- 本地检查点：`v0.20.1`、`v0.20.2`、`v0.20.3`，**未推送、未发布**；版本号按用户当时原话使用 0.20.x，不是公开的 0.2.x 线。
-- 安装版：`/Applications/雁信.app` = **0.2.1**（arm64 Release DMG，签名校验通过）。本地 0.20.x 检查点版本号更大，已手动装过 0.2.1；后续 0.2.x 可自动更新。
-- 上游：`upstream/main = 9398046`（0.1.23）；上游 tag 在同名命名空间 `refs/upstream/tags/*`。看 tag 先认作者：`v0.1.19–v0.1.23` 是上游，`v0.1.5–v0.1.9`、`v0.2.0`、`v0.2.1`、`v0.20.1/v0.20.2/v0.20.3` 是我们的。
+- 本地检查点：`v0.20.1`、`v0.20.2`、`v0.20.3`、`0.2.2.0`、`0.2.2.1`，**未推送、未发布**；版本号按用户当时原话使用 0.20.x / 0.2.2.x，不是公开的 0.2.x 线。
+- 安装版：`/Applications/雁信.app` 已重装当前构建，`CFBundleShortVersionString` 仍为 **0.2.1**（本地签名校验通过）；`0.2.2.1` 只是本地检查点 tag。
+- 上游：`upstream/main = 490a432`（0.1.24）；上游 tag 在同名命名空间 `refs/upstream/tags/*`。看 tag 先认作者：`v0.1.19–v0.1.24` 是上游，`v0.1.5–v0.1.9`、`v0.2.0`、`v0.2.1`、`0.2.2.0`、`0.2.2.1`、`v0.20.1/v0.20.2/v0.20.3` 是我们的。
 - 更新中心：当前 0.2.1 已是 latest，显示「没有可用更新」是正常结果；首次检查遇到过 GitHub 代理瞬断，重试即可。
-- 门禁基线（本轮）：前端 **54 文件 / 454 例**、Rust **373 passed / 2 ignored**；`npx tsc -b`、`npm run format:check`、`npm run check:ui`、`npm run test:desktop` 18、`npm run build` 通过。
+- 门禁基线（本轮）：前端 **55 文件 / 466 例**、Rust **375 passed / 2 ignored**；`npx tsc --noEmit`、`npm run format:check`、`npm run check:ui`、`cargo fmt --check`、生产构建通过。
 - 装机命令（本地签名；末尾 updater 私钥报错是预期的）：
   ```bash
   cd ~/Mytools/anser
@@ -50,6 +50,16 @@ CSS 改动要在 `dist/assets/index-*.css` 里 grep；本机 browser.screenshot 
 - 悬浮条按 `!focused` 渲染；「继续写信」右侧 X 在主窗内弹三选项（保存并关闭 / 不保存 / 取消），空白邮件直接舍弃；「查看邮件」右侧 X 直接调用 `close_mail_window`。
 - 写信窗位置按主窗逻辑坐标居中，并用当前显示器工作区钳制，修复 Retina 下出屏。
 - 旧规则的 `action: "read+trash"` / `"serverMove+read"` 由 `ruleActionSteps()` 拆成多步，编辑器不再空白。
+
+### 0.1.24 同步（0.2.2.1 检查点）
+
+- 实时收取改为单条 IDLE 监听连接独占 INBOX：推送下载、连接后补查、每分钟只读复核和定时补查都在同一会话完成；后台全目录收取跳过被监听的 INBOX，复核失败丢弃会话。
+- Gmail/OAuth 后台刷新令牌成功但钥匙串非交互写入被拒时，不再判整次收取失败：新令牌保留在内存并标记 pending，只在用户主动检查、连接或保存设置时交互重写，首次失败写活动日志。
+- 收件人/抄送/密送输入行铺满整行，按实际宽度显示，放不下才折叠为 `+N`；聚焦输入框不再自动撑开多行，抄送行的「密送」入口固定在右侧。上游原来的 416px 上限按本地要求取消。
+- 富文本接入官方 Tiptap 表格扩展，保留粘贴表格的行列、合并单元格与边框，随草稿和发送 HTML 保存。
+- 富文本新增字体颜色：灰/红/橙/绿/蓝/紫/粉 7 个预设与默认色，按选区应用，图标跟随当前颜色；保存前把 `rgb()` 归一化为十六进制，兼容 Outlook。
+- 空正文只保留一行，点击正文光标不再落到第二行。
+- 英文界面原生托盘菜单、工具提示与通知文案属于 i18n，继续随中英文界面暂缓。
 
 ### 0.2.1 发布与流程
 
@@ -86,7 +96,7 @@ CSS 改动要在 `dist/assets/index-*.css` 里 grep；本机 browser.screenshot 
 - 应用偏好提供「恢复窗口快捷键」，默认 `⌘⌥` + 反引号，点击后直接录制；`Preferences.restore_shortcut` 持久化，旧偏好回退默认；Rust 用 `tauri-plugin-global-shortcut` 注册，保存失败回滚旧键。录制时 `suspend_restore_shortcut` 暂时注销当前键，取消/保存后重注册；被 macOS 占用的组合键无法录制（界面已提示）。
 - 窗口恢复：handler 切主线程；先 AppKit 激活，200ms 后无条件 `open -a` 当前 bundle 走 LaunchServices（只发 reopen，不新建窗口）。不能依赖 `NSApplication.isActive` 判断，它可能已为 true 但前台仍是别的 App。实测最小化后 `⌘⌥` + 反引号可恢复并前置。
 - 应用偏好两张全宽横卡上下排列；四个开关 + 快捷键横向铺开，三个下拉同行分摊、保存靠右；规则页 quiet-note 与执行记录卡间距统一为 24px。
-- 验证：前端 449 例、Rust 373 passed / 2 ignored、build/format/check:ui/test:desktop 18 全绿；1470/1180/980 宽度布局已检查并装机。
+- 验证：本轮前端 466 例、Rust 375 passed / 2 ignored；1470/1180/980 宽度布局已检查并装机。
 
 ### 许可证
 
@@ -96,6 +106,7 @@ CSS 改动要在 `dist/assets/index-*.css` 里 grep；本机 browser.screenshot 
 
 | 优先级 | 批次                                                           | 内容与依赖                                                                                                                                                                                                      | 状态/风险                                                           |
 | ------ | -------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| 0      | 0.1.24 加固与写信修复                                         | 实时单连接监听、Gmail 钥匙串待写容错、收件人整行自适应折叠、Tiptap 表格、字体颜色、空正文光标。                                                                                                                     | **已完成（0.2.2.1）**；英文原生文案随 i18n 暂缓。                   |
 | 1      | 解析迁移与头块回填                                             | `archive::PARSER_VERSION` 升到 5；对已有原件的旧邮件**只读头块**回填 `cc` / `priority`，设置 `header_metadata_known=true`；不重新解码正文/附件。没有原件的在线记录保留 `false`。                                | **已完成（0.20.2）**；新增回填测试。                                |
 | 2      | `rule_runs` 顺序动作引擎                                       | 一条规则最多 8 个顺序动作、`rule_runs` 表、崩溃后续跑、`RuleRun.observed`、`save` / `saveFolder` 动作；与本地 `rule_operations.rs` / `rule-executions.tsx` 合并。                                               | **已完成（0.20.2）**；本地动态来源与服务器执行记录保留。            |
 | 3      | 邮件工作流对齐                                                 | 8 秒撤回 + 取消后恢复编辑 + 立即发送、`send_kind` 边界、调度领取后不可撤回；发件箱是否改按 `updated_at` 倒序仍**待用户决策**（现为按状态分组）。                                                                | **核对完成**：撤回已恢复编辑；发件箱保持现状，不改。                |
@@ -109,7 +120,7 @@ CSS 改动要在 `dist/assets/index-*.css` 里 grep；本机 browser.screenshot 
 | 11     | workflow 许可校验                                              | `release.yml` 加 4 行 `test -s`，断言包内 `LICENSE` / `NOTICE` / `LICENSING.md` / `licenses/shadcn-ui-MIT.txt`。                                                                                                | 小；防配置回归。                                                    |
 | 不跟   | Homebrew / preview / signing-check / 上游发布脚本 / Apple 证书 | 仓库与发布基建不同，**不要搬**。                                                                                                                                                                                | 见 `RULES_PORT_UPSTREAM.md` 第 55 条。                              |
 
-**旧清单缺口**：上游 0.1.15–0.1.18（全局代理、原生邮件链接、双语翻译、邮件图片/字体）此前从未进清单；0.1.22/0.1.23 又新增了中英文界面，均已并入本表。逐版本差异跑 `npm run upstream:matrix` → `docs/UPSTREAM_VERSION_MATRIX.md`，判定是启发式，需人工归类；本轮已按 0.1.23 重跑，i18n 文件全部报「本地缺」符合预期。
+**旧清单缺口**：上游 0.1.15–0.1.18（全局代理、原生邮件链接、双语翻译、邮件图片/字体）此前从未进清单；0.1.22/0.1.23 又新增了中英文界面，均已并入本表。逐版本差异跑 `npm run upstream:matrix` → `docs/UPSTREAM_VERSION_MATRIX.md`，判定是启发式，需人工归类；本轮人工复核 0.1.24，i18n 文件报「本地缺」符合预期；0.1.24 的功能项均已归类。
 
 **待用户决策**：未读口径是否改「全部邮件」；原生邮件链接是否补；workflow 许可校验是否做。中英文界面、双语翻译、全局代理已决定暂缓。
 
