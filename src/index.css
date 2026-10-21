@@ -295,7 +295,7 @@ kbd {
 .primary-nav {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 2px;
 }
 .nav-item {
   background: none;
@@ -355,6 +355,8 @@ button.nav-item {
 /* 主导航与写邮件按钮对齐：图标缩进到与写邮件图标同一 x */
 .primary-nav .nav-item {
   padding-left: 21px;
+  padding-top: 6px;
+  padding-bottom: 6px;
 }
 .nav-item small {
   font-size: 12px;
@@ -3605,7 +3607,7 @@ body.sidebar-visible
   font-size: 11px;
 }
 .nav-section-heading {
-  padding: 8px 8px 4px;
+  padding: 6px 8px 3px;
   font-size: 12px;
   letter-spacing: 0;
   color: var(--muted);
@@ -4481,7 +4483,7 @@ body.sidebar-visible
   margin-right: 8px;
 }
 .remote-folder-list {
-  padding: 4px 8px 8px 0;
+  padding: 2px 8px 3px 0;
 }
 .remote-folder-children {
   padding-left: 0;

@@ -2355,6 +2355,7 @@ export default function App() {
                   <span>我的账号</span>
                   <Button
                     variant="ghost"
+                    size="icon-xs"
                     title="添加邮箱账号"
                     onClick={() => setAccountDialog(true)}
                   >
