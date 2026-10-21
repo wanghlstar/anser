@@ -106,6 +106,17 @@ jobs:
           APP="src-tauri/target/$BUILD_TARGET/release/bundle/macos/雁信.app"
           test -s "$APP/Contents/_CodeSignature/CodeResources"
           codesign --verify --strict --deep "$APP"
+      - name: Verify bundled license files
+        env:
+          BUILD_TARGET: ${{ matrix.target }}
+        run: |
+          APP="src-tauri/target/$BUILD_TARGET/release/bundle/macos/雁信.app"
+          for file in LICENSE NOTICE LICENSING.md licenses/shadcn-ui-MIT.txt; do
+            test -s "$APP/Contents/Resources/$file" || {
+              echo "::error::Missing or empty bundled license: $file"
+              exit 1
+            }
+          done
       - run: node scripts/release-assets.mjs collect ${{ matrix.target }} release-assets
       - uses: actions/upload-artifact@v6
         with:
