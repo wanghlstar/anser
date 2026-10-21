@@ -2059,9 +2059,9 @@ describe("mail action shortcuts", () => {
     return event;
   }
   it.each([
-    ["r", { altKey: true }, "Re:"],
-    ["R", { shiftKey: true }, "Re:"],
-    ["F", { shiftKey: true }, "Fwd:"],
+    ["r", { altKey: true }, "回复："],
+    ["R", { shiftKey: true }, "回复："],
+    ["F", { shiftKey: true }, "转发："],
   ] as const)(
     "opens the current message in compose for %s",
     async (shortcut, options, prefix) => {

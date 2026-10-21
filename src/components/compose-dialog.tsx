@@ -34,6 +34,7 @@ import {
   Code2,
   FileUp,
   AlertCircle,
+  Save,
 } from "lucide-react";
 import {
   Dialog,
@@ -146,8 +147,10 @@ function isComposeControl(target: EventTarget | null) {
 
 // 写信窗口/悬浮还原条上的标题：按草稿主题前缀区分回复与转发。
 export function composeTitle(draft: Compose | null | undefined): string {
-  if (draft?.subject.startsWith("Re:")) return "回复邮件";
-  if (draft?.subject.startsWith("Fwd:")) return "转发邮件";
+  if (/^(回复：|Re:)/i.test(draft?.subject.trimStart() ?? ""))
+    return "回复邮件";
+  if (/^(转发：|Fwd:)/i.test(draft?.subject.trimStart() ?? ""))
+    return "转发邮件";
   return "撰写邮件";
 }
 export function ComposeDialog({
@@ -200,6 +203,7 @@ export function ComposeDialog({
     [planning, setPlanning] = useState(false),
     [planTime, setPlanTime] = useState(localDateTime);
   const persistence = useRef<Promise<void>>(Promise.resolve());
+  const explicitSnapshot = useRef<string | null>(null);
   const closingNow = useRef(false);
   const autosaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latest = useRef(value);
@@ -404,6 +408,8 @@ export function ComposeDialog({
   // 以及能收键时的前端 ⌘W 兜底。都走同一个「保存 / 不保存 / 取消」确认。
   const requestCloseRef = useRef<() => void>(() => {});
   requestCloseRef.current = requestClose;
+  const requestSaveRef = useRef<() => void>(() => {});
+  requestSaveRef.current = saveNow;
   const lastCloseSignal = useRef(closeSignal ?? 0);
   useEffect(() => {
     if (!closeSignal || closeSignal === lastCloseSignal.current) return;
@@ -415,7 +421,13 @@ export function ComposeDialog({
     const handleKeyDown = (event: KeyboardEvent) => {
       if (!(event.metaKey || event.ctrlKey)) return;
       if (event.altKey || event.shiftKey) return;
-      if (event.key.toLowerCase() !== "w") return;
+      const key = event.key.toLowerCase();
+      if (key === "s") {
+        event.preventDefault();
+        requestSaveRef.current();
+        return;
+      }
+      if (key !== "w") return;
       event.preventDefault();
       requestCloseRef.current();
     };
@@ -713,6 +725,27 @@ export function ComposeDialog({
   function update(p: Partial<Compose>) {
     setValue((v) => (v ? { ...v, ...p } : null));
   }
+  /** ⌘S 主动保存：内容没变时关闭不再二次确认，避免与自动保存重复打扰。 */
+  async function saveNow() {
+    const current = latest.current;
+    if (!current || sending || closingNow.current) return;
+    if (!hasDraftContent(current)) {
+      toast.info("空白邮件无需保存");
+      return;
+    }
+    try {
+      await persist(async () => {
+        await call("save_draft", { draft: current });
+      });
+      if (latest.current === current && !closingNow.current) {
+        explicitSnapshot.current = JSON.stringify(current);
+        setSaved(true);
+      }
+    } catch (e) {
+      toast.error(`草稿保存失败：${e}`);
+    }
+  }
+
   async function openForwardFile(file: ForwardFile) {
     const current = latest.current,
       id = current?.id,
@@ -743,6 +776,13 @@ export function ComposeDialog({
     }
     const current = latest.current;
     if (!current || !hasDraftContent(current)) {
+      void close();
+      return;
+    }
+    if (
+      explicitSnapshot.current !== null &&
+      explicitSnapshot.current === JSON.stringify(current)
+    ) {
       void close();
       return;
     }
@@ -1160,6 +1200,19 @@ export function ComposeDialog({
           <DialogDescription className="sr-only">
             有内容的邮件会自动保存草稿，空白邮件关闭时直接舍弃。
           </DialogDescription>
+          <Button
+            type="button"
+            variant="default"
+            size="default"
+            className="compose-save-button"
+            title="保存草稿（⌘S）"
+            aria-keyshortcuts="Meta+S Control+S"
+            disabled={sending || closing}
+            onClick={() => void saveNow()}
+          >
+            <Save size={15} />
+            保存草稿
+          </Button>
         </DialogHeader>
         {value && (
           <>
@@ -1310,7 +1363,10 @@ export function ComposeDialog({
                         ref={richEditor}
                         key={`${value.id}-${format}`}
                         body={value.body}
-                        html={value.html || textToHtml(value.body)}
+                        html={
+                          value.html ||
+                          (value.body ? textToHtml(value.body) : "")
+                        }
                         disabled={sending || closing}
                         onChange={(body, html) => update({ body, html })}
                         onBusy={(busy) => {

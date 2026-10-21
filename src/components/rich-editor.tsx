@@ -100,7 +100,7 @@ export function RichEditor({
   const [linkError, setLinkError] = useState("");
   const editor = useEditor({
     extensions: richExtensions(),
-    content: html || textToHtml(body),
+    content: html || (body ? textToHtml(body) : ""),
     editorProps: {
       attributes: {
         class: "rich-body",

@@ -101,6 +101,27 @@ describe("mail reader window", () => {
       snippet,
     );
   });
+  it("在独立窗口里显示收发件人摘要和详细信息", async () => {
+    await vi.waitFor(() =>
+      expect(document.querySelector(".mail-reader-title")?.textContent).toBe(
+        mail.subject,
+      ),
+    );
+    const line = document.querySelector(".mail-reader-head .recipient-line");
+    expect(line?.textContent).toContain("收件人：");
+    expect(
+      document.querySelectorAll(".mail-reader-head .recipient-row"),
+    ).toHaveLength(1);
+    await click("详细信息");
+    expect(
+      document.querySelector(".mail-reader-head .recipient-details")
+        ?.textContent,
+    ).toContain("发件人");
+    expect(
+      document.querySelector(".mail-reader-head .recipient-details")
+        ?.textContent,
+    ).toContain(mail.sender);
+  });
   it("把回复 / 转发 / 导出原始邮件发回主窗口处理", async () => {
     await vi.waitFor(() =>
       expect(document.querySelector(".mail-reader-title")?.textContent).toBe(

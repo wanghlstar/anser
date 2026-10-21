@@ -37,8 +37,9 @@ import { directorySource } from "./lib/server-destinations";
 import { mailMenuKind } from "./lib/mail-menu";
 import { coalesceRefresh } from "./lib/refresh-queue";
 import { ConversationReader } from "./components/conversation-reader";
+import { MailRecipientLine } from "./components/mail-recipient-line";
 import { ScrollPane } from "./components/scroll-pane";
-import { replyHeaders } from "./lib/conversations";
+import { prefixedSubject, replyHeaders } from "./lib/conversations";
 import { signatureContent } from "./lib/signatures";
 import { preserveBlockFontStyles } from "./lib/compose-fonts";
 import { hasDraftContent } from "./lib/compose-format";
@@ -226,6 +227,24 @@ function time(s: string) {
   const d = new Date(s);
   if (Number.isNaN(d.getTime())) return "时间未知";
   return d.toLocaleString("zh-CN", { hour12: false });
+}
+function ccOnly(mail: Mail, accounts: Account[]) {
+  const own = new Set(
+    [...accounts.map((account) => account.email), mail.accountEmail]
+      .filter(Boolean)
+      .map((email) => email.toLowerCase()),
+  );
+  const sender = parseAddresses(mail.sender)[0]?.email.toLowerCase();
+  if (sender && own.has(sender)) return false;
+  const to = parseAddresses(mail.recipients).map((address) =>
+    address.email.toLowerCase(),
+  );
+  const cc = parseAddresses(mail.cc || "").map((address) =>
+    address.email.toLowerCase(),
+  );
+  return (
+    cc.some((email) => own.has(email)) && !to.some((email) => own.has(email))
+  );
 }
 function friendlyError(message: string) {
   const text = message.toLowerCase();
@@ -942,7 +961,7 @@ export default function App() {
         if (!forward) Object.assign(d, replyHeaders(source.mail));
         d.to = forward ? "" : recipients.to;
         d.cc = forward ? "" : recipients.cc;
-        d.subject = `${forward ? "Fwd" : "Re"}: ${mail.subject.replace(/^(Re|Fwd):\s*/i, "")}`;
+        d.subject = prefixedSubject(mail.subject, forward);
         d.quote = {
           kind: forward ? "forward" : "reply",
           included: forward,
@@ -3710,6 +3729,14 @@ export default function App() {
                                       {m.localFolder !== "全部存档" && (
                                         <small>{m.localFolder}</small>
                                       )}
+                                      {ccOnly(m, data.accounts) && (
+                                        <span
+                                          className="row-cc-badge"
+                                          title="我在抄送中"
+                                        >
+                                          抄送
+                                        </span>
+                                      )}
                                       {m.hasAttachments && (
                                         <Paperclip size={12} />
                                       )}
@@ -4288,42 +4315,38 @@ export default function App() {
                           </Button>
                         </div>
                       </div>
-                      <div className="recipient-line">
-                        {detail.mail.recipients.trim() && (
-                          <span
-                            className="recipient-address"
-                            title={detail.mail.recipients}
-                          >
-                            收件人：{detail.mail.recipients}
-                          </span>
-                        )}
-                        <div className="message-metadata">
-                          <time dateTime={detail.mail.date}>
-                            {time(detail.mail.date)}
-                          </time>
-                          <span className="saved-chip">
-                            <ShieldCheck size={13} />
-                            {demo
-                              ? "演示存档"
-                              : detail.mail.savedLocally === false
-                                ? "服务器邮件"
-                                : "完整已保存"}
-                          </span>
-                          {detail.mail.savedLocally === false && (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              disabled={archiving}
-                              onClick={() =>
-                                void queueArchives([detail.mail.id])
-                              }
-                            >
-                              <HardDriveDownload />
-                              完整保存到本地
-                            </Button>
-                          )}
-                        </div>
-                      </div>
+                      <MailRecipientLine
+                        mail={detail.mail}
+                        detail={detail}
+                        meta={
+                          <div className="message-metadata">
+                            <time dateTime={detail.mail.date}>
+                              {time(detail.mail.date)}
+                            </time>
+                            <span className="saved-chip">
+                              <ShieldCheck size={13} />
+                              {demo
+                                ? "演示存档"
+                                : detail.mail.savedLocally === false
+                                  ? "服务器邮件"
+                                  : "完整已保存"}
+                            </span>
+                            {detail.mail.savedLocally === false && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                disabled={archiving}
+                                onClick={() =>
+                                  void queueArchives([detail.mail.id])
+                                }
+                              >
+                                <HardDriveDownload />
+                                完整保存到本地
+                              </Button>
+                            )}
+                          </div>
+                        }
+                      />
                       <h1>{detail.mail.subject}</h1>
                     </div>
                     <ConversationReader

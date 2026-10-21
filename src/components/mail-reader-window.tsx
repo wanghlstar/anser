@@ -7,6 +7,7 @@ import { ArrowDownToLine, Reply, ReplyAll, Send } from "lucide-react";
 import { Toaster, toast } from "sonner";
 import { Button } from "./ui/button";
 import { MailAttachments } from "./mail-attachments";
+import { MailRecipientLine } from "./mail-recipient-line";
 import { MailContent } from "./mail-content";
 import { MailBodySkeleton } from "./mail-skeleton";
 import { ScrollPane } from "./scroll-pane";
@@ -106,7 +107,7 @@ export function MailReaderWindow({ label }: { label: string }) {
         closeButton
       />
       <header className="mail-reader-head">
-        <div className="mail-reader-title" title={title}>
+        <div className="mail-reader-title" title={`主题：${title}`}>
           {title}
         </div>
         <div className="mail-reader-toolbar">
@@ -155,13 +156,12 @@ export function MailReaderWindow({ label }: { label: string }) {
               {sender?.name && (
                 <span className="mail-reader-address">{sender.email}</span>
               )}
-              <time>{mailTime(mail.date)}</time>
             </div>
-            {mail.recipients && (
-              <div className="mail-reader-recipients">
-                收件人：{mail.recipients}
-              </div>
-            )}
+            <MailRecipientLine
+              mail={mail}
+              detail={detail}
+              meta={<time dateTime={mail.date}>{mailTime(mail.date)}</time>}
+            />
           </>
         )}
       </header>

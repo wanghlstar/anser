@@ -792,13 +792,82 @@ fn sync_one(store: &Store, app: &tauri::AppHandle, account: Account) -> Result<u
     sync_one_scope(store, app, account, false)
 }
 fn sync_inbox(store: &Store, app: &tauri::AppHandle, account: Account) -> Result<u32> {
-    sync_one_scope(store, app, account, true)
+    let result = sync_one_scope(store, app, account.clone(), true);
+    // A manual check downloaded INBOX on its own short-lived connection. When
+    // the account has a listener, reconnect it so providers route new-mail
+    // notifications to the long-lived session again.
+    if account.protocol == "imap" {
+        if let Some(state) = app.try_state::<AppState>() {
+            state.realtime.restart_account(&account.id);
+        }
+    }
+    result
 }
 fn sync_one_scope(
     store: &Store,
     app: &tauri::AppHandle,
-    mut account: Account,
+    account: Account,
     inbox_only: bool,
+) -> Result<u32> {
+    let scope = if inbox_only {
+        "收件箱收取"
+    } else {
+        "全部文件夹收取"
+    };
+    sync_scope(store, app, account.clone(), scope, |updated| {
+        if inbox_only {
+            network::sync_folder_with_updates(store, &account, "INBOX", updated)
+        } else {
+            network::sync_with_updates(store, &account, updated)
+        }
+    })
+}
+/// Download the inbox on the connection that already owns it (the IDLE
+/// listener). The session stays usable for listening afterwards.
+fn sync_watch_inbox(
+    store: &Store,
+    app: &tauri::AppHandle,
+    account: &Account,
+    signal: network::WatchSignal,
+    session: &mut network::WatchSession,
+) -> Result<u32> {
+    let current = store.account(&account.id)?;
+    if !current.enabled || current.protocol != "imap" || !current.same_connection(account) {
+        return Err("账号已暂停或连接配置已修改，停止旧收取任务".into());
+    }
+    let source = match signal {
+        network::WatchSignal::CatchUp => "监听连接后补查",
+        network::WatchSignal::MailboxChanged => "服务器实时通知",
+        network::WatchSignal::RefreshChanged => "实时目录复核发现变化",
+        network::WatchSignal::Poll => "定时补查",
+    };
+    if let Ok(gate) = crate::sync_control::folder_gate(&store.root, &account.id, "INBOX") {
+        // Signal without waiting for the held folder lock.
+        gate.notify();
+    }
+    let at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let _ = store.log(&format!(
+        "{} 收件诊断：{source} {at}；在同一实时连接上开始收件箱收取",
+        account.email
+    ));
+    let started = std::time::Instant::now();
+    let result = sync_scope(store, app, current, "收件箱收取", |updated| {
+        network::sync_inbox_session(store, account, session, updated)
+    });
+    let _ = store.log(&format!(
+        "{} 收件诊断：{source} {at}；本轮 {} 毫秒；{}",
+        account.email,
+        started.elapsed().as_millis(),
+        if result.is_ok() { "成功" } else { "失败" }
+    ));
+    result
+}
+fn sync_scope(
+    store: &Store,
+    app: &tauri::AppHandle,
+    mut account: Account,
+    scope: &str,
+    run: impl FnOnce(&dyn Fn()) -> Result<u32>,
 ) -> Result<u32> {
     let _ = app.emit("sync-progress", format!("正在收取 {}", account.email));
     let checkpoint = std::cell::Cell::new(notifications::checkpoint(store));
@@ -816,16 +885,7 @@ fn sync_one_scope(
             let _ = app.emit("mail-updated", ());
         }
     };
-    let result = if inbox_only {
-        network::sync_folder_with_updates(store, &account, "INBOX", updated)
-    } else {
-        network::sync_with_updates(store, &account, updated)
-    };
-    let scope = if inbox_only {
-        "收件箱收取"
-    } else {
-        "全部文件夹收取"
-    };
+    let result = run(&updated);
     match &result {
         Ok(count) => {
             account.last_sync = Some(chrono::Utc::now().to_rfc3339());

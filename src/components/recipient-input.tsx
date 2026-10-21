@@ -1,7 +1,8 @@
 import { useCommandAria } from "@/hooks/use-command-aria";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Command, CommandItem, CommandList } from "./ui/command";
 import { Popover, PopoverAnchor, PopoverContent } from "./ui/popover";
+import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { addressTokens, formatAddress, parseAddresses } from "@/lib/addresses";
 import type { Address } from "@/lib/types";
@@ -20,8 +21,17 @@ export function RecipientInput({
   autoFocus?: boolean;
 }) {
   const [open, setOpen] = useState(false),
-    [active, setActive] = useState(0);
+    [active, setActive] = useState(0),
+    [expanded, setExpanded] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
   const tokens = addressTokens(value);
+  const completed = tokens.slice(0, -1).filter(Boolean);
+  const current = tokens.at(-1) || "";
+  const chips =
+    completed.length > 0 &&
+    completed.every((token) => parseAddresses(token).length === 1);
+  const collapsed = chips && completed.length > 3 && !expanded;
+  const shown = collapsed ? completed.slice(0, 2) : completed;
   const term = (tokens.at(-1) || "").toLowerCase();
   const used = new Set(
     parseAddresses(tokens.slice(0, -1).join(",")).map((a) =>
@@ -44,33 +54,87 @@ export function RecipientInput({
     options.length,
   );
   function choose(address: Address) {
-    onChange(
-      [...tokens.slice(0, -1).filter(Boolean), formatAddress(address)].join(
-        ", ",
-      ) + ", ",
-    );
+    onChange([...completed, formatAddress(address)].join(", ") + ", ");
     setOpen(false);
     setActive(0);
+  }
+  function remove(index: number) {
+    onChange([...completed.filter((_, i) => i !== index), current].join(", "));
   }
   return (
     <Popover open={open && options.length > 0} onOpenChange={setOpen}>
       <PopoverAnchor asChild>
-        <div className="recipient-input">
+        <div
+          className={`recipient-input ${chips ? "with-chips" : ""} ${collapsed ? "collapsed" : ""}`}
+          onClick={(event) => {
+            if ((event.target as HTMLElement).closest("button")) return;
+            if (!expanded) {
+              setExpanded(true);
+              inputRef.current?.focus();
+            }
+          }}
+          onBlur={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget as Node))
+              setExpanded(false);
+          }}
+        >
+          {chips && (
+            <div className="recipient-chips">
+              {shown.map((token, index) => {
+                const address = parseAddresses(token)[0];
+                const label = address.name || address.email;
+                return (
+                  <span className="recipient-chip" title={token} key={index}>
+                    <span>{label}</span>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-xs"
+                      aria-label={`移除收件人 ${label}`}
+                      onClick={() => remove(index)}
+                    >
+                      ×
+                    </Button>
+                  </span>
+                );
+              })}
+              {collapsed && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="xs"
+                  className="recipient-chip recipient-more"
+                  aria-label={`展开另外 ${completed.length - 2} 个收件人`}
+                  onClick={() => setExpanded(true)}
+                >
+                  +{completed.length - 2}
+                </Button>
+              )}
+            </div>
+          )}
           <Input
+            ref={inputRef}
             id={id}
             autoFocus={autoFocus}
-            value={value}
+            value={chips ? current : value}
             autoComplete="off"
-            placeholder="多个地址用逗号分隔"
+            placeholder={chips ? "添加收件人" : "多个地址用逗号分隔"}
             role="combobox"
             aria-autocomplete="list"
             aria-expanded={open && options.length > 0}
             aria-controls={aria.controls}
             aria-activedescendant={aria.activeDescendant}
-            onFocus={() => setOpen(true)}
+            onFocus={() => {
+              setExpanded(true);
+              setOpen(true);
+            }}
             onBlur={() => setOpen(false)}
             onChange={(e) => {
-              onChange(e.target.value);
+              onChange(
+                chips
+                  ? [...completed, e.target.value].join(", ")
+                  : e.target.value,
+              );
               setOpen(true);
               setActive(0);
             }}

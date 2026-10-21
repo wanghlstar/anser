@@ -805,6 +805,16 @@ button.nav-collapse .collapse-chevron {
   background: var(--secondary);
   border-color: var(--border);
 }
+.row-cc-badge {
+  flex-shrink: 0;
+  padding: 1px 4px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--secondary);
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 12px;
+}
 .row-spacer {
   flex: 1;
 }
@@ -1009,6 +1019,12 @@ button.nav-collapse .collapse-chevron {
   margin-top: 10px;
   overflow-wrap: anywhere;
 }
+.message-heading h1::before,
+.mail-reader-title::before {
+  content: "主题：";
+  color: var(--muted);
+  font-weight: 500;
+}
 .sender-block {
   flex: 1;
   min-width: 0;
@@ -1061,12 +1077,94 @@ button.nav-collapse .collapse-chevron {
   color: var(--muted);
   margin-top: 8px;
 }
-.recipient-line > span:first-child {
+.recipient-summary {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+.recipient-row-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.recipient-row {
+  display: flex;
+  flex: 1;
+  align-items: baseline;
+  justify-content: flex-start;
+  gap: 0;
+  min-width: 0;
+  height: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 18px;
+  text-align: left;
+  white-space: nowrap;
+}
+.recipient-row-collapsed {
+  cursor: pointer;
+  padding: 0 3px;
+  margin-left: -3px;
+}
+.recipient-row-collapsed:hover {
+  background: var(--secondary);
+  color: var(--foreground);
+}
+.recipient-row-label {
+  flex-shrink: 0;
+}
+.recipient-row-text {
   overflow: hidden;
+  min-width: 0;
   text-overflow: ellipsis;
   white-space: nowrap;
-  min-width: 0;
-  flex: 1;
+}
+.recipient-details-toggle {
+  height: 20px;
+  padding: 0 4px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.recipient-details-toggle svg {
+  transition: transform 0.15s;
+}
+.recipient-details-toggle[aria-expanded="true"] svg {
+  transform: rotate(180deg);
+}
+.recipient-details {
+  margin-top: 7px;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--secondary);
+  font-size: 12px;
+}
+.recipient-details dl {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 5px 12px;
+  margin: 0;
+}
+.recipient-details dt {
+  color: var(--muted);
+  white-space: nowrap;
+}
+.recipient-details dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.recipient-details-mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
 }
 .recipient-line time {
   white-space: nowrap;
@@ -1109,7 +1207,7 @@ button.nav-collapse .collapse-chevron {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   font-size: 13px;
-  line-height: 2.05;
+  line-height: 1.6;
   color: var(--foreground);
   padding: 12px 0 16px;
   min-height: 210px;
@@ -2383,26 +2481,29 @@ body.sidebar-visible
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.mail-reader-byline time {
-  flex-shrink: 0;
-  margin-left: auto;
-}
-.mail-reader-recipients {
-  flex-shrink: 0;
-  overflow: hidden;
+.mail-reader-head > .recipient-line {
   padding: 0 16px;
-  color: var(--muted);
-  font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+}
+.mail-reader-head > .recipient-details {
+  margin-right: 16px;
+  margin-left: 16px;
 }
 .compose-dialog > [data-slot="dialog-header"] {
   flex-shrink: 0;
   /* 标题区即窗口标题栏：拖动移动窗口，双击最大化/还原。
      左边距 13px = 比原来（25px）再左移一个灯（12px）。 */
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
   padding: 12px 25px 7px 13px;
   cursor: default;
   user-select: none;
+}
+.compose-save-button {
+  flex-shrink: 0;
+  margin-left: auto;
 }
 .compose-dialog fieldset {
   display: flex;
@@ -2499,12 +2600,15 @@ body.sidebar-visible
   color: var(--muted);
   font-family: 仿宋, FangSong, STFangsong, serif;
   font-size: 14pt;
-  line-height: 1.8;
+  line-height: 1.6;
   overflow-wrap: anywhere;
 }
 /* 与正文一致的段间距，但不缩进：签名是落款，顶格排版 */
 .compose-signature-preview p {
-  margin: 0 0 8px;
+  margin: 0.5em 0;
+}
+.compose-signature-preview p:first-child {
+  margin-top: 0;
 }
 .compose-signature-preview img {
   max-width: 100%;
@@ -2516,10 +2620,6 @@ body.sidebar-visible
 /* Markdown/HTML 源码模式同样紧凑，与富文本一致 */
 .compose-editor.with-signature .compose-body {
   min-height: 36px;
-}
-/* 紧凑模式去掉段后距，空正文只占一行 */
-.compose-editor.with-signature .rich-body p {
-  margin: 0;
 }
 .compose-editor.source-with-preview {
   display: grid;
@@ -2727,7 +2827,7 @@ body.sidebar-visible
   outline: 0;
   font-family: 仿宋, FangSong, STFangsong, serif;
   font-size: 14pt;
-  line-height: 1.8;
+  line-height: 1.6;
 }
 .rich-body img {
   max-width: 100%;
@@ -2741,7 +2841,10 @@ body.sidebar-visible
 /* 首行缩进用真实全角空格（见 indented-paragraph.ts），不用 text-indent：
    CSS 缩进只影响本地渲染，不会随邮件发出，收件人看到的是顶格。 */
 .rich-body p {
-  margin: 0 0 8px;
+  margin: 0.5em 0;
+}
+.rich-body > p:first-child {
+  margin-top: 0;
 }
 /* 问候语（称呼）顶格，不参与缩进 */
 .rich-body p[data-yanxin-greeting] {
@@ -2774,6 +2877,70 @@ body.sidebar-visible
   position: relative;
   flex: 1;
   min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  min-height: 24px;
+}
+.recipient-input > input {
+  flex: 1 1 96px;
+  min-width: 96px;
+}
+.recipient-chips {
+  display: contents;
+}
+.recipient-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  max-width: 180px;
+  padding: 1px 4px 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--secondary);
+  color: var(--foreground);
+  font-size: 12px;
+  line-height: 18px;
+}
+.recipient-chip > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.recipient-chip > button {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1;
+}
+.recipient-chip > button:hover {
+  background: var(--background);
+  color: var(--foreground);
+}
+.recipient-input .recipient-more {
+  padding: 1px 6px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.recipient-input.collapsed {
+  cursor: text;
+}
+.recipient-input.collapsed > input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  min-width: 0;
+  padding: 0;
+  opacity: 0;
+  pointer-events: none;
 }
 .contact-search {
   display: flex;
@@ -3483,7 +3650,7 @@ body.sidebar-visible
 .dark .message-body {
   font-size: 14px;
   color: var(--foreground);
-  line-height: 1.9;
+  line-height: 1.6;
 }
 .sender-avatar {
   background: var(--secondary);

@@ -602,6 +602,24 @@ describe("greeting in the body", () => {
 });
 
 describe("empty drafts", () => {
+  it("starts a blank rich body without a hard-break paragraph", async () => {
+    seed = {
+      ...newDraft(seed.accountId),
+      id: "blank-rich-body",
+      to: "",
+      subject: "",
+    };
+    await renderHarness();
+    const editor = await bodyEditor();
+    const doc = (
+      editor as unknown as {
+        editor: {
+          state: { doc: { firstChild: { content: { size: number } } } };
+        };
+      }
+    ).editor.state.doc;
+    expect(doc.firstChild.content.size).toBe(0);
+  });
   it("never autosaves a new empty message with an automatic signature and discards it on close", async () => {
     seed = {
       ...newDraft(seed.accountId),
@@ -991,6 +1009,76 @@ describe("closing a draft with content", () => {
     expect(prompt()).toBe(true);
     await click("保存");
     expect(document.querySelector(".compose-dialog")).toBeNull();
+  });
+  it("saves from the button and closes without asking again", async () => {
+    seed = {
+      ...newDraft(accounts[0].id),
+      id: "prompt-button",
+      to: "button@example.com",
+      subject: "Save button",
+    };
+    await renderHarness();
+    await settled();
+    await click("保存草稿");
+    await settled();
+    expect(document.querySelector(".compose-dialog")).not.toBeNull();
+    await click("保存草稿并关闭");
+    expect(prompt()).toBe(false);
+    expect(document.querySelector(".compose-dialog")).toBeNull();
+    expect((await listDrafts()).some((d) => d.id === "prompt-button")).toBe(
+      true,
+    );
+  });
+  it("treats ⌘S as saved and closes without asking again", async () => {
+    seed = {
+      ...newDraft(accounts[0].id),
+      id: "prompt-manual-save",
+      to: "manual@example.com",
+      subject: "Manual save",
+    };
+    await renderHarness();
+    await settled();
+    await act(async () => {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "s",
+          metaKey: true,
+          bubbles: true,
+        }),
+      );
+    });
+    await settled();
+    await click("保存草稿并关闭");
+    expect(prompt()).toBe(false);
+    expect(document.querySelector(".compose-dialog")).toBeNull();
+    expect(
+      (await listDrafts()).some((d) => d.id === "prompt-manual-save"),
+    ).toBe(true);
+  });
+  it("prompts after further edits made since the explicit save", async () => {
+    seed = {
+      ...newDraft(accounts[0].id),
+      id: "prompt-manual-edit",
+      to: "manual@example.com",
+      subject: "Manual save",
+    };
+    await renderHarness();
+    await settled();
+    await act(async () => {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "s",
+          metaKey: true,
+          bubbles: true,
+        }),
+      );
+    });
+    await settled();
+    await input("#subject", "Edited after save");
+    await click("保存草稿并关闭");
+    expect(prompt()).toBe(true);
+    await click("取消");
+    expect(document.querySelector(".compose-dialog")).not.toBeNull();
   });
   it("asks on the close signal sent by the app for ⌘W", async () => {
     seed = {

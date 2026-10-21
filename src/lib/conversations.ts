@@ -77,6 +77,12 @@ export function conversationSummaries(filtered: Mail[], all: Mail[]) {
   }
   return [...groups.values()];
 }
+const SUBJECT_PREFIX = /^\s*(?:(?:Re|Fwd|Aw|回复|转发)\s*[:：])\s*/i;
+
+export function prefixedSubject(subject: string, forward = false) {
+  return `${forward ? "转发：" : "回复："}${subject.replace(SUBJECT_PREFIX, "")}`;
+}
+
 export function replyHeaders(mail: Mail) {
   const messageId = mail.serverMessageId || mail.messageId;
   if (!messageId) return {};

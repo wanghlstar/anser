@@ -70,7 +70,9 @@ it("keeps input focus and completes the active suggestion by keyboard without re
       new KeyboardEvent("keydown", { key: "Enter", bubbles: true }),
     ),
   );
-  expect(input.value).toBe('first@example.com, "Alex" <alex@example.com>, ');
+  expect(host.textContent).toContain("first@example.com");
+  expect(host.textContent).toContain("Alex");
+  expect(input.value).toBe("");
   expect(input.getAttribute("aria-expanded")).toBe("false");
 });
 it("completes a pointer selection and closes the shadcn suggestion popup", async () => {
@@ -78,10 +80,43 @@ it("completes a pointer selection and closes the shadcn suggestion popup", async
     e.textContent?.includes("Alice"),
   )!;
   await act(async () => (option as HTMLElement).click());
-  expect(host.querySelector("input")!.value).toBe(
-    'first@example.com, "Alice" <alice@example.com>, ',
-  );
+  expect(host.textContent).toContain("first@example.com");
+  expect(host.textContent).toContain("Alice");
+  expect(host.querySelector("input")!.value).toBe("");
   expect(host.querySelector("input")!.getAttribute("aria-expanded")).toBe(
     "false",
   );
+});
+
+it("collapses more than three recipients behind +N and expands all of them", async () => {
+  function Many() {
+    const [value, setValue] = useState(
+      "a@example.com, b@example.com, c@example.com, d@example.com, ",
+    );
+    return (
+      <RecipientInput
+        id="many-recipients"
+        value={value}
+        onChange={setValue}
+        suggestions={suggestions}
+      />
+    );
+  }
+  await act(async () => root.unmount());
+  host.remove();
+  host = document.createElement("div");
+  document.body.append(host);
+  root = createRoot(host);
+  await act(async () => root.render(<Many />));
+  expect(host.querySelectorAll(".recipient-chip")).toHaveLength(3);
+  expect(host.textContent).toContain("+2");
+  const more = host.querySelector('[aria-label="展开另外 2 个收件人"]');
+  expect(more).toBeTruthy();
+  await act(async () => (more as HTMLElement).click());
+  expect(host.textContent).not.toContain("+2");
+  expect(host.textContent).toContain("c@example.com");
+  expect(host.textContent).toContain("d@example.com");
+  const remove = host.querySelector('[aria-label="移除收件人 b@example.com"]');
+  await act(async () => (remove as HTMLElement).click());
+  expect(host.textContent).not.toContain("b@example.com");
 });

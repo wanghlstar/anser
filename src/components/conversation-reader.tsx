@@ -37,7 +37,7 @@ import { MailAttachments } from "./mail-attachments";
 import { ScrollPane } from "./scroll-pane";
 import { call, newDraft } from "../lib/api";
 import { parseAddresses, replyRecipients } from "../lib/addresses";
-import { mailTime, replyHeaders } from "../lib/conversations";
+import { mailTime, prefixedSubject, replyHeaders } from "../lib/conversations";
 import { senderName, senderAddress } from "../lib/providers";
 import type { Account, Compose, Detail, Mail } from "../lib/types";
 
@@ -294,7 +294,7 @@ function QuickReply({
             replyAnchorId: target.mail.id,
             ...replyHeaders(target.mail),
             ...recipients,
-            subject: `Re: ${target.mail.subject.replace(/^(Re|Fwd):\s*/i, "")}`,
+            subject: prefixedSubject(target.mail.subject),
           },
         );
         setReady(true);
