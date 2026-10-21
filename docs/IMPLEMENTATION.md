@@ -1021,3 +1021,13 @@ GitHub CI 和两架构发布工作流已推送；首次 Checks 已成功，Relea
 - 发布流水线：`release.yml` 先建草稿、上传全部资产，再 `gh release edit --draft=false --prerelease=false --latest` 自动发布；标题「雁信 $VERSION（Alpha）」。
 - 验证：前端 54 文件 / 454 例、Rust 373 passed / 2 ignored；`tsc`、Prettier、`check:ui`、`test:desktop` 18、生产构建通过。本地检查点 `v0.20.3` 指向功能提交 `7160073`；发布 tag `v0.2.1` 指向其上的版本/发布说明提交 `b890ad6`。
 - tag：`v0.2.1` 已推送，触发 GitHub Actions；`v0.20.1/v0.20.2/v0.20.3` 仍为本地检查点。
+
+## 0.2.2 Alpha 发布（2026-10-21）
+
+- 版本号统一为 **0.2.2**（`package.json` / `package-lock.json` / `src-tauri/Cargo.toml` / `Cargo.lock` 的 `yanxin` / `src-tauri/tauri.conf.json`），新增 `docs/releases/v0.2.2.md`；`v0.2.2` 为正常 Alpha Release，`releases/latest` 指向它并支持应用内更新。
+- 同步上游 0.1.24：实时单连接监听、Gmail/OAuth 钥匙串待写容错、Tiptap 表格、字体颜色与十六进制归一化、空正文首行光标修复。
+- 本地写信改进：回复/转发中文主题前缀、阅读区「主题：」、收信与写信行高/段距统一、保存草稿按钮；收件人/抄送/密送铺满整行，按实际宽度显示并在放不下时折叠 `+N`，不再使用上游 416px 上限。
+- 发布流程：`release.yml` 增加包内 `LICENSE` / `NOTICE` / `LICENSING.md` / `licenses/shadcn-ui-MIT.txt` 非空校验，缺失时在发布前中止。
+- 验证：前端 55 文件 / 466 例、Rust 375 passed / 2 ignored；`tsc`、Prettier、`check:ui`、`cargo fmt --check`、生产构建通过；本地 `0.2.2` 已签名安装并验证写信窗布局。
+- 暂缓（用户 2026-10-21 决定）：中英文界面与 0.1.24 英文原生文案、正文双语翻译、全局代理/邮件图片样式、未读口径改「全部邮件」、原生邮件链接。
+- tag：正式 `v0.2.2` 推送 origin 触发发布；本地检查点 `0.2.2.0` = `fe1878a`、`0.2.2.1` = `7fd5382`，不推送。

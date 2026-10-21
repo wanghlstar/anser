@@ -1,4 +1,4 @@
-# 会话交接（2026-10-21：0.2.2.1 检查点 / 同步上游 0.1.24）
+# 会话交接（2026-10-21：0.2.2 正式发布 / 同步上游 0.1.24）
 
 > 本文件供新会话/新助手快速接手，**每次交接时整体重写**，只保留当前有效信息。
 > 长期约定在 `AGENTS.md`，进度记录在 `docs/IMPLEMENTATION.md`，踩过的坑在 `docs/RULES_PORT_UPSTREAM.md`。
@@ -8,15 +8,15 @@
 ```text
 项目：雁信 / Anser（Tauri 2 + React/TypeScript + shadcn/ui + Rust + SQLite）。
 仓库 /Users/wanghlstar/Mytools/anser，基线分支 main。后续从 main 拉短分支开发，推送并发 PR。
-已发布 v0.2.1（Alpha）：release.yml 已直接发布，双架构资产与 latest.json 齐全，releases/latest 指向它。
+已发布 v0.2.2（Alpha）：release.yml 正常 Release，双架构资产与 latest.json 齐全，releases/latest 指向它。
 本地检查点：v0.20.1 / v0.20.2 / v0.20.3 / 0.2.2.0 / 0.2.2.1，均不推送、不发布。
 上游 upstream/main = 490a432（上游 0.1.24）。
 
-当前状态：0.2.2.1 检查点已包含 0.1.24 的实时单连接、Gmail 钥匙串待写容错、
-整行自适应的收件人行、Tiptap 表格与字体颜色。
+当前状态：0.2.2 已包含 0.1.24 的实时单连接、Gmail 钥匙串待写容错、
+整行自适应的收件人行、Tiptap 表格与字体颜色，以及发布许可校验。
 
 先读 AGENTS.md、本文件、docs/IMPLEMENTATION.md 最后几节、docs/RULES_PORT_UPSTREAM.md 关键发现 50–68。
-需要看效果时 `npm run desktop`；安装版 `/Applications/雁信.app` 已重装当前构建（版本号仍 0.2.1；0.2.2.1 是本地检查点 tag）。
+需要看效果时 `npm run desktop`；安装版 `/Applications/雁信.app` 已是 **0.2.2**；`0.2.2.1` 是本地检查点 tag。
 铁律：中文界面；业务 UI 只用 shadcn/ui；改 UI 跑 `npm run check:ui`；改动先验收再提交；
 上游与本地无共同祖先，不能 cherry-pick，只能 `git show <sha>:<path>` / `git diff` 逐块搬；
 CSS 改动要在 `dist/assets/index-*.css` 里 grep；本机 browser.screenshot 不可用，布局只量 getBoundingClientRect。
@@ -24,13 +24,14 @@ CSS 改动要在 `dist/assets/index-*.css` 里 grep；本机 browser.screenshot 
 
 ## 二、当前基线
 
-- 基线 `main` = `0.2.2.1` 轻量 tag 所在提交（`git log -1` 查看哈希），仅本地不推送；上一检查点 `0.2.2.0` = `fe1878a`。`v0.2.1` tag 指向 `ab97b9f`；后续从 `main` 拉 `feat/...` / `fix/...` 短分支，推送并发 PR，验收后合并。
-- 已发布：`v0.2.1` 为正常 Release（标题 Alpha，不设 prerelease），`releases/latest` 已指向它，支持应用内更新；双架构 DMG、app.tar.gz、sig、latest.json 已上传。
-- 历史发布：`v0.2.0` 是 Alpha 预发布；`v0.1.9` 及更早为上一稳定线。
+- 基线 `main` = `v0.2.2` 发布提交；官方 tag `v0.2.2` 已推送。本地检查点 `0.2.2.1` = `7fd5382`、`0.2.2.0` = `fe1878a`，均未推送。上一发布 tag `v0.2.1` = `ab97b9f`；后续从 `main` 拉 `feat/...` / `fix/...` 短分支，推送并发 PR，验收后合并。
+- 已发布：`v0.2.2` 为正常 Release（标题 Alpha，不设 prerelease），`releases/latest` 指向它，支持应用内更新；双架构 DMG、app.tar.gz、sig、latest.json 已上传。
+- 历史发布：`v0.2.1`、`v0.2.0` 为 0.2 主线 Alpha；`v0.1.9` 及更早为上一稳定线。
 - 本地检查点：`v0.20.1`、`v0.20.2`、`v0.20.3`、`0.2.2.0`、`0.2.2.1`，**未推送、未发布**；版本号按用户当时原话使用 0.20.x / 0.2.2.x，不是公开的 0.2.x 线。
-- 安装版：`/Applications/雁信.app` 已重装当前构建，`CFBundleShortVersionString` 仍为 **0.2.1**（本地签名校验通过）；`0.2.2.1` 只是本地检查点 tag。
-- 上游：`upstream/main = 490a432`（0.1.24）；上游 tag 在同名命名空间 `refs/upstream/tags/*`。看 tag 先认作者：`v0.1.19–v0.1.24` 是上游，`v0.1.5–v0.1.9`、`v0.2.0`、`v0.2.1`、`0.2.2.0`、`0.2.2.1`、`v0.20.1/v0.20.2/v0.20.3` 是我们的。
-- 更新中心：当前 0.2.1 已是 latest，显示「没有可用更新」是正常结果；首次检查遇到过 GitHub 代理瞬断，重试即可。
+- 正式发布：`v0.2.2`（2026-10-21），双架构与 latest.json 由 `release.yml` 发布。
+- 安装版：`/Applications/雁信.app` 已是 **0.2.2**（本地签名校验通过）。
+- 上游：`upstream/main = 490a432`（0.1.24）；上游 tag 在同名命名空间 `refs/upstream/tags/*`。看 tag 先认作者：`v0.1.19–v0.1.24` 是上游，`v0.1.5–v0.1.9`、`v0.2.0`、`v0.2.1`、`v0.2.2`、`0.2.2.0`、`0.2.2.1`、`v0.20.1/v0.20.2/v0.20.3` 是我们的。
+- 更新中心：当前 0.2.2 已是 latest，显示「没有可用更新」是正常结果；首次检查遇到过 GitHub 代理瞬断，重试即可。
 - 门禁基线（本轮）：前端 **55 文件 / 466 例**、Rust **375 passed / 2 ignored**；`npx tsc --noEmit`、`npm run format:check`、`npm run check:ui`、`cargo fmt --check`、生产构建通过。
 - 装机命令（本地签名；末尾 updater 私钥报错是预期的）：
   ```bash
@@ -42,7 +43,15 @@ CSS 改动要在 `dist/assets/index-*.css` 里 grep；本机 browser.screenshot 
   # cp -R src-tauri/target/release/bundle/macos/雁信.app /Applications/雁信.app → open
   ```
 
-### 0.2.1 窗口行为（最新，别再回退）
+### 0.2.2 发布内容（当前）
+
+- 版本号统一为 `0.2.2`，新增 `docs/releases/v0.2.2.md`；正式 tag `v0.2.2` 推送 origin，触发正常 Alpha Release。
+- 上游 0.1.24：实时单连接监听、Gmail 钥匙串待写容错、Tiptap 表格、字体颜色/十六进制归一化、空正文首行光标。
+- 写信：回复/转发中文主题、收件人/抄送/密送整行自适应折叠、保存草稿按钮、阅读与写信行高/段距统一。
+- 发布：`release.yml` 校验包内 4 个许可文件非空，缺失则在发布前中止。
+- 暂缓：中英文界面（含 0.1.24 英文原生文案）、正文双语翻译、全局代理/图片样式、未读口径「全部邮件」、原生邮件链接。
+
+### 0.2.1 窗口行为（保留，别再回退）
 
 - 写信窗/阅读窗在前台时，`show_main_window` 直接返回：Dock、托盘、全局恢复快捷键不抢焦点、不最小化、不显示悬浮条。
 - 主窗收到 `CloseRequested` **只隐藏主窗**；不再把关闭请求转给写信窗。写信窗自然失焦成「继续写信」，恢复主窗后悬浮条仍在。
@@ -106,7 +115,7 @@ CSS 改动要在 `dist/assets/index-*.css` 里 grep；本机 browser.screenshot 
 
 | 优先级 | 批次                                                           | 内容与依赖                                                                                                                                                                                                      | 状态/风险                                                           |
 | ------ | -------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| 0      | 0.1.24 加固与写信修复                                         | 实时单连接监听、Gmail 钥匙串待写容错、收件人整行自适应折叠、Tiptap 表格、字体颜色、空正文光标。                                                                                                                     | **已完成（0.2.2.1）**；英文原生文案随 i18n 暂缓。                   |
+| 0      | 0.1.24 加固与写信修复                                         | 实时单连接监听、Gmail 钥匙串待写容错、收件人整行自适应折叠、Tiptap 表格、字体颜色、空正文光标。                                                                                                                     | **已发布（v0.2.2）**；英文原生文案随 i18n 暂缓。                   |
 | 1      | 解析迁移与头块回填                                             | `archive::PARSER_VERSION` 升到 5；对已有原件的旧邮件**只读头块**回填 `cc` / `priority`，设置 `header_metadata_known=true`；不重新解码正文/附件。没有原件的在线记录保留 `false`。                                | **已完成（0.20.2）**；新增回填测试。                                |
 | 2      | `rule_runs` 顺序动作引擎                                       | 一条规则最多 8 个顺序动作、`rule_runs` 表、崩溃后续跑、`RuleRun.observed`、`save` / `saveFolder` 动作；与本地 `rule_operations.rs` / `rule-executions.tsx` 合并。                                               | **已完成（0.20.2）**；本地动态来源与服务器执行记录保留。            |
 | 3      | 邮件工作流对齐                                                 | 8 秒撤回 + 取消后恢复编辑 + 立即发送、`send_kind` 边界、调度领取后不可撤回；发件箱是否改按 `updated_at` 倒序仍**待用户决策**（现为按状态分组）。                                                                | **核对完成**：撤回已恢复编辑；发件箱保持现状，不改。                |

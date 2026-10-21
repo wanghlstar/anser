@@ -14,7 +14,7 @@
 - `.github/workflows/release.yml`：推送 `v*` tag，或 Actions 手动运行；验证版本、发布说明和测试后，分别构建 Apple Silicon 与 Intel Mac 的 DMG、app.tar.gz 与签名。
 - 构建任务只产出架构独立的 artifacts；汇总任务检查两个架构文件齐全，统一生成 latest.json，先创建草稿 Release，资产上传完成后自动发布，避免并行写清单丢失架构。
 - 发布后的同版本不可覆盖。草稿可重跑上传；`releases/latest/download/latest.json` 只有正式发布后才可用。用户检查不读取草稿。
-- **0.2.x Alpha 通道**：0.2.1 起由 `release.yml` 直接发布为正常 Release，标题标注「Alpha」，但不设 `--prerelease`。这样 `releases/latest` 会指向它，应用内更新可用；已安装 0.2.0 的用户可以自动升级。本地 `0.20.x` 检查点的版本号更大，semver 不会自动降级，需要手动安装一次 0.2.1。
+- **0.2.x Alpha 通道**：0.2.1 起（0.2.2 沿用）由 `release.yml` 直接发布为正常 Release，标题标注「Alpha」，但不设 `--prerelease`。这样 `releases/latest` 会指向它，应用内更新可用；已安装 0.2.0 的用户可以自动升级。本地 `0.20.x` 检查点的版本号更大，semver 不会自动降级，需要手动安装一次 0.2.1。
 - 仓库是公开的 `wanghlstar/anser`；客户端不包含 GitHub token。端点仅 HTTPS，签名必须有效；失败时保留当前安装，不执行重启。
 
 ## 签名密钥
