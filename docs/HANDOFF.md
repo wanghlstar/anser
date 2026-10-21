@@ -8,7 +8,7 @@
 ```text
 项目：雁信 / Anser（Tauri 2 + React/TypeScript + shadcn/ui + Rust + SQLite）。
 仓库 /Users/wanghlstar/Mytools/anser，基线分支 main。后续从 main 拉短分支开发，推送并发 PR。
-已发布 v0.2.2（Alpha）：release.yml 正常 Release，双架构资产与 latest.json 齐全，releases/latest 指向它。
+v0.2.2（Alpha）已触发重发：修复钥匙串读取回归，Release 已删除，tag `v0.2.2` 强推到 `892ac90`；流水线 run `39575383349`，以 GitHub Release 实际状态为准。
 本地检查点：v0.20.1 / v0.20.2 / v0.20.3 / 0.2.2.0 / 0.2.2.1，均不推送、不发布。
 上游 upstream/main = 490a432（上游 0.1.24）。
 
@@ -25,10 +25,10 @@ CSS 改动要在 `dist/assets/index-*.css` 里 grep；本机 browser.screenshot 
 ## 二、当前基线
 
 - 基线 `main` = `v0.2.2` 发布提交；官方 tag `v0.2.2` 已推送。本地检查点 `0.2.2.1` = `7fd5382`、`0.2.2.0` = `fe1878a`，均未推送。上一发布 tag `v0.2.1` = `ab97b9f`；后续从 `main` 拉 `feat/...` / `fix/...` 短分支，推送并发 PR，验收后合并。
-- 已发布：`v0.2.2` 为正常 Release（标题 Alpha，不设 prerelease），`releases/latest` 指向它，支持应用内更新；双架构 DMG、app.tar.gz、sig、latest.json 已上传。
+- 发布：`v0.2.2` 重发 tag = `892ac90`；流水线 run `39575383349`，成功时 `releases/latest` 指向它并支持应用内更新。
 - 历史发布：`v0.2.1`、`v0.2.0` 为 0.2 主线 Alpha；`v0.1.9` 及更早为上一稳定线。
 - 本地检查点：`v0.20.1`、`v0.20.2`、`v0.20.3`、`0.2.2.0`、`0.2.2.1`，**未推送、未发布**；版本号按用户当时原话使用 0.20.x / 0.2.2.x，不是公开的 0.2.x 线。
-- 正式发布：`v0.2.2`（2026-10-21），双架构与 latest.json 由 `release.yml` 发布。
+- 重发流水线：run `39575383349`；新会话先核验 GitHub Release 与 `latest.json`。
 - 安装版：`/Applications/雁信.app` 已是 **0.2.2**（本地签名校验通过）。
 - 上游：`upstream/main = 490a432`（0.1.24）；上游 tag 在同名命名空间 `refs/upstream/tags/*`。看 tag 先认作者：`v0.1.19–v0.1.24` 是上游，`v0.1.5–v0.1.9`、`v0.2.0`、`v0.2.1`、`v0.2.2`、`0.2.2.0`、`0.2.2.1`、`v0.20.1/v0.20.2/v0.20.3` 是我们的。
 - 更新中心：当前 0.2.2 已是 latest，显示「没有可用更新」是正常结果；首次检查遇到过 GitHub 代理瞬断，重试即可。
@@ -148,3 +148,39 @@ CSS 改动要在 `dist/assets/index-*.css` 里 grep；本机 browser.screenshot 
 - 数据/钥匙串标识 `dev.maildesk.desktop` 不得改；DB `~/Library/Application Support/dev.maildesk.desktop/mail.sqlite3`（只读用 `sqlite3 -readonly "file:$DB?immutable=1"`）。
 - 真实收发范围见 `AGENTS.md`：仅腾讯企业邮箱 ↔ QQ 邮箱互发，主题「雁信联调」。
 - 文档索引：`docs/IMPLEMENTATION.md`（进度）、`docs/RULES_PORT_UPSTREAM.md`（关键发现 1–61）、`docs/UPSTREAM_REVIEW_0_1_20_0_1_21.md`（逐项评估）、`docs/UPSTREAM_VERSION_MATRIX.md`（全量比较）、`docs/UPDATES.md`（发布/更新器）。
+
+
+## 七、下一功能：日历（待设计，参考 Foxmail）
+
+目标：在雁信内增加日历/日程，交互参考 Foxmail。先确认范围再写代码。
+
+### 需要先定
+
+1. 本地日历 only，还是 CalDAV / Google / Microsoft 同步？MVP 建议先做本地。
+2. 视图：月/周/日/日程列表；是否需要全天行、拖拽改时间、双击空白新建。
+3. 事件字段：标题、开始/结束、全天、地点、备注、颜色/日历分类、提醒、重复、参与人。
+4. 与邮件集成：从邮件创建日程、ICS 导入导出、会议邀请收发？MVP 建议先做“从邮件创建本地事件”，暂不做服务器邀请。
+5. 提醒：复用现有系统通知/托盘；提前多少分钟；应用未运行时是否提醒（需要后台常驻）。
+6. 数据维度：单一日历，还是每账号/多日历？MVP 建议单一日历 + 可选颜色分类。
+
+### 建议 MVP
+
+- 侧栏增加「日历」入口，放在「通讯录」之前；主区提供月视图，周/日切换，新建/编辑用弹窗。
+- SQLite 增加 `calendar_events` 表：`id, title, start, end, all_day, location, notes, color, reminder_minutes, created_at, updated_at`；预留可选 `account_id`。
+- Tauri commands：`list_calendar_events(range)`、`save_calendar_event`、`delete_calendar_event`；Rust store + 前端 api + demo 数据同步实现。
+- 提醒先做应用内/系统通知，启动和切换日历时补查；重复日程先不做，或只做简单 daily/weekly/monthly。
+- 不引入 FullCalendar；优先用现有 `react-day-picker` 10 + `date-fns` 4 + shadcn 组件和自定义月/周网格。
+
+### 代码入口
+
+- `src/App.tsx:334` `page` state；`src/App.tsx:2320` 主导航；`src/App.tsx:2697` 页面分支。
+- `src/lib/api.ts`：`call`、demo switch、命令封装；`src-tauri/src/store.rs`：建表与 CRUD；`src-tauri/src/lib.rs`：commands 与 `generate_handler!`；`src-tauri/src/models.rs`：类型。
+- UI 组件：`src/components/ui/`（Dialog / Popover / Calendar）；通知参考 `src-tauri/src/notifications.rs`、`notification_open.rs`、`src/hooks/use-notification-mail.ts`。
+- 测试：Rust store 单测、前端组件交互测试、demo 数据；改 UI 跑 `npm run check:ui`。
+
+### 注意
+
+- 日历是独立 page，不要动现有邮件列表/阅读双栏布局。
+- 时间统一按 ISO/UTC 存储，显示按本地时区；全天事件要避免时区偏移。
+- 提醒与当前单实例、窗口隐藏、Dock/托盘行为兼容。
+- 先定“本地 only vs 同步”和“重复规则范围”，再开工。
