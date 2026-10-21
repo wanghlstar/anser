@@ -234,7 +234,11 @@ pub fn credentials(a: &Account) -> Result<Secret> {
     let cached = fresh_secrets().lock().map_err(err)?.get(&a.id).cloned();
     let mut s = match cached {
         Some(secret) => secret,
-        None => load_with(&a.id, false)?,
+        None => load_with(&a.id, false).or_else(|_| {
+            // A changed code signature or Keychain ACL needs one explicit
+            // approval. Background reads cannot raise that prompt on their own.
+            load_with(&a.id, true)
+        })?,
     };
     if a.auth == "oauth" && s.expires_at < chrono::Utc::now().timestamp() + 60 {
         if s.refresh_token.is_empty() {

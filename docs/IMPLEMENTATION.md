@@ -1027,6 +1027,7 @@ GitHub CI 和两架构发布工作流已推送；首次 Checks 已成功，Relea
 - 版本号统一为 **0.2.2**（`package.json` / `package-lock.json` / `src-tauri/Cargo.toml` / `Cargo.lock` 的 `yanxin` / `src-tauri/tauri.conf.json`），新增 `docs/releases/v0.2.2.md`；`v0.2.2` 为正常 Alpha Release，`releases/latest` 指向它并支持应用内更新。
 - 同步上游 0.1.24：实时单连接监听、Gmail/OAuth 钥匙串待写容错、Tiptap 表格、字体颜色与十六进制归一化、空正文首行光标修复。
 - 本地写信改进：回复/转发中文主题前缀、阅读区「主题：」、收信与写信行高/段距统一、保存草稿按钮；收件人/抄送/密送铺满整行，按实际宽度显示并在放不下时折叠 `+N`，不再使用上游 416px 上限。
+- 重发修复：0.2.2 初版把后台钥匙串读取设为禁止交互，安装后可能提示“无法读取钥匙串凭据”；改为非交互失败后回退一次交互读取，选择“始终允许”后恢复。`v0.2.2` 重新指向修复提交。
 - 发布流程：`release.yml` 增加包内 `LICENSE` / `NOTICE` / `LICENSING.md` / `licenses/shadcn-ui-MIT.txt` 非空校验，缺失时在发布前中止。
 - 验证：前端 55 文件 / 466 例、Rust 375 passed / 2 ignored；`tsc`、Prettier、`check:ui`、`cargo fmt --check`、生产构建通过；本地 `0.2.2` 已签名安装并验证写信窗布局。
 - 暂缓（用户 2026-10-21 决定）：中英文界面与 0.1.24 英文原生文案、正文双语翻译、全局代理/邮件图片样式、未读口径改「全部邮件」、原生邮件链接。
