@@ -3,6 +3,7 @@ mod archive_deletion;
 mod archive_jobs;
 mod attachment_preview;
 mod auth;
+mod calendar;
 mod compose_files;
 mod conversation;
 mod directory_operations;
@@ -30,6 +31,7 @@ mod signatures;
 mod store;
 mod sync_control;
 mod update_history;
+use calendar::{CalendarEvent, CalendarOccurrence};
 use models::*;
 use std::{
     path::Path,
@@ -541,6 +543,34 @@ fn delete_contact(state: tauri::State<AppState>, id: String) -> Result<()> {
 async fn contact_suggestions(state: tauri::State<'_, AppState>) -> Result<Vec<Address>> {
     let store = state.store.clone();
     tauri::async_runtime::spawn_blocking(move || store.contact_suggestions())
+        .await
+        .map_err(err)?
+}
+#[tauri::command]
+async fn list_calendar_events(
+    state: tauri::State<'_, AppState>,
+    from: String,
+    to: String,
+) -> Result<Vec<CalendarOccurrence>> {
+    let store = state.store.clone();
+    tauri::async_runtime::spawn_blocking(move || store.calendar_events(&from, &to))
+        .await
+        .map_err(err)?
+}
+#[tauri::command]
+async fn save_calendar_event(
+    state: tauri::State<'_, AppState>,
+    event: CalendarEvent,
+) -> Result<CalendarEvent> {
+    let store = state.store.clone();
+    tauri::async_runtime::spawn_blocking(move || store.save_calendar_event(&event))
+        .await
+        .map_err(err)?
+}
+#[tauri::command]
+async fn delete_calendar_event(state: tauri::State<'_, AppState>, id: String) -> Result<()> {
+    let store = state.store.clone();
+    tauri::async_runtime::spawn_blocking(move || store.delete_calendar_event(&id))
         .await
         .map_err(err)?
 }
@@ -3116,6 +3146,21 @@ pub fn run() {
                 })
                 .build(app)?;
             watch_tray_unread(store.clone(), tray, app.handle().clone());
+            let calendar_store = store.clone();
+            let calendar_handle = app.handle().clone();
+            std::thread::spawn(move || loop {
+                if let Ok(items) = calendar_store.due_calendar_reminders(chrono::Utc::now(), 60) {
+                    for occurrence in items {
+                        let body = format!(
+                            "{} · {}",
+                            occurrence.event.title,
+                            calendar::occurrence_label(&occurrence)
+                        );
+                        let _ = notifications::show(&calendar_handle, "日程提醒", &body);
+                    }
+                }
+                std::thread::sleep(std::time::Duration::from_secs(30));
+            });
             let handle = app.handle().clone();
             let scheduled_store = store.clone();
             let scheduled_gate = send_gate.clone();
@@ -3304,6 +3349,9 @@ pub fn run() {
             save_contact,
             delete_contact,
             contact_suggestions,
+            list_calendar_events,
+            save_calendar_event,
+            delete_calendar_event,
             list_outbox,
             sent_upload_action,
             retry_outbox,
