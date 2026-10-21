@@ -21,7 +21,9 @@ import type {
 import { makeDemo } from "./demo";
 import { emptySignature } from "./signatures";
 import { parseAddresses } from "./addresses";
+import { addDays, parse, startOfWeek } from "date-fns";
 import type { Address, Contact, OutboxRecord } from "./types";
+import type { CalendarEvent, CalendarOccurrence } from "./types";
 export const native = isTauri();
 const key = "mail-desktop-demo-v1";
 let demo: Snapshot | null = null;
@@ -42,6 +44,7 @@ export function leaveDemo() {
   localStorage.removeItem(key + "-contacts");
   localStorage.removeItem(key + "-preferences");
   localStorage.removeItem(key + "-outbox");
+  localStorage.removeItem(key + "-calendar");
   localStorage.removeItem(key + "-auto-start");
   for (let i = localStorage.length - 1; i >= 0; i--) {
     const stored = localStorage.key(i);
@@ -161,6 +164,114 @@ export async function mailNeighbor(
     });
   return { mail: null, revision: 0 };
 }
+const calendarKey = key + "-calendar";
+
+function demoCalendarEvents(): CalendarEvent[] {
+  const stored = localStorage.getItem(calendarKey);
+  if (stored) return JSON.parse(stored) as CalendarEvent[];
+  const base = startOfWeek(new Date(), { weekStartsOn: 1 });
+  const at = (day: number, hour: number, minute = 0) => {
+    const date = addDays(base, day);
+    date.setHours(hour, minute, 0, 0);
+    return date.toISOString();
+  };
+  const now = new Date().toISOString();
+  const events: CalendarEvent[] = [
+    {
+      id: "demo-calendar-weekly",
+      title: "项目周会",
+      start: at(0, 10),
+      end: at(0, 11),
+      allDay: false,
+      location: "线上会议",
+      notes: "同步本周进度与风险。",
+      color: "blue",
+      reminderMinutes: 15,
+      repeat: "none",
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      id: "demo-calendar-design",
+      title: "设计评审",
+      start: at(2, 14),
+      end: at(2, 15, 30),
+      allDay: false,
+      location: "会议室 A",
+      notes: "日历首版交互走查。",
+      color: "purple",
+      reminderMinutes: 30,
+      repeat: "none",
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      id: "demo-calendar-focus",
+      title: "专注时间",
+      start: at(3, 9),
+      end: at(3, 12),
+      allDay: false,
+      location: "",
+      notes: "",
+      color: "green",
+      reminderMinutes: null,
+      repeat: "none",
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      id: "demo-calendar-holiday",
+      title: "团队活动日",
+      start: at(5, 0).slice(0, 10),
+      end: at(5, 0).slice(0, 10),
+      allDay: true,
+      location: "西山",
+      notes: "全天活动。",
+      color: "orange",
+      reminderMinutes: 1440,
+      repeat: "none",
+      createdAt: now,
+      updatedAt: now,
+    },
+  ];
+  localStorage.setItem(calendarKey, JSON.stringify(events));
+  return events;
+}
+
+function saveDemoCalendar(events: CalendarEvent[]) {
+  localStorage.setItem(calendarKey, JSON.stringify(events));
+}
+
+function demoCalendarInRange(
+  events: CalendarEvent[],
+  from: string,
+  to: string,
+): CalendarOccurrence[] {
+  const fromDate = new Date(from);
+  const toDate = new Date(to);
+  return events
+    .flatMap((event) => {
+      const start = event.allDay
+        ? parse(event.start, "yyyy-MM-dd", new Date())
+        : new Date(event.start);
+      const end = event.allDay
+        ? parse(event.end, "yyyy-MM-dd", new Date())
+        : new Date(event.end);
+      const endExclusive = event.allDay ? addDays(end, 1) : end;
+      if (start >= toDate || endExclusive <= fromDate) return [];
+      return [
+        {
+          key: `${event.id}@${event.start}`,
+          event,
+          start: event.start,
+          end: event.end,
+          allDay: event.allDay,
+        },
+      ];
+    })
+    .sort((a, b) => a.start.localeCompare(b.start));
+}
+
 export async function call<T = void>(
   command: string,
   args: Record<string, unknown> = {},
@@ -499,6 +610,37 @@ export async function call<T = void>(
           key + "-contacts",
           JSON.stringify(list.filter((x) => x.id !== args.id)),
         );
+        break;
+      }
+      case "list_calendar_events":
+        result = demoCalendarInRange(
+          demoCalendarEvents(),
+          args.from as string,
+          args.to as string,
+        );
+        break;
+      case "save_calendar_event": {
+        const event = args.event as CalendarEvent;
+        const events = demoCalendarEvents();
+        const id = event.id || crypto.randomUUID();
+        const existing = events.find((item) => item.id === id);
+        const saved: CalendarEvent = {
+          ...event,
+          id,
+          title: event.title.trim(),
+          createdAt: existing?.createdAt || new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+        if (!saved.title) throw new Error("请填写日程标题");
+        saveDemoCalendar([saved, ...events.filter((item) => item.id !== id)]);
+        result = saved;
+        break;
+      }
+      case "delete_calendar_event": {
+        const events = demoCalendarEvents().filter(
+          (item) => item.id !== args.id,
+        );
+        saveDemoCalendar(events);
         break;
       }
       case "contact_suggestions": {
@@ -893,6 +1035,7 @@ export async function call<T = void>(
         "list_drafts",
         "clear_drafts",
         "list_contacts",
+        "list_calendar_events",
         "get_preferences",
         "list_outbox",
         "delete_outbox",

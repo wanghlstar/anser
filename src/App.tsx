@@ -86,6 +86,7 @@ import {
   Reply,
   ReplyAll,
   UsersRound,
+  CalendarDays,
   History,
   Search,
   Send,
@@ -160,6 +161,7 @@ import { ComposeDialog, composeTitle } from "./components/compose-dialog";
 import { PendingSend } from "./components/pending-send";
 import { DraftsPanel } from "./components/drafts-panel";
 import { ContactsPanel } from "./components/contacts-panel";
+import { CalendarPage } from "./components/calendar-page";
 import { OutboxPanel } from "./components/outbox-panel";
 import { ArchiveTools, StorageTools } from "./components/storage-tools";
 import { SettingsLayout } from "./components/settings-layout";
@@ -209,9 +211,11 @@ import type {
   Preferences,
   LocalArchiveGroup,
   MailSignature,
+  CalendarEvent,
 } from "./lib/types";
 import { mailLink } from "./lib/mail-html";
 import { printMail } from "./lib/mail-print";
+import { eventDraftFromMail } from "./lib/mail-to-event";
 import { invoke } from "@tauri-apps/api/core";
 restoreDemo();
 const viewNames: Record<string, string> = {
@@ -352,6 +356,7 @@ export default function App() {
     [retentionIntro, setRetentionIntro] = useState(false),
     [archiving, setArchiving] = useState(false),
     [contactSeed, setContactSeed] = useState<Address | null>(null),
+    [calendarSeed, setCalendarSeed] = useState<CalendarEvent | null>(null),
     // 允许多个写信窗口并存：数组里每封一个窗口，各自保留自己的位置与最大化状态
     [composes, setComposes] = useState<Compose[]>([]),
     [drafts, setDrafts] = useState<Compose[]>([]),
@@ -988,6 +993,10 @@ export default function App() {
     },
     [data.accounts, detail, openCompose],
   );
+  const createEventFromMail = useCallback((mail: Mail) => {
+    setCalendarSeed(eventDraftFromMail(mail));
+    setPage("calendar");
+  }, []);
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       const target = e.target instanceof Element ? e.target : null;
@@ -2669,6 +2678,14 @@ export default function App() {
               <div className="sidebar-bottom">
                 <Button
                   variant="ghost"
+                  className={`nav-item ${page === "calendar" ? "active" : ""}`}
+                  onClick={() => setPage("calendar")}
+                >
+                  <CalendarDays size={17} />
+                  <span>日历</span>
+                </Button>
+                <Button
+                  variant="ghost"
                   className={`nav-item ${page === "contacts" ? "active" : ""}`}
                   onClick={() => {
                     setContactSeed(null);
@@ -2694,7 +2711,12 @@ export default function App() {
         <SidebarInset
           className={`main-area ${page === "mail" ? "mail-layout" : ""}`}
         >
-          {page === "contacts" ? (
+          {page === "calendar" ? (
+            <CalendarPage
+              seed={calendarSeed}
+              onSeedConsumed={() => setCalendarSeed(null)}
+            />
+          ) : page === "contacts" ? (
             <ContactsPanel
               initial={contactSeed}
               onCompose={(address) => {
@@ -3821,6 +3843,14 @@ export default function App() {
                                             {mailShortcutKeys.forward}
                                           </ContextMenuShortcut>
                                         </ContextMenuItem>
+                                        <ContextMenuItem
+                                          onSelect={() =>
+                                            createEventFromMail(m)
+                                          }
+                                        >
+                                          <CalendarDays />
+                                          创建日程
+                                        </ContextMenuItem>
                                         <ContextMenuSeparator />
                                         <ContextMenuCheckboxItem
                                           checked={allStarred}
@@ -4153,6 +4183,15 @@ export default function App() {
                                 />
                               </Button>
                             </MailActionTooltip>
+                            <Button
+                              variant="ghost"
+                              size="icon-sm"
+                              title="创建日程"
+                              aria-label="从这封邮件创建日程"
+                              onClick={() => createEventFromMail(detail.mail)}
+                            >
+                              <CalendarDays size={17} />
+                            </Button>
                             <Button
                               variant="ghost"
                               size="icon-sm"

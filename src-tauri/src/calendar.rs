@@ -2,7 +2,7 @@ use crate::{
     models::{err, Result},
     store::Store,
 };
-use chrono::{DateTime, Datelike, Duration, Local, Months, NaiveDate, TimeZone, Utc};
+use chrono::{DateTime, Datelike, Days, Duration, Local, Months, NaiveDate, TimeZone, Utc};
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
 
@@ -167,16 +167,13 @@ impl CalendarEvent {
         self.repeat != "none"
     }
 
-    fn timed_occurrence(
-        &self,
-        index: u32,
-    ) -> Option<(DateTime<Local>, DateTime<Local>)> {
+    fn timed_occurrence(&self, index: u32) -> Option<(DateTime<Local>, DateTime<Local>)> {
         let start = parse_timed(&self.start).ok()?.with_timezone(&Local);
         let end = parse_timed(&self.end).ok()?.with_timezone(&Local);
         let length = end - start;
         let start = match self.repeat.as_str() {
-            "daily" => start.checked_add_signed(Duration::days(index as i64)),
-            "weekly" => start.checked_add_signed(Duration::days(index as i64 * 7)),
+            "daily" => start.checked_add_days(Days::new(index as u64)),
+            "weekly" => start.checked_add_days(Days::new(index as u64 * 7)),
             "monthly" => start.checked_add_months(Months::new(index)),
             "yearly" => start.checked_add_months(Months::new(index * 12)),
             _ if index == 0 => Some(start),
@@ -232,9 +229,10 @@ impl CalendarEvent {
                 break;
             }
             if end.with_timezone(&Utc) > range.from {
-                out.push(
-                    self.occurrence(format_utc(start.with_timezone(&Utc)), format_utc(end.with_timezone(&Utc))),
-                );
+                out.push(self.occurrence(
+                    format_utc(start.with_timezone(&Utc)),
+                    format_utc(end.with_timezone(&Utc)),
+                ));
             }
             if !self.is_repeating() {
                 break;
@@ -271,12 +269,10 @@ impl CalendarEvent {
                 break;
             }
             if end >= range.from_date {
-                out.push(
-                    self.occurrence(
-                        start.format("%Y-%m-%d").to_string(),
-                        end.format("%Y-%m-%d").to_string(),
-                    ),
-                );
+                out.push(self.occurrence(
+                    start.format("%Y-%m-%d").to_string(),
+                    end.format("%Y-%m-%d").to_string(),
+                ));
             }
             if !self.is_repeating() {
                 break;
@@ -295,7 +291,11 @@ impl CalendarEvent {
     }
 }
 
-fn reminder_at(event: &CalendarEvent, occurrence_start: &str, minutes: i64) -> Option<DateTime<Utc>> {
+fn reminder_at(
+    event: &CalendarEvent,
+    occurrence_start: &str,
+    minutes: i64,
+) -> Option<DateTime<Utc>> {
     if event.all_day {
         let date = parse_date(occurrence_start).ok()?;
         let local = date
@@ -364,9 +364,10 @@ impl Store {
             event.id.trim().to_string()
         };
         let now = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-        let saved = event
-            .clone()
-            .normalized(id, existing_created.unwrap_or_else(|| now.clone()), now);
+        let saved =
+            event
+                .clone()
+                .normalized(id, existing_created.unwrap_or_else(|| now.clone()), now);
         db.execute(
             "INSERT INTO calendar_events(id,title,start,end,all_day,location,notes,color,reminder_minutes,repeat,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12) ON CONFLICT(id) DO UPDATE SET title=excluded.title,start=excluded.start,end=excluded.end,all_day=excluded.all_day,location=excluded.location,notes=excluded.notes,color=excluded.color,reminder_minutes=excluded.reminder_minutes,repeat=excluded.repeat,updated_at=excluded.updated_at",
             params![
@@ -392,11 +393,8 @@ impl Store {
         let db = self.db()?;
         db.execute("DELETE FROM calendar_events WHERE id=?1", [id])
             .map_err(err)?;
-        db.execute(
-            "DELETE FROM calendar_reminder_log WHERE event_id=?1",
-            [id],
-        )
-        .map_err(err)?;
+        db.execute("DELETE FROM calendar_reminder_log WHERE event_id=?1", [id])
+            .map_err(err)?;
         Ok(())
     }
 
@@ -601,6 +599,23 @@ mod tests {
             )
             .unwrap();
         assert!(again.is_empty());
+    }
+
+    #[test]
+    fn all_day_reminders_use_nine_am_local() {
+        let (_dir, store) = store();
+        let mut all_day = event("2026-10-21", "2026-10-21");
+        all_day.all_day = true;
+        all_day.reminder_minutes = Some(0);
+        store.save_calendar_event(&all_day).unwrap();
+        let nine = Local
+            .with_ymd_and_hms(2026, 10, 21, 9, 0, 30)
+            .single()
+            .unwrap()
+            .with_timezone(&Utc);
+        let due = store.due_calendar_reminders(nine, 60).unwrap();
+        assert_eq!(due.len(), 1);
+        assert_eq!(due[0].start, "2026-10-21");
     }
 
     #[test]

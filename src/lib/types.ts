@@ -230,6 +230,29 @@ export interface Address {
 export interface Contact extends Address {
   id: string;
 }
+export type CalendarColor = "blue" | "green" | "orange" | "purple" | "gray";
+export type CalendarRepeat = "none" | "daily" | "weekly" | "monthly" | "yearly";
+export interface CalendarEvent {
+  id: string;
+  title: string;
+  start: string;
+  end: string;
+  allDay: boolean;
+  location: string;
+  notes: string;
+  color: CalendarColor;
+  reminderMinutes: number | null;
+  repeat: CalendarRepeat;
+  createdAt: string;
+  updatedAt: string;
+}
+export interface CalendarOccurrence {
+  key: string;
+  event: CalendarEvent;
+  start: string;
+  end: string;
+  allDay: boolean;
+}
 export interface OutboxRecord {
   id: string;
   status:
