@@ -2356,16 +2356,18 @@ fn open_mail_link(url: String) -> Result<()> {
     open::that(web_link(&url)?.as_str()).map_err(err)
 }
 #[cfg(target_os = "macos")]
-fn activate_running_app(bundle_id: &str) -> bool {
-    use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication};
+fn activate_meeting_app(bundle_id: &str) -> bool {
+    use objc2_app_kit::{NSWorkspace, NSWorkspaceOpenConfiguration};
     use objc2_foundation::NSString;
+    let workspace = NSWorkspace::sharedWorkspace();
     let id = NSString::from_str(bundle_id);
-    let apps = NSRunningApplication::runningApplicationsWithBundleIdentifier(&id);
-    let Some(app) = apps.iter().next() else {
+    let Some(url) = workspace.URLForApplicationWithBundleIdentifier(&id) else {
         return false;
     };
-    app.unhide();
-    app.activateWithOptions(NSApplicationActivationOptions::ActivateAllWindows)
+    let config = NSWorkspaceOpenConfiguration::configuration();
+    config.setActivates(true);
+    workspace.openApplicationAtURL_configuration_completionHandler(&url, &config, None);
+    true
 }
 
 #[tauri::command]
@@ -2376,7 +2378,7 @@ fn open_meeting_app(provider: String) -> Result<()> {
         _ => return Err("不支持的会议应用".into()),
     };
     #[cfg(target_os = "macos")]
-    if activate_running_app(bundle_id) {
+    if activate_meeting_app(bundle_id) {
         return Ok(());
     }
     open::that(url).map_err(|e| format!("无法打开会议应用，请确认已安装：{e}"))
