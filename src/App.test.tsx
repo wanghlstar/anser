@@ -2387,4 +2387,26 @@ describe("mail reader windows", () => {
     await click(item ?? null);
     expect(info).toHaveBeenCalledWith("请在桌面客户端中在新窗口打开邮件");
   });
+
+  it("ignores the right-click release in the list context menu", async () => {
+    await click(nav("全部收件箱"));
+    await openRowMenu();
+    const info = vi.spyOn(toast, "info").mockReturnValue(0);
+    const item = [...document.querySelectorAll('[role="menuitem"]')].find(
+      (el) => el.textContent?.includes("在新窗口打开"),
+    );
+    expect(item).not.toBeUndefined();
+    await act(async () => {
+      item!.dispatchEvent(
+        new MouseEvent("pointerup", {
+          bubbles: true,
+          cancelable: true,
+          button: 2,
+        }),
+      );
+    });
+    expect(info).not.toHaveBeenCalled();
+    await click(item ?? null);
+    expect(info).toHaveBeenCalledWith("请在桌面客户端中在新窗口打开邮件");
+  });
 });

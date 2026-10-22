@@ -597,6 +597,8 @@ export default function App() {
   const [archiveTree, setArchiveTree] = useState<LocalArchiveGroup[]>([]);
   // Shift 范围选择锚点
   const lastRowIndex = useRef(-1);
+  // 右键菜单打开时间：吞掉右键释放产生的首个 pointerup/click，避免误触菜单首项。
+  const contextMenuOpenedAt = useRef(0);
   // 取消列表勾选：Esc、点空白、点正文都用它，已空时不触发重渲染。
   const clearChecked = useCallback(
     () => setChecked((ids) => (ids.length ? [] : ids)),
@@ -3645,6 +3647,8 @@ export default function App() {
                                 <div
                                   className={`mail-row ${selected === m.id || (grouped && !!m.conversationId && m.conversationId === detail?.mail.conversationId) ? "selected" : ""} ${!m.isRead ? "unread" : ""}`}
                                   onContextMenu={() => {
+                                    contextMenuOpenedAt.current =
+                                      performance.now();
                                     if (!(
                                       checked.includes(m.id) &&
                                       checked.length > 1
@@ -3822,7 +3826,20 @@ export default function App() {
                                   </Button>
                                 </div>
                               </ContextMenuTrigger>
-                              <ContextMenuContent className="w-56">
+                              <ContextMenuContent
+                                className="w-56"
+                                onPointerUpCapture={(event) => {
+                                  if (
+                                    event.button === 2 &&
+                                    performance.now() -
+                                      contextMenuOpenedAt.current <
+                                      300
+                                  ) {
+                                    event.preventDefault();
+                                    event.stopPropagation();
+                                  }
+                                }}
+                              >
                                 {menuKind === "trash" ? (
                                   <>
                                     {anyTrashed && (
