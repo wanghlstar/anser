@@ -1368,30 +1368,29 @@ export function CalendarPage({
                     />
                     <span>显示 Apple 日历</span>
                   </Label>
-                  {appleEnabled &&
-                    appleCalendars.map((calendar) => (
-                      <Label className="calendar-apple-row" key={calendar.id}>
-                        <Checkbox
-                          checked={appleSelected.includes(calendar.id)}
-                          onCheckedChange={(next) =>
-                            toggleAppleCalendar(calendar.id, next === true)
-                          }
-                        />
-                        <span
-                          className={cn(
-                            "calendar-color-dot",
-                            `calendar-tone-${calendar.color}`,
-                          )}
-                        />
-                        <span
-                          className="calendar-apple-name"
-                          title={`${calendar.sourceTitle} · ${calendar.title}`}
-                        >
-                          {calendar.title}
-                        </span>
-                      </Label>
-                    ))}
-                  {appleEnabled && appleCalendars.length === 0 && (
+                  {appleCalendars.map((calendar) => (
+                    <Label className="calendar-apple-row" key={calendar.id}>
+                      <Checkbox
+                        checked={appleSelected.includes(calendar.id)}
+                        onCheckedChange={(next) =>
+                          toggleAppleCalendar(calendar.id, next === true)
+                        }
+                      />
+                      <span
+                        className={cn(
+                          "calendar-color-dot",
+                          `calendar-tone-${calendar.color}`,
+                        )}
+                      />
+                      <span
+                        className="calendar-apple-name"
+                        title={`${calendar.sourceTitle} · ${calendar.title}`}
+                      >
+                        {calendar.title}
+                      </span>
+                    </Label>
+                  ))}
+                  {appleCalendars.length === 0 && (
                     <small className="calendar-apple-hint">
                       系统日历中没有可显示的日历。
                     </small>
@@ -1401,12 +1400,12 @@ export function CalendarPage({
                   )}
                 </>
               )}
-              {appleError && (
-                <small className="calendar-apple-error" title={appleError}>
-                  {appleError}
-                </small>
-              )}
             </CollapsibleContent>
+            {appleError && (
+              <small className="calendar-apple-error" title={appleError}>
+                {appleError}
+              </small>
+            )}
           </Collapsible>
           <div className="calendar-subscriptions">
             <div className="calendar-subscriptions-head">
