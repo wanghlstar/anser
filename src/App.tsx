@@ -2373,7 +2373,7 @@ export default function App() {
                     size={14}
                     className={navCollapsed ? "collapse-chevron" : ""}
                   />
-                  邮件
+                  邮件导航
                 </Button>
                 <nav
                   className="primary-nav"

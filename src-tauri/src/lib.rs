@@ -3355,6 +3355,52 @@ pub fn run() {
                 }
                 std::thread::sleep(std::time::Duration::from_secs(30));
             });
+            let archive_store = store.clone();
+            let archive_handle = app.handle().clone();
+            std::thread::spawn(move || {
+                use chrono::Timelike;
+                let mut last_slot = String::new();
+                loop {
+                    let now = chrono::Local::now();
+                    let hour = now.hour();
+                    if (hour == 10 || hour == 17) && now.minute() == 0 {
+                        let slot = format!("{}-{}", now.format("%Y-%m-%d"), hour);
+                        if slot != last_slot {
+                            last_slot = slot;
+                            match archive_store.archive_health() {
+                                Ok(health) if health.problems.is_empty() => {
+                                    let _ = archive_store.log(&format!(
+                                        "存档校验（自动 {hour}:00）：检查 {} 封，正常 {} 封",
+                                        health.checked, health.healthy
+                                    ));
+                                }
+                                Ok(health) => {
+                                    let _ = archive_store.log(&format!(
+                                        "存档校验（自动 {hour}:00）：检查 {} 封，正常 {} 封，发现 {} 个问题",
+                                        health.checked,
+                                        health.healthy,
+                                        health.problems.len()
+                                    ));
+                                    let _ = notifications::show(
+                                        &archive_handle,
+                                        "存档校验发现问题",
+                                        &format!(
+                                            "发现 {} 个问题，请在设置中查看。",
+                                            health.problems.len()
+                                        ),
+                                    );
+                                }
+                                Err(reason) => {
+                                    let _ = archive_store.log(&format!(
+                                        "存档校验（自动 {hour}:00）失败：{reason}"
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                    std::thread::sleep(std::time::Duration::from_secs(30));
+                }
+            });
             let handle = app.handle().clone();
             let scheduled_store = store.clone();
             let scheduled_gate = send_gate.clone();

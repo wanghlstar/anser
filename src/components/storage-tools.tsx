@@ -655,7 +655,7 @@ export function ArchiveTools() {
           size="sm"
           onClick={() => void pickExternalDir()}
         >
-          {tier?.externalDir ? "更改…" : "选择目录…"}
+          {tier?.externalDir ? "更改目录" : "选择存档目录"}
         </Button>
       </div>
       <div className="settings-tool-row">
