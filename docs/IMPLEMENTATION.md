@@ -1069,4 +1069,5 @@ GitHub CI 和两架构发布工作流已推送；首次 Checks 已成功，Relea
 - 中国节假日：内置订阅 `https://calendars.icloud.com/holidays/cn_zh.ics`，名称“中国大陆节假日”；只保留 `X-APPLE-SPECIAL-DAY` 非空的事件，过滤节气/农历条目。香港内置订阅更名“中国香港公众假期”；订阅列表固定中国大陆在前、中国香港在后。订阅支持编辑名称/URL/颜色，URL 改变后重新同步。
 - 订阅下载：reqwest 启用 `gzip`；iCloud 即使不主动请求 gzip 也返回压缩内容，之前被误判为“url 不是日历”。下载后先去 BOM/空白再校验 `BEGIN:VCALENDAR`。
 - 数据处理：用户此前通过文件导入的 246 条中国大陆节假日日程已从本地 `calendar_events` 删除；真实预览中中国大陆订阅同步 40 条、中国香港订阅同步 51 条。
-- 验证：Rust 392 passed / 2 ignored；前端日历相关 21 例通过；`tsc`、`check:ui`、`cargo fmt --check`、桌面构建通过；预览确认 Apple 日历已连接并列出“生日”等日历，订阅顺序为中国大陆、中国香港。
+- 验证：Rust 392 passed / 2 ignored；前端全量 497 passed；`tsc`、`check:ui`、`cargo fmt --check`、桌面构建通过；预览确认 Apple 日历已连接并列出“生日”等日历，订阅顺序为中国大陆、中国香港。用户已验收 Apple 只读叠加、订阅编辑与侧栏折叠。
+- 发布：版本统一为 0.2.3，新增 `docs/releases/v0.2.3.md`；最低系统版本 macOS 13。
