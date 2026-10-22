@@ -13,6 +13,7 @@ import {
 import { zhCN } from "date-fns/locale";
 import {
   CalendarDays,
+  CalendarPlus,
   ChevronLeft,
   ChevronRight,
   Clock,
@@ -24,12 +25,14 @@ import {
   Pencil,
   Plus,
   Repeat,
+  Sun,
   Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { call, isDemo } from "@/lib/api";
 import { eventsToIcs, parseIcs } from "@/lib/ics";
+import { lunarInfo } from "@/lib/lunar";
 import {
   CALENDAR_COLORS,
   REMINDER_OPTIONS,
@@ -421,13 +424,18 @@ export function CalendarPage({
     return () => window.removeEventListener("keydown", handler);
   }, [dialog, selected, view]);
 
-  function openCreate(day: Date, startMinutes = 9 * 60, endMinutes = 10 * 60) {
+  function openCreate(
+    day: Date,
+    startMinutes = 9 * 60,
+    endMinutes = 10 * 60,
+    allDay = false,
+  ) {
     const start = dateAtMinutes(day, startMinutes);
     const end = dateAtMinutes(day, endMinutes);
     dialogKey.current += 1;
     setDialog({
       key: dialogKey.current,
-      event: newEvent(start, end),
+      event: newEvent(start, end, allDay),
       isNew: true,
       series: false,
       occurrence: null,
@@ -853,6 +861,7 @@ export function CalendarPage({
               loading={loading}
               onSelect={selectDay}
               onCreate={openCreate}
+              onCreateAllDay={(day) => openCreate(day, 0, 0, true)}
               onEdit={openEdit}
               onDelete={setDeleteTarget}
               onDuplicate={duplicateOccurrence}
@@ -1017,6 +1026,7 @@ function MonthGrid({
   loading,
   onSelect,
   onCreate,
+  onCreateAllDay,
   onEdit,
   onDelete,
   onDuplicate,
@@ -1028,6 +1038,7 @@ function MonthGrid({
   loading: boolean;
   onSelect: (day: Date) => void;
   onCreate: (day: Date) => void;
+  onCreateAllDay: (day: Date) => void;
   onEdit: (occurrence: CalendarOccurrence) => void;
   onDelete: (occurrence: CalendarOccurrence) => void;
   onDuplicate: (occurrence: CalendarOccurrence) => void;
@@ -1046,73 +1057,127 @@ function MonthGrid({
           const items = eventsForDay(occurrences, day);
           const shown = items.slice(0, 3);
           const outside = day.getMonth() !== days[15].getMonth();
+          const lunar = lunarInfo(day);
           return (
-            <div
+            <DayContextMenu
               key={day.toISOString()}
-              className={cn(
-                "calendar-month-cell",
-                outside && "outside",
-                isSameDay(day, today) && "today",
-                isSameDay(day, selected) && "selected",
-              )}
-              onClick={() => onSelect(day)}
-              onDoubleClick={() => onCreate(day)}
+              day={day}
+              onCreate={onCreate}
+              onCreateAllDay={onCreateAllDay}
+              onOpenDay={() => onShowMore(day)}
+              onOpen={() => onSelect(day)}
             >
-              <div className="calendar-day-number">{format(day, "d")}</div>
-              <div className="calendar-pills">
-                {shown.map((occurrence) => (
-                  <EventContextMenu
-                    key={occurrence.key}
-                    occurrence={occurrence}
-                    onEdit={onEdit}
-                    onDelete={onDelete}
-                    onDuplicate={onDuplicate}
-                  >
+              <div
+                className={cn(
+                  "calendar-month-cell",
+                  outside && "outside",
+                  isSameDay(day, today) && "today",
+                  isSameDay(day, selected) && "selected",
+                )}
+                title={lunar.full}
+                onClick={() => onSelect(day)}
+                onDoubleClick={() => onCreate(day)}
+              >
+                <div className="calendar-day-heading">
+                  <span className={cn("calendar-lunar", `is-${lunar.tone}`)}>
+                    {lunar.label}
+                  </span>
+                  <div className="calendar-day-number">{format(day, "d")}</div>
+                </div>
+                <div className="calendar-pills">
+                  {shown.map((occurrence) => (
+                    <EventContextMenu
+                      key={occurrence.key}
+                      occurrence={occurrence}
+                      onEdit={onEdit}
+                      onDelete={onDelete}
+                      onDuplicate={onDuplicate}
+                    >
+                      <Button
+                        variant="ghost"
+                        size="xs"
+                        className={cn(
+                          "calendar-pill",
+                          `calendar-tone-${occurrence.event.color}`,
+                        )}
+                        title={`${occurrence.event.title} · ${occurrenceLabel(occurrence)}`}
+                        onContextMenu={(event) => event.stopPropagation()}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onEdit(occurrence);
+                        }}
+                        onDoubleClick={(event) => event.stopPropagation()}
+                      >
+                        {!occurrence.allDay && (
+                          <span>
+                            {format(parseEventStart(occurrence), "HH:mm")}
+                          </span>
+                        )}
+                        <strong>{occurrence.event.title}</strong>
+                      </Button>
+                    </EventContextMenu>
+                  ))}
+                  {items.length > shown.length && (
                     <Button
                       variant="ghost"
                       size="xs"
-                      className={cn(
-                        "calendar-pill",
-                        `calendar-tone-${occurrence.event.color}`,
-                      )}
-                      title={`${occurrence.event.title} · ${occurrenceLabel(occurrence)}`}
+                      className="calendar-more"
+                      onContextMenu={(event) => event.stopPropagation()}
                       onClick={(event) => {
                         event.stopPropagation();
-                        onEdit(occurrence);
+                        onShowMore(day);
                       }}
-                      onDoubleClick={(event) => event.stopPropagation()}
                     >
-                      {!occurrence.allDay && (
-                        <span>
-                          {format(parseEventStart(occurrence), "HH:mm")}
-                        </span>
-                      )}
-                      <strong>{occurrence.event.title}</strong>
+                      还有 {items.length - shown.length} 项
                     </Button>
-                  </EventContextMenu>
-                ))}
-                {items.length > shown.length && (
-                  <Button
-                    variant="ghost"
-                    size="xs"
-                    className="calendar-more"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      onShowMore(day);
-                    }}
-                  >
-                    还有 {items.length - shown.length} 项
-                  </Button>
+                  )}
+                </div>
+                {loading && items.length === 0 && (
+                  <span className="calendar-cell-loading" />
                 )}
               </div>
-              {loading && items.length === 0 && (
-                <span className="calendar-cell-loading" />
-              )}
-            </div>
+            </DayContextMenu>
           );
         })}
       </div>
     </div>
+  );
+}
+
+function DayContextMenu({
+  day,
+  onCreate,
+  onCreateAllDay,
+  onOpenDay,
+  onOpen,
+  children,
+}: {
+  day: Date;
+  onCreate: (day: Date) => void;
+  onCreateAllDay: (day: Date) => void;
+  onOpenDay: () => void;
+  onOpen: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <ContextMenu onOpenChange={(open) => open && onOpen()}>
+      <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
+      <ContextMenuContent>
+        <ContextMenuItem onSelect={() => onCreate(day)}>
+          <CalendarPlus />
+          新建日程
+        </ContextMenuItem>
+        <ContextMenuItem onSelect={() => onCreateAllDay(day)}>
+          <Sun />
+          新建全天日程
+        </ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuItem onSelect={onOpenDay}>
+          <CalendarDays />
+          查看当天
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
   );
 }
 
@@ -1189,11 +1254,18 @@ function ListView({
     <div className="calendar-list">
       {groups.map(([key, items]) => {
         const date = items[0] ? parseEventStart(items[0]) : new Date(key);
+        const lunar = lunarInfo(date);
         return (
           <section className="calendar-list-day" key={key}>
             <header className="calendar-list-date">
               <strong>{format(date, "M月d日")}</strong>
               <span>{WEEKDAY_LABELS[(date.getDay() + 6) % 7]}</span>
+              <span
+                className={cn("calendar-list-lunar", `is-${lunar.tone}`)}
+                title={lunar.full}
+              >
+                {lunar.label}
+              </span>
               {isSameDay(date, today) && (
                 <span className="calendar-list-today">今天</span>
               )}
@@ -1362,21 +1434,28 @@ function TimeGrid({
             gridTemplateColumns: `repeat(${days.length}, minmax(0, 1fr))`,
           }}
         >
-          {days.map((day) => (
-            <Button
-              variant="ghost"
-              size="sm"
-              key={day.toISOString()}
-              className={cn(
-                "calendar-day-head",
-                isSameDay(day, today) && "today",
-              )}
-              onClick={() => onSelectDay(day)}
-            >
-              <span>{WEEKDAY_LABELS[(day.getDay() + 6) % 7]}</span>
-              <strong>{format(day, "M/d")}</strong>
-            </Button>
-          ))}
+          {days.map((day) => {
+            const lunar = lunarInfo(day);
+            return (
+              <Button
+                variant="ghost"
+                size="sm"
+                key={day.toISOString()}
+                className={cn(
+                  "calendar-day-head",
+                  isSameDay(day, today) && "today",
+                )}
+                title={lunar.full}
+                onClick={() => onSelectDay(day)}
+              >
+                <span>{WEEKDAY_LABELS[(day.getDay() + 6) % 7]}</span>
+                <strong>{format(day, "M/d")}</strong>
+                <small className={cn("calendar-day-lunar", `is-${lunar.tone}`)}>
+                  {lunar.label}
+                </small>
+              </Button>
+            );
+          })}
         </div>
       </div>
       <div className="calendar-time-scroll" ref={scrollRef}>

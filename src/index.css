@@ -5044,6 +5044,41 @@ body.sidebar-visible
 .calendar-month-cell.selected {
   background: color-mix(in oklch, var(--primary) 5%, transparent);
 }
+.calendar-day-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 4px;
+}
+.calendar-day-heading .calendar-day-number {
+  align-self: flex-start;
+  flex: none;
+}
+.calendar-lunar {
+  min-width: 0;
+  padding-top: 4px;
+  overflow: hidden;
+  font-size: 10px;
+  line-height: 1.2;
+  color: var(--muted-foreground);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.calendar-month-cell.outside .calendar-lunar {
+  opacity: 0.6;
+}
+.calendar-lunar.is-term,
+.calendar-day-lunar.is-term,
+.calendar-list-date .calendar-list-lunar.is-term {
+  color: var(--primary);
+  font-weight: 600;
+}
+.calendar-lunar.is-festival,
+.calendar-day-lunar.is-festival,
+.calendar-list-date .calendar-list-lunar.is-festival {
+  color: oklch(0.58 0.17 32);
+  font-weight: 600;
+}
 .calendar-day-number {
   align-self: flex-end;
   display: flex;
@@ -5189,6 +5224,15 @@ body.sidebar-visible
 }
 .calendar-day-head.today strong {
   color: var(--primary);
+}
+.calendar-day-lunar {
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 10px;
+  line-height: 1.1;
+  color: var(--muted-foreground);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .calendar-time-scroll {
   flex: 1;
@@ -5349,6 +5393,9 @@ body.sidebar-visible
   background: color-mix(in oklch, var(--primary) 14%, var(--card));
   color: var(--primary) !important;
   font-weight: 600;
+}
+.calendar-list-date .calendar-list-lunar {
+  color: var(--muted-foreground);
 }
 .calendar-list-rows {
   overflow: hidden;

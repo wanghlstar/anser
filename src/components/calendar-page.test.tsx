@@ -136,6 +136,36 @@ describe("calendar page", () => {
     expect(exceptions["repeat-1"]).toContain(event.start);
   });
 
+  it("shows lunar labels and opens a day context menu", async () => {
+    await act(async () =>
+      root.render(<CalendarPage seed={null} onSeedConsumed={() => {}} />),
+    );
+    await flush();
+    expect(host.querySelectorAll(".calendar-lunar").length).toBeGreaterThan(27);
+
+    const cell = host.querySelectorAll<HTMLElement>(".calendar-month-cell")[15];
+    await act(async () =>
+      cell.dispatchEvent(
+        new MouseEvent("contextmenu", {
+          bubbles: true,
+          clientX: 120,
+          clientY: 160,
+        }),
+      ),
+    );
+    await flush();
+    const item = [...document.querySelectorAll('[role="menuitem"]')].find(
+      (node) => node.textContent?.includes("新建全天日程"),
+    );
+    expect(item).not.toBeUndefined();
+    await act(async () => (item as HTMLElement).click());
+    await flush();
+    expect(document.querySelector("#calendar-title")).not.toBeNull();
+    expect(
+      document.querySelector('[role="checkbox"]')?.getAttribute("aria-checked"),
+    ).toBe("true");
+  });
+
   it("switches between month, week and day views", async () => {
     await act(async () =>
       root.render(<CalendarPage seed={null} onSeedConsumed={() => {}} />),

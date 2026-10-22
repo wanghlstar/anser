@@ -1043,9 +1043,10 @@ GitHub CI 和两架构发布工作流已推送；首次 Checks 已成功，Relea
 
 ## 本地日历增强（2026-10-22，feat/calendar）
 
-- 范围：仍为纯本地 SQLite，不做 CalDAV / Exchange。新增列表视图、右键菜单、键盘快捷键、重复日程单次例外、ICS 导入导出。
+- 范围：仍为纯本地 SQLite，不做 CalDAV / Exchange。新增列表视图、右键菜单、键盘快捷键、重复日程单次例外、ICS 导入导出、农历/节气。本地 Apple 日历融合待确认只读或双向后再实施。
 - 后端：新增 `calendar_exceptions` 表；`skip_calendar_occurrence` 记录被跳过的实例，`calendar_events` 与 `due_calendar_reminders` 都过滤例外；`all_calendar_events` 返回基础事件供导出；删除事件同时清理提醒日志与例外。
 - 前端：`CalendarView` 增加 `list`，从选中日起显示 60 天，前后翻页 30 天；列表按日期分组，显示时间、地点与重复标记；月/周/日视图和列表均支持右键编辑、复制、删除。快捷键：`N` 新建、`T` 今天、`D/W/M/L` 切换视图、`←/→` 翻页。
+- 农历/节气：`src/lib/lunar.ts` 基于 `lunar-typescript` 生成农历日、初一月份、节日和二十四节气；月视图、周/日表头与列表都显示，悬停可看干支生肖全称。月视图右键空白日提供「新建日程 / 新建全天日程 / 查看当天」。
 - 重复日程：编辑或删除时可选择「仅此日程」或「整个系列」；单次修改会另存一条独立日程并跳过原实例，单次删除只写例外；拖拽仍作用于整个系列。
 - ICS：`src/lib/ics.ts` 支持 VCALENDAR/VEVENT、全天与定时、DAILY/WEEKLY/MONTHLY/YEARLY、颜色、VALARM 提醒、折行与转义；导入按本地时间解析，暂不支持 TZID；演示模式禁用导入导出。
-- 验证：前端全量 483 passed，Rust 389 passed / 2 ignored；`tsc`、`cargo fmt --check`、`check:ui`、生产构建通过。
+- 验证：前端全量 488 passed（含 `lunar.test.ts` 4 例），Rust 389 passed / 2 ignored；`tsc`、`cargo fmt --check`、`check:ui`、生产构建通过。
