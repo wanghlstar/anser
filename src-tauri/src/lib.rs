@@ -2357,9 +2357,10 @@ fn open_mail_link(url: String) -> Result<()> {
 }
 #[cfg(target_os = "macos")]
 fn activate_meeting_app(bundle_id: &str) -> bool {
-    let script = format!(r#"tell application id "{bundle_id}" to activate"#);
-    std::process::Command::new("/usr/bin/osascript")
-        .args(["-e", &script])
+    // `open -b` 走 LaunchServices：已在运行会切到前台，未运行会启动；
+    // 根 wxwork:// scheme 对已运行实例不会激活。
+    std::process::Command::new("/usr/bin/open")
+        .args(["-b", bundle_id])
         .status()
         .map(|status| status.success())
         .unwrap_or(false)

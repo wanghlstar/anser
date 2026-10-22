@@ -1086,7 +1086,7 @@ GitHub CI 和两架构发布工作流已推送；首次 Checks 已成功，Relea
 - `src/lib/meeting.ts` 解析会议时间、GMT/UTC/中国标准时间、入会链接和 9 位会议号；缺少时间或链接/会议号时不误报。`src/lib/meeting.test.ts` 覆盖两类样例。
 - 阅读器顶部新增会议提示条，提供「添加到日历」和「忽略」；添加到日历按原邮件 ID 去重，标题取邮件主题，备注写入服务商、会议号、入会链接、发件人和邮件时间，默认提前 15 分钟提醒。忽略状态按邮件保存在本地；忽略后保留一行“已忽略会议提醒”，可点“恢复提醒”重新显示，忽略时 toast 也提供“撤销”。
 - `CalendarEvent` 增加 `sourceMailId/meetingUrl/meetingCode/meetingProvider`，后端 `calendar_events` 增加对应列和旧库迁移；新增 `save_meeting_event` 命令，同一原邮件只保留一条。日历编辑窗口提供「加入会议」「查看原邮件」，列表显示会议图标。
-- 会议号降级：企业微信真实入会链接含随机 token，不能由会议号拼出（实测拼接口返回 500），因此不伪造 URL。新增 `open_meeting_app` 命令，仅放行 `wxwork://` 与 `wemeet://`；macOS 上通过 AppleScript `tell application id ... to activate` 激活已运行的会议 App；首次需要允许雁信控制对应应用（`NSAppleEventsUsageDescription` + automation entitlement）。激活失败才回退 `wxwork://` / `wemeet://`。`wxwork://jump?target=main` 会触发“请在手机上操作”，已弃用。
+- 会议号降级：企业微信真实入会链接含随机 token，不能由会议号拼出（实测拼接口返回 500），因此不伪造 URL。新增 `open_meeting_app` 命令，仅放行 `wxwork://` 与 `wemeet://`；macOS 上用 `/usr/bin/open -b <bundle>` 走 LaunchServices：已在运行会切到前台，未运行会启动；失败才回退 `wxwork://` / `wemeet://`。`wxwork://jump?target=main` 会触发“请在手机上操作”，已弃用。
 - 入会优先级（2026-10-22 补充）：「加入会议」先复制会议号并尝试打开对应 App；App 不可用时回退原会议链接；只有会议号且无 App 时保留复制提示。日历编辑器的「加入会议」「查看原邮件」改为与保存按钮同款实心样式。带参数打开 App 仍待验证，企业微信没有公开 URL 格式。
 - 正文会议链接（2026-10-22 补充）：阅读正文里的企业微信/腾讯会议链接时，按 URL 识别服务商；若当前邮件能解析出同服务商会议号，先复制会议号，再调用 `open_meeting_app` 激活或启动会议 App；App 不可用才回退浏览器打开原链接。新增 `meetingProviderForUrl` 与对应测试。
 - 验证：会议解析 5 例、阅读器提示/回退 5 例、日历会议操作 1 例通过；前端全量 62 文件 / 511 例通过，`tsc`、Prettier、`check:ui` 通过。
