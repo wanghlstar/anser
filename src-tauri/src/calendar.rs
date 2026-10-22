@@ -3,8 +3,9 @@ use crate::{
     store::Store,
 };
 use chrono::{DateTime, Datelike, Days, Duration, Local, Months, NaiveDate, TimeZone, Utc};
-use rusqlite::params;
+use rusqlite::{params, Row};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 
 pub const COLORS: [&str; 5] = ["blue", "green", "orange", "purple", "gray"];
 const REPEATS: [&str; 5] = ["none", "daily", "weekly", "monthly", "yearly"];
@@ -307,38 +308,55 @@ fn reminder_at(
     }
 }
 
+fn read_event(row: &Row<'_>) -> rusqlite::Result<CalendarEvent> {
+    Ok(CalendarEvent {
+        id: row.get(0)?,
+        title: row.get(1)?,
+        start: row.get(2)?,
+        end: row.get(3)?,
+        all_day: row.get::<_, i64>(4)? != 0,
+        location: row.get(5)?,
+        notes: row.get(6)?,
+        color: row.get(7)?,
+        reminder_minutes: row.get(8)?,
+        repeat: row.get(9)?,
+        created_at: row.get(10)?,
+        updated_at: row.get(11)?,
+    })
+}
+
+const EVENT_COLUMNS: &str =
+    "id,title,start,end,all_day,location,notes,color,reminder_minutes,repeat,created_at,updated_at";
+
+fn read_exclusions(db: &rusqlite::Connection) -> Result<HashSet<(String, String)>> {
+    let mut query = db
+        .prepare("SELECT event_id,occurrence_start FROM calendar_exceptions")
+        .map_err(err)?;
+    let rows = query
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .map_err(err)?;
+    rows.map(|row| row.map_err(err)).collect()
+}
+
 impl Store {
     pub fn calendar_events(&self, from: &str, to: &str) -> Result<Vec<CalendarOccurrence>> {
         let range = Range::parse(from, to)?;
         let db = self.db()?;
         let mut query = db
-            .prepare("SELECT id,title,start,end,all_day,location,notes,color,reminder_minutes,repeat,created_at,updated_at FROM calendar_events")
+            .prepare(&format!("SELECT {EVENT_COLUMNS} FROM calendar_events"))
             .map_err(err)?;
-        let rows = query
-            .query_map([], |row| {
-                Ok(CalendarEvent {
-                    id: row.get(0)?,
-                    title: row.get(1)?,
-                    start: row.get(2)?,
-                    end: row.get(3)?,
-                    all_day: row.get::<_, i64>(4)? != 0,
-                    location: row.get(5)?,
-                    notes: row.get(6)?,
-                    color: row.get(7)?,
-                    reminder_minutes: row.get(8)?,
-                    repeat: row.get(9)?,
-                    created_at: row.get(10)?,
-                    updated_at: row.get(11)?,
-                })
-            })
-            .map_err(err)?;
+        let rows = query.query_map([], read_event).map_err(err)?;
         let mut events = Vec::new();
         for row in rows {
             events.push(row.map_err(err)?);
         }
+        let excluded = read_exclusions(&db)?;
         let mut out: Vec<CalendarOccurrence> = events
             .iter()
             .flat_map(|event| event.occurrences_in(&range))
+            .filter(|occurrence| {
+                !excluded.contains(&(occurrence.event.id.clone(), occurrence.start.clone()))
+            })
             .collect();
         out.sort_by(|a, b| {
             a.start
@@ -346,6 +364,22 @@ impl Store {
                 .then_with(|| a.event.title.cmp(&b.event.title))
         });
         Ok(out)
+    }
+
+    /// 导出用：返回全部基础事件，不展开重复实例。
+    pub fn all_calendar_events(&self) -> Result<Vec<CalendarEvent>> {
+        let db = self.db()?;
+        let mut query = db
+            .prepare(&format!(
+                "SELECT {EVENT_COLUMNS} FROM calendar_events ORDER BY start,title"
+            ))
+            .map_err(err)?;
+        let rows = query.query_map([], read_event).map_err(err)?;
+        let mut events = Vec::new();
+        for row in rows {
+            events.push(row.map_err(err)?);
+        }
+        Ok(events)
     }
 
     pub fn save_calendar_event(&self, event: &CalendarEvent) -> Result<CalendarEvent> {
@@ -389,11 +423,31 @@ impl Store {
         Ok(saved)
     }
 
+    /// 跳过重复系列中的某一次，不影响其他实例。
+    pub fn skip_calendar_occurrence(&self, event_id: &str, occurrence_start: &str) -> Result<()> {
+        if event_id.trim().is_empty() || occurrence_start.trim().is_empty() {
+            return Err("日程实例无效".into());
+        }
+        let db = self.db()?;
+        db.execute(
+            "INSERT OR IGNORE INTO calendar_exceptions(event_id,occurrence_start,created_at) VALUES(?1,?2,?3)",
+            params![
+                event_id,
+                occurrence_start,
+                Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+            ],
+        )
+        .map_err(err)?;
+        Ok(())
+    }
+
     pub fn delete_calendar_event(&self, id: &str) -> Result<()> {
         let db = self.db()?;
         db.execute("DELETE FROM calendar_events WHERE id=?1", [id])
             .map_err(err)?;
         db.execute("DELETE FROM calendar_reminder_log WHERE event_id=?1", [id])
+            .map_err(err)?;
+        db.execute("DELETE FROM calendar_exceptions WHERE event_id=?1", [id])
             .map_err(err)?;
         Ok(())
     }
@@ -411,33 +465,25 @@ impl Store {
         )?;
         let db = self.db()?;
         let mut query = db
-            .prepare("SELECT id,title,start,end,all_day,location,notes,color,reminder_minutes,repeat,created_at,updated_at FROM calendar_events WHERE reminder_minutes IS NOT NULL")
+            .prepare(&format!(
+                "SELECT {EVENT_COLUMNS} FROM calendar_events WHERE reminder_minutes IS NOT NULL"
+            ))
             .map_err(err)?;
-        let rows = query
-            .query_map([], |row| {
-                Ok(CalendarEvent {
-                    id: row.get(0)?,
-                    title: row.get(1)?,
-                    start: row.get(2)?,
-                    end: row.get(3)?,
-                    all_day: row.get::<_, i64>(4)? != 0,
-                    location: row.get(5)?,
-                    notes: row.get(6)?,
-                    color: row.get(7)?,
-                    reminder_minutes: row.get(8)?,
-                    repeat: row.get(9)?,
-                    created_at: row.get(10)?,
-                    updated_at: row.get(11)?,
-                })
-            })
-            .map_err(err)?;
+        let rows = query.query_map([], read_event).map_err(err)?;
+        let excluded = read_exclusions(&db)?;
         let mut due = Vec::new();
         for row in rows {
             let event = row.map_err(err)?;
             let Some(minutes) = event.reminder_minutes else {
                 continue;
             };
-            for occurrence in event.occurrences_in(&range) {
+            for occurrence in event
+                .occurrences_in(&range)
+                .into_iter()
+                .filter(|occurrence| {
+                    !excluded.contains(&(occurrence.event.id.clone(), occurrence.start.clone()))
+                })
+            {
                 let Some(remind_at) = reminder_at(&event, &occurrence.start, minutes) else {
                     continue;
                 };
@@ -616,6 +662,49 @@ mod tests {
         let due = store.due_calendar_reminders(nine, 60).unwrap();
         assert_eq!(due.len(), 1);
         assert_eq!(due[0].start, "2026-10-21");
+    }
+
+    #[test]
+    fn skips_one_occurrence_of_a_repeating_event() {
+        let (_dir, store) = store();
+        let mut weekly = event("2026-10-05T01:00:00Z", "2026-10-05T02:00:00Z");
+        weekly.repeat = "weekly".into();
+        weekly.reminder_minutes = Some(0);
+        store.save_calendar_event(&weekly).unwrap();
+        store
+            .skip_calendar_occurrence(&weekly.id, "2026-10-12T01:00:00Z")
+            .unwrap();
+        let list = store
+            .calendar_events("2026-10-11T00:00:00Z", "2026-10-14T00:00:00Z")
+            .unwrap();
+        assert!(list.is_empty());
+        let due = store
+            .due_calendar_reminders(
+                DateTime::parse_from_rfc3339("2026-10-12T01:00:30Z")
+                    .unwrap()
+                    .with_timezone(&Utc),
+                60,
+            )
+            .unwrap();
+        assert!(due.is_empty());
+        let next = store
+            .calendar_events("2026-10-18T00:00:00Z", "2026-10-21T00:00:00Z")
+            .unwrap();
+        assert_eq!(next.len(), 1);
+    }
+
+    #[test]
+    fn lists_base_events_for_export() {
+        let (_dir, store) = store();
+        let mut weekly = event("2026-10-05T01:00:00Z", "2026-10-05T02:00:00Z");
+        weekly.repeat = "weekly".into();
+        store.save_calendar_event(&weekly).unwrap();
+        let mut second = event("2026-10-06T01:00:00Z", "2026-10-06T02:00:00Z");
+        second.id = "event-2".into();
+        store.save_calendar_event(&second).unwrap();
+        let all = store.all_calendar_events().unwrap();
+        assert_eq!(all.len(), 2);
+        assert_eq!(all.iter().filter(|item| item.repeat == "weekly").count(), 1);
     }
 
     #[test]

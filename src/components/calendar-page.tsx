@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   addDays,
   addMinutes,
+  differenceInCalendarDays,
   format,
   isAfter,
   isBefore,
@@ -15,13 +16,20 @@ import {
   ChevronLeft,
   ChevronRight,
   Clock,
+  Copy,
+  FileDown,
+  FileUp,
   MapPin,
+  MoreHorizontal,
+  Pencil,
   Plus,
+  Repeat,
   Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { call } from "@/lib/api";
+import { call, isDemo } from "@/lib/api";
+import { eventsToIcs, parseIcs } from "@/lib/ics";
 import {
   CALENDAR_COLORS,
   REMINDER_OPTIONS,
@@ -74,6 +82,19 @@ import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
 import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "./ui/context-menu";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "./ui/dropdown-menu";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -81,6 +102,7 @@ import {
   SelectValue,
 } from "./ui/select";
 import { Textarea } from "./ui/textarea";
+import { ToggleGroup, ToggleGroupItem } from "./ui/toggle-group";
 
 const HOUR_HEIGHT = 48;
 const HOURS = Array.from({ length: 24 }, (_, hour) => hour);
@@ -92,6 +114,7 @@ type DialogState = {
   event: CalendarEvent;
   isNew: boolean;
   series: boolean;
+  occurrence: CalendarOccurrence | null;
 };
 
 type DragState = {
@@ -169,6 +192,9 @@ export function CalendarPage({
   const [pendingSeries, setPendingSeries] = useState<CalendarEvent | null>(
     null,
   );
+  const [deleteTarget, setDeleteTarget] = useState<CalendarOccurrence | null>(
+    null,
+  );
   const [now, setNow] = useState(() => new Date());
   const dialogKey = useRef(0);
   const dragId = useRef(0);
@@ -225,6 +251,7 @@ export function CalendarPage({
       event: seed,
       isNew: true,
       series: false,
+      occurrence: null,
     });
     onSeedConsumed();
   }, [seed, onSeedConsumed]);
@@ -343,6 +370,57 @@ export function CalendarPage({
     localStorage.setItem(COLOR_STORAGE_KEY, JSON.stringify(hiddenColors));
   }, [hiddenColors]);
 
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      if (
+        event.defaultPrevented ||
+        event.isComposing ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.altKey ||
+        dialog
+      ) {
+        return;
+      }
+      const target = event.target instanceof Element ? event.target : null;
+      if (
+        target?.closest(
+          'input, textarea, select, [contenteditable="true"], [role="dialog"], [role="combobox"], [data-slot="calendar"], [data-radix-popper-content-wrapper]',
+        )
+      ) {
+        return;
+      }
+      const key = event.key.toLowerCase();
+      if (key === "n") {
+        event.preventDefault();
+        openCreate(selected);
+      } else if (key === "t") {
+        event.preventDefault();
+        selectDay(new Date());
+      } else if (key === "d") {
+        event.preventDefault();
+        setView("day");
+      } else if (key === "w") {
+        event.preventDefault();
+        setView("week");
+      } else if (key === "m") {
+        event.preventDefault();
+        setView("month");
+      } else if (key === "l") {
+        event.preventDefault();
+        setView("list");
+      } else if (key === "arrowleft") {
+        event.preventDefault();
+        setAnchor((value) => moveAnchor(view, value, -1));
+      } else if (key === "arrowright") {
+        event.preventDefault();
+        setAnchor((value) => moveAnchor(view, value, 1));
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [dialog, selected, view]);
+
   function openCreate(day: Date, startMinutes = 9 * 60, endMinutes = 10 * 60) {
     const start = dateAtMinutes(day, startMinutes);
     const end = dateAtMinutes(day, endMinutes);
@@ -352,6 +430,7 @@ export function CalendarPage({
       event: newEvent(start, end),
       isNew: true,
       series: false,
+      occurrence: null,
     });
   }
 
@@ -360,15 +439,10 @@ export function CalendarPage({
     dialogKey.current += 1;
     setDialog({
       key: dialogKey.current,
-      event: series
-        ? { ...occurrence.event }
-        : {
-            ...occurrence.event,
-            start: occurrence.start,
-            end: occurrence.end,
-          },
+      event: { ...occurrence.event },
       isNew: false,
       series,
+      occurrence,
     });
   }
 
@@ -445,6 +519,99 @@ export function CalendarPage({
     void persist(event).catch((reason) => toast.error(String(reason)));
   }
   finishDragRef.current = finishDrag;
+
+  async function removeOccurrence(
+    occurrence: CalendarOccurrence,
+    scope: "single" | "series",
+  ) {
+    try {
+      if (scope === "single" && occurrence.event.repeat !== "none") {
+        await call("skip_calendar_occurrence", {
+          eventId: occurrence.event.id,
+          occurrenceStart: occurrence.start,
+        });
+      } else {
+        await call("delete_calendar_event", { id: occurrence.event.id });
+      }
+      setDeleteTarget(null);
+      setReload((value) => value + 1);
+      toast.success(scope === "single" ? "已删除这一次日程" : "日程已删除");
+    } catch (reason) {
+      toast.error(String(reason));
+    }
+  }
+
+  async function duplicateOccurrence(occurrence: CalendarOccurrence) {
+    try {
+      await persist({
+        ...occurrence.event,
+        id: "",
+        title: `${occurrence.event.title}（副本）`,
+        createdAt: "",
+        updatedAt: "",
+      });
+      toast.success("日程已复制");
+    } catch (reason) {
+      toast.error(String(reason));
+    }
+  }
+
+  async function exportIcs() {
+    if (isDemo()) {
+      toast.error("演示模式不支持导出 ICS");
+      return;
+    }
+    try {
+      const { save } = await import("@tauri-apps/plugin-dialog");
+      const path = await save({
+        filters: [{ name: "iCalendar", extensions: ["ics"] }],
+        defaultPath: `雁信日历-${dateKey(new Date())}.ics`,
+        title: "导出日历",
+      });
+      if (!path) return;
+      const events = await call<CalendarEvent[]>("all_calendar_events");
+      if (!events.length) {
+        toast.error("没有可导出的日程");
+        return;
+      }
+      await call("write_text_file", {
+        path,
+        content: eventsToIcs(events),
+      });
+      toast.success(`已导出 ${events.length} 条日程`);
+    } catch (reason) {
+      toast.error(String(reason));
+    }
+  }
+
+  async function importIcs() {
+    if (isDemo()) {
+      toast.error("演示模式不支持导入 ICS");
+      return;
+    }
+    try {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const path = await open({
+        multiple: false,
+        filters: [{ name: "iCalendar", extensions: ["ics"] }],
+        title: "选择 ICS 文件",
+      });
+      if (!path || typeof path !== "string") return;
+      const text = await call<string>("read_text_file", { path });
+      const events = parseIcs(text);
+      if (!events.length) {
+        toast.error("文件中没有可导入的日程");
+        return;
+      }
+      for (const event of events) {
+        await call("save_calendar_event", { event });
+      }
+      setReload((value) => value + 1);
+      toast.success(`已导入 ${events.length} 条日程`);
+    } catch (reason) {
+      toast.error(String(reason));
+    }
+  }
 
   function beginCreate(dayIndex: number, event: React.PointerEvent) {
     if (event.button !== 0) return;
@@ -588,28 +755,52 @@ export function CalendarPage({
           </div>
           <h1 className="calendar-title">{formatRangeTitle(view, anchor)}</h1>
         </div>
-        <div
-          className="calendar-view-switch"
-          role="group"
-          aria-label="日历视图"
-        >
-          {(
-            [
-              ["day", "日"],
-              ["week", "周"],
-              ["month", "月"],
-            ] as const
-          ).map(([value, label]) => (
-            <Button
-              key={value}
-              variant={view === value ? "secondary" : "ghost"}
-              size="sm"
-              aria-pressed={view === value}
-              onClick={() => setView(value)}
-            >
-              {label}
-            </Button>
-          ))}
+        <div className="calendar-toolbar-actions">
+          <div
+            className="calendar-view-switch"
+            role="group"
+            aria-label="日历视图"
+          >
+            {(
+              [
+                ["day", "日"],
+                ["week", "周"],
+                ["month", "月"],
+                ["list", "列表"],
+              ] as const
+            ).map(([value, label]) => (
+              <Button
+                key={value}
+                variant={view === value ? "secondary" : "ghost"}
+                size="sm"
+                aria-pressed={view === value}
+                onClick={() => setView(value)}
+              >
+                {label}
+              </Button>
+            ))}
+          </div>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="outline"
+                size="icon-sm"
+                aria-label="更多日历操作"
+              >
+                <MoreHorizontal />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onSelect={() => void importIcs()}>
+                <FileUp />
+                导入 ICS
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => void exportIcs()}>
+                <FileDown />
+                导出 ICS
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
       <div className="calendar-body">
@@ -624,7 +815,7 @@ export function CalendarPage({
             className="calendar-mini"
           />
           <div className="calendar-colors">
-            <h2>我的日历</h2>
+            <h2>日历分类</h2>
             {CALENDAR_COLORS.map((color) => {
               const checked = !hiddenColors.includes(color.value);
               return (
@@ -663,10 +854,20 @@ export function CalendarPage({
               onSelect={selectDay}
               onCreate={openCreate}
               onEdit={openEdit}
+              onDelete={setDeleteTarget}
+              onDuplicate={duplicateOccurrence}
               onShowMore={(day) => {
                 selectDay(day);
                 setView("day");
               }}
+            />
+          ) : view === "list" ? (
+            <ListView
+              occurrences={visible}
+              loading={loading}
+              onEdit={openEdit}
+              onDelete={setDeleteTarget}
+              onDuplicate={duplicateOccurrence}
             />
           ) : (
             <TimeGrid
@@ -680,6 +881,8 @@ export function CalendarPage({
               scrollRef={scrollRef}
               onSelectDay={selectDay}
               onEdit={openEdit}
+              onDelete={setDeleteTarget}
+              onDuplicate={duplicateOccurrence}
               onBeginCreate={beginCreate}
               onBeginMove={beginMove}
               onBeginResize={beginResize}
@@ -692,22 +895,45 @@ export function CalendarPage({
         <EventEditor
           key={dialog.key}
           event={dialog.event}
+          occurrence={dialog.occurrence}
           isNew={dialog.isNew}
           series={dialog.series}
           onClose={() => setDialog(null)}
-          onSave={async (event) => {
-            await persist(event);
+          onSave={async (event, scope) => {
+            if (scope === "single" && dialog.series && dialog.occurrence) {
+              await call<CalendarEvent>("save_calendar_event", { event });
+              await call("skip_calendar_occurrence", {
+                eventId: dialog.occurrence.event.id,
+                occurrenceStart: dialog.occurrence.start,
+              });
+              setReload((value) => value + 1);
+            } else {
+              await persist(event);
+            }
             setDialog(null);
-            toast.success("日程已保存");
+            toast.success(
+              scope === "single" && dialog.series
+                ? "已保存这一次日程"
+                : "日程已保存",
+            );
           }}
           onDelete={
             dialog.isNew
               ? undefined
-              : async (event) => {
-                  await call("delete_calendar_event", { id: event.id });
+              : async (event, scope) => {
+                  if (scope === "single" && dialog.occurrence) {
+                    await call("skip_calendar_occurrence", {
+                      eventId: dialog.occurrence.event.id,
+                      occurrenceStart: dialog.occurrence.start,
+                    });
+                  } else {
+                    await call("delete_calendar_event", { id: event.id });
+                  }
                   setReload((value) => value + 1);
                   setDialog(null);
-                  toast.success("日程已删除");
+                  toast.success(
+                    scope === "single" ? "已删除这一次日程" : "日程已删除",
+                  );
                 }
           }
         />
@@ -720,7 +946,7 @@ export function CalendarPage({
           <AlertDialogHeader>
             <AlertDialogTitle>调整整个重复日程？</AlertDialogTitle>
             <AlertDialogDescription>
-              这是重复日程，移动或缩放会同时调整整个系列。若只想修改这一次，请先取消，再新建一个独立日程。
+              拖拽会同时调整整个系列。若只想修改这一次，请双击该日程后在编辑窗口选择「仅此日程」。
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -740,6 +966,46 @@ export function CalendarPage({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      <AlertDialog
+        open={deleteTarget !== null}
+        onOpenChange={(open) => !open && setDeleteTarget(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {deleteTarget?.event.repeat !== "none"
+                ? "删除重复日程"
+                : "删除日程"}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {deleteTarget?.event.repeat !== "none"
+                ? "可以只删除选中的这一次，也可以删除整个重复系列。"
+                : `确定删除「${deleteTarget?.event.title ?? ""}」？删除后无法恢复。`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            {deleteTarget?.event.repeat !== "none" && (
+              <AlertDialogAction
+                className="border border-input bg-background text-foreground hover:bg-accent hover:text-accent-foreground"
+                onClick={() => {
+                  if (deleteTarget)
+                    void removeOccurrence(deleteTarget, "single");
+                }}
+              >
+                仅这一次
+              </AlertDialogAction>
+            )}
+            <AlertDialogAction
+              onClick={() => {
+                if (deleteTarget) void removeOccurrence(deleteTarget, "series");
+              }}
+            >
+              删除
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </section>
   );
 }
@@ -752,6 +1018,8 @@ function MonthGrid({
   onSelect,
   onCreate,
   onEdit,
+  onDelete,
+  onDuplicate,
   onShowMore,
 }: {
   days: Date[];
@@ -761,6 +1029,8 @@ function MonthGrid({
   onSelect: (day: Date) => void;
   onCreate: (day: Date) => void;
   onEdit: (occurrence: CalendarOccurrence) => void;
+  onDelete: (occurrence: CalendarOccurrence) => void;
+  onDuplicate: (occurrence: CalendarOccurrence) => void;
   onShowMore: (day: Date) => void;
 }) {
   const today = new Date();
@@ -791,28 +1061,35 @@ function MonthGrid({
               <div className="calendar-day-number">{format(day, "d")}</div>
               <div className="calendar-pills">
                 {shown.map((occurrence) => (
-                  <Button
-                    variant="ghost"
-                    size="xs"
+                  <EventContextMenu
                     key={occurrence.key}
-                    className={cn(
-                      "calendar-pill",
-                      `calendar-tone-${occurrence.event.color}`,
-                    )}
-                    title={`${occurrence.event.title} · ${occurrenceLabel(occurrence)}`}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      onEdit(occurrence);
-                    }}
-                    onDoubleClick={(event) => event.stopPropagation()}
+                    occurrence={occurrence}
+                    onEdit={onEdit}
+                    onDelete={onDelete}
+                    onDuplicate={onDuplicate}
                   >
-                    {!occurrence.allDay && (
-                      <span>
-                        {format(parseEventStart(occurrence), "HH:mm")}
-                      </span>
-                    )}
-                    <strong>{occurrence.event.title}</strong>
-                  </Button>
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      className={cn(
+                        "calendar-pill",
+                        `calendar-tone-${occurrence.event.color}`,
+                      )}
+                      title={`${occurrence.event.title} · ${occurrenceLabel(occurrence)}`}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onEdit(occurrence);
+                      }}
+                      onDoubleClick={(event) => event.stopPropagation()}
+                    >
+                      {!occurrence.allDay && (
+                        <span>
+                          {format(parseEventStart(occurrence), "HH:mm")}
+                        </span>
+                      )}
+                      <strong>{occurrence.event.title}</strong>
+                    </Button>
+                  </EventContextMenu>
                 ))}
                 {items.length > shown.length && (
                   <Button
@@ -839,6 +1116,135 @@ function MonthGrid({
   );
 }
 
+function EventContextMenu({
+  occurrence,
+  onEdit,
+  onDelete,
+  onDuplicate,
+  children,
+}: {
+  occurrence: CalendarOccurrence;
+  onEdit: (occurrence: CalendarOccurrence) => void;
+  onDelete: (occurrence: CalendarOccurrence) => void;
+  onDuplicate: (occurrence: CalendarOccurrence) => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
+      <ContextMenuContent>
+        <ContextMenuItem onSelect={() => onEdit(occurrence)}>
+          <Pencil />
+          编辑日程
+        </ContextMenuItem>
+        <ContextMenuItem onSelect={() => onDuplicate(occurrence)}>
+          <Copy />
+          复制日程
+        </ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuItem
+          variant="destructive"
+          onSelect={() => onDelete(occurrence)}
+        >
+          <Trash2 />
+          删除日程
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
+  );
+}
+
+function ListView({
+  occurrences,
+  loading,
+  onEdit,
+  onDelete,
+  onDuplicate,
+}: {
+  occurrences: CalendarOccurrence[];
+  loading: boolean;
+  onEdit: (occurrence: CalendarOccurrence) => void;
+  onDelete: (occurrence: CalendarOccurrence) => void;
+  onDuplicate: (occurrence: CalendarOccurrence) => void;
+}) {
+  const today = new Date();
+  const groups = useMemo(() => {
+    const map = new Map<string, CalendarOccurrence[]>();
+    for (const occurrence of occurrences) {
+      const key = dateKey(parseEventStart(occurrence));
+      const items = map.get(key) ?? [];
+      items.push(occurrence);
+      map.set(key, items);
+    }
+    return [...map.entries()];
+  }, [occurrences]);
+
+  if (loading && !occurrences.length) {
+    return <div className="calendar-empty">正在加载日程…</div>;
+  }
+  if (!groups.length) {
+    return <div className="calendar-empty">这段时间没有日程</div>;
+  }
+  return (
+    <div className="calendar-list">
+      {groups.map(([key, items]) => {
+        const date = items[0] ? parseEventStart(items[0]) : new Date(key);
+        return (
+          <section className="calendar-list-day" key={key}>
+            <header className="calendar-list-date">
+              <strong>{format(date, "M月d日")}</strong>
+              <span>{WEEKDAY_LABELS[(date.getDay() + 6) % 7]}</span>
+              {isSameDay(date, today) && (
+                <span className="calendar-list-today">今天</span>
+              )}
+            </header>
+            <div className="calendar-list-rows">
+              {items.map((occurrence) => (
+                <EventContextMenu
+                  key={occurrence.key}
+                  occurrence={occurrence}
+                  onEdit={onEdit}
+                  onDelete={onDelete}
+                  onDuplicate={onDuplicate}
+                >
+                  <Button
+                    variant="ghost"
+                    className="calendar-list-row"
+                    onClick={() => onEdit(occurrence)}
+                  >
+                    <span
+                      className={cn(
+                        "calendar-list-dot",
+                        `calendar-tone-${occurrence.event.color}`,
+                      )}
+                    />
+                    <span className="calendar-list-time">
+                      {occurrence.allDay
+                        ? "全天"
+                        : format(parseEventStart(occurrence), "HH:mm")}
+                    </span>
+                    <span className="calendar-list-main">
+                      <strong>{occurrence.event.title}</strong>
+                      {occurrence.event.location && (
+                        <small>
+                          <MapPin /> {occurrence.event.location}
+                        </small>
+                      )}
+                    </span>
+                    {occurrence.event.repeat !== "none" && (
+                      <Repeat className="calendar-list-repeat" />
+                    )}
+                  </Button>
+                </EventContextMenu>
+              ))}
+            </div>
+          </section>
+        );
+      })}
+    </div>
+  );
+}
+
 function TimeGrid({
   days,
   occurrences,
@@ -850,6 +1256,8 @@ function TimeGrid({
   scrollRef,
   onSelectDay,
   onEdit,
+  onDelete,
+  onDuplicate,
   onBeginCreate,
   onBeginMove,
   onBeginResize,
@@ -865,6 +1273,8 @@ function TimeGrid({
   scrollRef: React.RefObject<HTMLDivElement | null>;
   onSelectDay: (day: Date) => void;
   onEdit: (occurrence: CalendarOccurrence) => void;
+  onDelete: (occurrence: CalendarOccurrence) => void;
+  onDuplicate: (occurrence: CalendarOccurrence) => void;
   onBeginCreate: (dayIndex: number, event: React.PointerEvent) => void;
   onBeginMove: (
     occurrence: CalendarOccurrence,
@@ -915,22 +1325,29 @@ function TimeGrid({
                 onClick={() => onSelectDay(day)}
               >
                 {items.map((occurrence) => (
-                  <Button
-                    variant="ghost"
-                    size="xs"
+                  <EventContextMenu
                     key={occurrence.key}
-                    className={cn(
-                      "calendar-pill",
-                      `calendar-tone-${occurrence.event.color}`,
-                    )}
-                    title={`${occurrence.event.title} · ${allDaySpanLabel(occurrence)}`}
-                    onPointerDown={(event) =>
-                      onBeginAllDayMove(occurrence, index, event)
-                    }
-                    onDoubleClick={() => onEdit(occurrence)}
+                    occurrence={occurrence}
+                    onEdit={onEdit}
+                    onDelete={onDelete}
+                    onDuplicate={onDuplicate}
                   >
-                    <strong>{occurrence.event.title}</strong>
-                  </Button>
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      className={cn(
+                        "calendar-pill",
+                        `calendar-tone-${occurrence.event.color}`,
+                      )}
+                      title={`${occurrence.event.title} · ${allDaySpanLabel(occurrence)}`}
+                      onPointerDown={(event) =>
+                        onBeginAllDayMove(occurrence, index, event)
+                      }
+                      onDoubleClick={() => onEdit(occurrence)}
+                    >
+                      <strong>{occurrence.event.title}</strong>
+                    </Button>
+                  </EventContextMenu>
                 ))}
               </div>
             );
@@ -988,48 +1405,55 @@ function TimeGrid({
                   onPointerDown={(event) => onBeginCreate(index, event)}
                 >
                   {positioned.map((item) => (
-                    <Button
-                      variant="ghost"
+                    <EventContextMenu
                       key={item.occurrence.key}
-                      className={cn(
-                        "calendar-event-block",
-                        `calendar-tone-${item.occurrence.event.color}`,
-                      )}
-                      style={{
-                        top: (item.startMinutes / 60) * HOUR_HEIGHT,
-                        height: Math.max(
-                          ((item.endMinutes - item.startMinutes) / 60) *
-                            HOUR_HEIGHT,
-                          18,
-                        ),
-                        left: `${(item.column / item.columns) * 100}%`,
-                        width: `${100 / item.columns}%`,
-                      }}
-                      onPointerDown={(event) =>
-                        onBeginMove(item.occurrence, index, event)
-                      }
-                      onDoubleClick={(event) => {
-                        event.stopPropagation();
-                        onEdit(item.occurrence);
-                      }}
+                      occurrence={item.occurrence}
+                      onEdit={onEdit}
+                      onDelete={onDelete}
+                      onDuplicate={onDuplicate}
                     >
-                      <strong>{item.occurrence.event.title}</strong>
-                      <span>
-                        {formatMinutes(item.startMinutes)} –{" "}
-                        {formatMinutes(item.endMinutes)}
-                      </span>
-                      {item.occurrence.event.location && (
-                        <small>
-                          <MapPin /> {item.occurrence.event.location}
-                        </small>
-                      )}
-                      <span
-                        className="calendar-resize-handle"
+                      <Button
+                        variant="ghost"
+                        className={cn(
+                          "calendar-event-block",
+                          `calendar-tone-${item.occurrence.event.color}`,
+                        )}
+                        style={{
+                          top: (item.startMinutes / 60) * HOUR_HEIGHT,
+                          height: Math.max(
+                            ((item.endMinutes - item.startMinutes) / 60) *
+                              HOUR_HEIGHT,
+                            18,
+                          ),
+                          left: `${(item.column / item.columns) * 100}%`,
+                          width: `${100 / item.columns}%`,
+                        }}
                         onPointerDown={(event) =>
-                          onBeginResize(item.occurrence, index, event)
+                          onBeginMove(item.occurrence, index, event)
                         }
-                      />
-                    </Button>
+                        onDoubleClick={(event) => {
+                          event.stopPropagation();
+                          onEdit(item.occurrence);
+                        }}
+                      >
+                        <strong>{item.occurrence.event.title}</strong>
+                        <span>
+                          {formatMinutes(item.startMinutes)} –{" "}
+                          {formatMinutes(item.endMinutes)}
+                        </span>
+                        {item.occurrence.event.location && (
+                          <small>
+                            <MapPin /> {item.occurrence.event.location}
+                          </small>
+                        )}
+                        <span
+                          className="calendar-resize-handle"
+                          onPointerDown={(event) =>
+                            onBeginResize(item.occurrence, index, event)
+                          }
+                        />
+                      </Button>
+                    </EventContextMenu>
                   ))}
                   {drag &&
                     drag.kind !== "all-day" &&
@@ -1174,6 +1598,7 @@ function TimeSelect({
 
 function EventEditor({
   event,
+  occurrence,
   isNew,
   series,
   onClose,
@@ -1181,17 +1606,26 @@ function EventEditor({
   onDelete,
 }: {
   event: CalendarEvent;
+  occurrence: CalendarOccurrence | null;
   isNew: boolean;
   series: boolean;
   onClose: () => void;
-  onSave: (event: CalendarEvent) => Promise<void>;
-  onDelete?: (event: CalendarEvent) => Promise<void>;
+  onSave: (event: CalendarEvent, scope: "single" | "series") => Promise<void>;
+  onDelete?: (
+    event: CalendarEvent,
+    scope: "single" | "series",
+  ) => Promise<void>;
 }) {
-  const initial = parseEventDateTime(event);
+  const initial = occurrence
+    ? { start: parseEventStart(occurrence), end: parseEventEnd(occurrence) }
+    : parseEventDateTime(event);
   const [title, setTitle] = useState(event.title);
   const [allDay, setAllDay] = useState(event.allDay);
   const [start, setStart] = useState(initial.start);
   const [end, setEnd] = useState(initial.end);
+  const [scope, setScope] = useState<"single" | "series">(
+    series ? "single" : "series",
+  );
   const [location, setLocation] = useState(event.location);
   const [notes, setNotes] = useState(event.notes);
   const [color, setColor] = useState<CalendarColor>(event.color);
@@ -1252,20 +1686,71 @@ function EventEditor({
     }
     setError("");
     setSaving(true);
-    const payload: CalendarEvent = {
-      ...event,
-      title: title.trim(),
-      allDay,
-      start: allDay ? dateKey(start) : start.toISOString(),
-      end: allDay ? dateKey(end) : end.toISOString(),
-      location,
-      notes,
-      color,
-      reminderMinutes: reminder === "none" ? null : Number(reminder),
-      repeat,
-    };
+    let payload: CalendarEvent;
+    if (scope === "single" && series && occurrence) {
+      payload = {
+        ...event,
+        id: "",
+        title: title.trim(),
+        allDay,
+        start: allDay ? dateKey(start) : start.toISOString(),
+        end: allDay ? dateKey(end) : end.toISOString(),
+        location,
+        notes,
+        color,
+        reminderMinutes: reminder === "none" ? null : Number(reminder),
+        repeat: "none",
+        createdAt: "",
+        updatedAt: "",
+      };
+    } else if (scope === "series" && series && occurrence) {
+      const base = parseEventDateTime(event);
+      const occurrenceStart = parseEventStart(occurrence);
+      let seriesStart: Date;
+      let seriesEnd: Date;
+      if (!event.allDay && !allDay) {
+        const delta = start.getTime() - occurrenceStart.getTime();
+        seriesStart = new Date(base.start.getTime() + delta);
+        seriesEnd = new Date(
+          seriesStart.getTime() + (end.getTime() - start.getTime()),
+        );
+      } else if (event.allDay && allDay) {
+        const delta = differenceInCalendarDays(start, occurrenceStart);
+        seriesStart = addDays(base.start, delta);
+        const duration = differenceInCalendarDays(end, start);
+        seriesEnd = addDays(seriesStart, duration);
+      } else {
+        seriesStart = start;
+        seriesEnd = end;
+      }
+      payload = {
+        ...event,
+        title: title.trim(),
+        allDay,
+        start: allDay ? dateKey(seriesStart) : seriesStart.toISOString(),
+        end: allDay ? dateKey(seriesEnd) : seriesEnd.toISOString(),
+        location,
+        notes,
+        color,
+        reminderMinutes: reminder === "none" ? null : Number(reminder),
+        repeat,
+      };
+    } else {
+      payload = {
+        ...event,
+        title: title.trim(),
+        allDay,
+        start: allDay ? dateKey(start) : start.toISOString(),
+        end: allDay ? dateKey(end) : end.toISOString(),
+        location,
+        notes,
+        color,
+        reminderMinutes: reminder === "none" ? null : Number(reminder),
+        repeat,
+      };
+    }
     try {
-      await onSave(payload);
+      await onSave(payload, scope);
     } catch (reason) {
       setError(String(reason));
     } finally {
@@ -1280,7 +1765,7 @@ function EventEditor({
           <DialogTitle>{isNew ? "新建日程" : "编辑日程"}</DialogTitle>
           <DialogDescription>
             {series
-              ? "这是重复日程，保存后会影响整个系列。"
+              ? "默认只修改这一次；选择「整个系列」会同步所有重复实例。"
               : "时间按本地时区显示，提醒仅在雁信运行时弹出。"}
           </DialogDescription>
         </DialogHeader>
@@ -1302,6 +1787,23 @@ function EventEditor({
             />
             <span>全天</span>
           </Label>
+          {series && (
+            <div className="calendar-form-row">
+              <Label>修改范围</Label>
+              <ToggleGroup
+                type="single"
+                variant="outline"
+                size="sm"
+                value={scope}
+                onValueChange={(next) =>
+                  next && setScope(next as "single" | "series")
+                }
+              >
+                <ToggleGroupItem value="single">仅此日程</ToggleGroupItem>
+                <ToggleGroupItem value="series">整个系列</ToggleGroupItem>
+              </ToggleGroup>
+            </div>
+          )}
           <div className="calendar-form-row">
             <Label>开始</Label>
             <div className="calendar-form-dates">
@@ -1443,22 +1945,46 @@ function EventEditor({
             <AlertDialogContent>
               <AlertDialogHeader>
                 <AlertDialogTitle>
-                  {series ? "删除整个重复日程？" : "删除这个日程？"}
+                  {series ? "删除重复日程？" : "删除这个日程？"}
                 </AlertDialogTitle>
                 <AlertDialogDescription>
-                  删除后无法恢复。
+                  {series
+                    ? "可以只删除当前这一次，也可以删除整个重复系列。删除后无法恢复。"
+                    : "删除后无法恢复。"}
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
                 <AlertDialogCancel>取消</AlertDialogCancel>
-                <AlertDialogAction
-                  onClick={() => {
-                    setConfirmDelete(false);
-                    void onDelete(event);
-                  }}
-                >
-                  删除
-                </AlertDialogAction>
+                {series ? (
+                  <>
+                    <AlertDialogAction
+                      className="border border-input bg-background text-foreground hover:bg-accent hover:text-accent-foreground"
+                      onClick={() => {
+                        setConfirmDelete(false);
+                        void onDelete(event, "single");
+                      }}
+                    >
+                      仅此日程
+                    </AlertDialogAction>
+                    <AlertDialogAction
+                      onClick={() => {
+                        setConfirmDelete(false);
+                        void onDelete(event, "series");
+                      }}
+                    >
+                      整个系列
+                    </AlertDialogAction>
+                  </>
+                ) : (
+                  <AlertDialogAction
+                    onClick={() => {
+                      setConfirmDelete(false);
+                      void onDelete(event, "series");
+                    }}
+                  >
+                    删除
+                  </AlertDialogAction>
+                )}
               </AlertDialogFooter>
             </AlertDialogContent>
           </AlertDialog>

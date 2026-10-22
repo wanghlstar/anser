@@ -150,9 +150,11 @@ CSS 改动要在 `dist/assets/index-*.css` 里 grep；本机 browser.screenshot 
 - 文档索引：`docs/IMPLEMENTATION.md`（进度）、`docs/RULES_PORT_UPSTREAM.md`（关键发现 1–61）、`docs/UPSTREAM_REVIEW_0_1_20_0_1_21.md`（逐项评估）、`docs/UPSTREAM_VERSION_MATRIX.md`（全量比较）、`docs/UPDATES.md`（发布/更新器）。
 
 
-## 七、日历（首版已实现，feat/calendar 待验收）
+## 七、日历（本地增强已实现，feat/calendar 待验收）
 
 目标：在雁信内增加日历/日程，交互参考 Foxmail。范围已确认：纯本地 SQLite、月/周/日 + 拖拽、简单重复 + 分段提醒、仅邮件转日程；设计与实施计划见 `docs/plans/2026-10-21-calendar*.md`。
+
+2026-10-22 补充：列表视图、右键菜单、键盘快捷键、重复单次例外、ICS 导入导出已实现；仍为本地 SQLite，不做 CalDAV / Exchange。验收与门禁结果见 `docs/IMPLEMENTATION.md` 的「本地日历增强」。
 
 ### 需要先定
 

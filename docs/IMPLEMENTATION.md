@@ -1035,8 +1035,17 @@ GitHub CI 和两架构发布工作流已推送；首次 Checks 已成功，Relea
 
 ## 本地日历首版（2026-10-21，feat/calendar）
 
-- 范围：纯本地 SQLite；月/周/日三视图 + 全天行、双击/拖拽新建、拖动改期、下拉改结束；简单重复（每天/每周/每月/每年）与分段提醒；仅邮件转日程。不做 CalDAV、ICS、会议邀请、多日历账户与单次例外。
+- 范围：纯本地 SQLite；月/周/日三视图 + 全天行、双击/拖拽新建、拖动改期、下拉改结束；简单重复（每天/每周/每月/每年）与分段提醒；仅邮件转日程。首版不做 CalDAV、ICS、会议邀请、多日历账户与单次例外；ICS 与单次例外已在 2026-10-22 增强中补齐。
 - 设计/计划：`docs/plans/2026-10-21-calendar-design.md`、`docs/plans/2026-10-21-calendar.md`。
 - 后端：`src-tauri/src/calendar.rs` 新增 `calendar_events` / `calendar_reminder_log`，范围查询在 Rust 展开重复；`list_calendar_events` / `save_calendar_event` / `delete_calendar_event`；后台每 30 秒检查提醒，启动补查 60 分钟内错过的实例。
 - 前端：`src/components/calendar-page.tsx` 独立页面，侧栏「日历」位于「通讯录」之前；`src/lib/calendar.ts` 日期/布局/吸附工具；邮件阅读工具栏与右键菜单新增「创建日程」，默认下一个整点。
 - 验证：`src-tauri/src/calendar.rs` 7 个单测、`calendar.test.ts` 5 例、`mail-to-event.test.ts` 2 例、`calendar-page.test.tsx` 2 例；`tsc`、`check:ui`、Prettier、生产构建通过；浏览器演示模式实测月/周/日切换、新建、拖拽移动、缩放结束时间与邮件转日程。
+
+## 本地日历增强（2026-10-22，feat/calendar）
+
+- 范围：仍为纯本地 SQLite，不做 CalDAV / Exchange。新增列表视图、右键菜单、键盘快捷键、重复日程单次例外、ICS 导入导出。
+- 后端：新增 `calendar_exceptions` 表；`skip_calendar_occurrence` 记录被跳过的实例，`calendar_events` 与 `due_calendar_reminders` 都过滤例外；`all_calendar_events` 返回基础事件供导出；删除事件同时清理提醒日志与例外。
+- 前端：`CalendarView` 增加 `list`，从选中日起显示 60 天，前后翻页 30 天；列表按日期分组，显示时间、地点与重复标记；月/周/日视图和列表均支持右键编辑、复制、删除。快捷键：`N` 新建、`T` 今天、`D/W/M/L` 切换视图、`←/→` 翻页。
+- 重复日程：编辑或删除时可选择「仅此日程」或「整个系列」；单次修改会另存一条独立日程并跳过原实例，单次删除只写例外；拖拽仍作用于整个系列。
+- ICS：`src/lib/ics.ts` 支持 VCALENDAR/VEVENT、全天与定时、DAILY/WEEKLY/MONTHLY/YEARLY、颜色、VALARM 提醒、折行与转义；导入按本地时间解析，暂不支持 TZID；演示模式禁用导入导出。
+- 验证：前端全量 483 passed，Rust 389 passed / 2 ignored；`tsc`、`cargo fmt --check`、`check:ui`、生产构建通过。

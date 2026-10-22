@@ -45,6 +45,7 @@ export function leaveDemo() {
   localStorage.removeItem(key + "-preferences");
   localStorage.removeItem(key + "-outbox");
   localStorage.removeItem(key + "-calendar");
+  localStorage.removeItem(key + "-calendar-exceptions");
   localStorage.removeItem(key + "-auto-start");
   for (let i = localStorage.length - 1; i >= 0; i--) {
     const stored = localStorage.key(i);
@@ -242,6 +243,20 @@ function saveDemoCalendar(events: CalendarEvent[]) {
   localStorage.setItem(calendarKey, JSON.stringify(events));
 }
 
+function demoCalendarExceptions(): Record<string, string[]> {
+  try {
+    return JSON.parse(
+      localStorage.getItem(calendarKey + "-exceptions") || "{}",
+    ) as Record<string, string[]>;
+  } catch {
+    return {};
+  }
+}
+
+function saveDemoCalendarExceptions(value: Record<string, string[]>) {
+  localStorage.setItem(calendarKey + "-exceptions", JSON.stringify(value));
+}
+
 function demoCalendarInRange(
   events: CalendarEvent[],
   from: string,
@@ -249,8 +264,10 @@ function demoCalendarInRange(
 ): CalendarOccurrence[] {
   const fromDate = new Date(from);
   const toDate = new Date(to);
+  const exceptions = demoCalendarExceptions();
   return events
     .flatMap((event) => {
+      if ((exceptions[event.id] || []).includes(event.start)) return [];
       const start = event.allDay
         ? parse(event.start, "yyyy-MM-dd", new Date())
         : new Date(event.start);
@@ -641,6 +658,17 @@ export async function call<T = void>(
           (item) => item.id !== args.id,
         );
         saveDemoCalendar(events);
+        break;
+      }
+      case "all_calendar_events":
+        result = demoCalendarEvents();
+        break;
+      case "skip_calendar_occurrence": {
+        const exceptions = demoCalendarExceptions();
+        const eventId = String(args.eventId);
+        const start = String(args.occurrenceStart);
+        exceptions[eventId] = [...(exceptions[eventId] || []), start];
+        saveDemoCalendarExceptions(exceptions);
         break;
       }
       case "contact_suggestions": {

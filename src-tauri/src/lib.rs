@@ -575,6 +575,26 @@ async fn delete_calendar_event(state: tauri::State<'_, AppState>, id: String) ->
         .map_err(err)?
 }
 #[tauri::command]
+async fn skip_calendar_occurrence(
+    state: tauri::State<'_, AppState>,
+    event_id: String,
+    occurrence_start: String,
+) -> Result<()> {
+    let store = state.store.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        store.skip_calendar_occurrence(&event_id, &occurrence_start)
+    })
+    .await
+    .map_err(err)?
+}
+#[tauri::command]
+async fn all_calendar_events(state: tauri::State<'_, AppState>) -> Result<Vec<CalendarEvent>> {
+    let store = state.store.clone();
+    tauri::async_runtime::spawn_blocking(move || store.all_calendar_events())
+        .await
+        .map_err(err)?
+}
+#[tauri::command]
 async fn list_outbox(state: tauri::State<'_, AppState>) -> Result<Vec<OutboxRecord>> {
     let store = state.store.clone();
     tauri::async_runtime::spawn_blocking(move || store.outbox())
@@ -3353,6 +3373,8 @@ pub fn run() {
             list_calendar_events,
             save_calendar_event,
             delete_calendar_event,
+            skip_calendar_occurrence,
+            all_calendar_events,
             list_outbox,
             sent_upload_action,
             retry_outbox,

@@ -46,6 +46,14 @@ describe("calendar ranges", () => {
     const anchor = new Date(2026, 9, 21, 12);
     expect(dateKey(moveAnchor("week", anchor, -1))).toBe("2026-10-14");
     expect(dateKey(moveAnchor("day", anchor, 1))).toBe("2026-10-22");
+    expect(dateKey(moveAnchor("list", anchor, 1))).toBe("2026-11-20");
+  });
+
+  it("loads sixty days for the agenda list", () => {
+    const anchor = new Date(2026, 9, 21, 12);
+    const range = rangeForView("list", anchor);
+    expect(dateKey(range.from)).toBe("2026-10-21");
+    expect(dateKey(range.to)).toBe("2026-12-20");
   });
 });
 

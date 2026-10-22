@@ -17,7 +17,7 @@ import type {
   CalendarRepeat,
 } from "./types";
 
-export type CalendarView = "month" | "week" | "day";
+export type CalendarView = "month" | "week" | "day" | "list";
 
 export const CALENDAR_COLORS: { value: CalendarColor; label: string }[] = [
   { value: "blue", label: "蓝色" },
@@ -79,6 +79,10 @@ export function rangeForView(
   view: CalendarView,
   anchor: Date,
 ): { from: Date; to: Date } {
+  if (view === "list") {
+    const from = startOfDay(anchor);
+    return { from, to: addDays(from, 60) };
+  }
   if (view === "month") {
     const from = startOfWeek(startOfMonth(anchor), { weekStartsOn: 1 });
     return { from, to: addDays(from, 42) };
@@ -103,6 +107,7 @@ export function moveAnchor(
   anchor: Date,
   direction: -1 | 1,
 ): Date {
+  if (view === "list") return addDays(anchor, direction * 30);
   if (view === "month") return addMonths(anchor, direction);
   if (view === "week") return addWeeks(anchor, direction);
   return addDays(anchor, direction);
@@ -232,6 +237,7 @@ export function occurrenceLabel(
 }
 
 export function formatRangeTitle(view: CalendarView, anchor: Date): string {
+  if (view === "list") return `${format(anchor, "yyyy年M月d日")} 起`;
   if (view === "month") return format(anchor, "yyyy年M月");
   if (view === "week") {
     const from = startOfWeek(anchor, { weekStartsOn: 1 });
