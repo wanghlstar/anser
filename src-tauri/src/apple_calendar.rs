@@ -269,6 +269,21 @@ pub fn events(from: &str, to: &str, calendar_ids: Vec<String>) -> Result<Vec<App
     Ok(result)
 }
 
+pub fn open_settings() -> Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Calendars")
+            .status()
+            .map_err(err)?;
+        Ok(())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Err("仅 macOS 支持打开日历隐私设置".into())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::color_from_hex;

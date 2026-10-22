@@ -3,6 +3,7 @@ import {
   useEffect,
   useRef,
   useState,
+  type ComponentProps,
   type RefObject,
 } from "react";
 import {
@@ -34,7 +35,7 @@ import { MailBodySkeleton } from "./mail-skeleton";
 import { Alert, AlertTitle, AlertDescription } from "./ui/alert";
 import { MailContent } from "./mail-content";
 import { MailAttachments } from "./mail-attachments";
-import { ScrollPane } from "./scroll-pane";
+import { ScrollArea } from "./ui/scroll-area";
 import { call, newDraft } from "../lib/api";
 import { parseAddresses, replyRecipients } from "../lib/addresses";
 import { mailTime, prefixedSubject, replyHeaders } from "../lib/conversations";
@@ -527,6 +528,8 @@ export function ConversationReader({
   const replyTarget = useRef("");
   const stream = useRef<HTMLDivElement>(null);
   const pinned = useRef(true);
+  const anchoring = useRef(true);
+  const automaticScrollTop = useRef(0);
   const newest = useRef("");
   const loaded = useCallback(
     (detail: Detail) =>
@@ -538,6 +541,8 @@ export function ConversationReader({
   const bottom = useCallback(() => {
     const scroll = scrollRef.current;
     if (scroll) scroll.scrollTo(0, scroll.scrollHeight);
+    anchoring.current = false;
+    automaticScrollTop.current = scroll?.scrollTop || 0;
     pinned.current = true;
     setNewBelow(false);
   }, [scrollRef]);
@@ -572,24 +577,71 @@ export function ConversationReader({
     const scroll = scrollRef.current,
       content = stream.current;
     if (!scroll || !content) return;
+    const root = scroll.closest('[data-slot="scroll-area"]') ?? scroll;
     const changed = () => {
-      if (pinned.current) scroll.scrollTo(0, scroll.scrollHeight);
+      if (anchoring.current) {
+        const turn = [
+          ...content.querySelectorAll<HTMLElement>("[data-mail-id]"),
+        ].find((element) => element.dataset.mailId === selected.mail.id);
+        if (!turn) return;
+        scroll.scrollTop +=
+          turn.getBoundingClientRect().top - scroll.getBoundingClientRect().top;
+        pinned.current = false;
+      } else if (pinned.current) {
+        scroll.scrollTo(0, scroll.scrollHeight);
+      }
+      automaticScrollTop.current = scroll.scrollTop;
     };
     const scrolled = () => {
+      if (anchoring.current) return;
+      if (Math.abs(scroll.scrollTop - automaticScrollTop.current) < 2) return;
       pinned.current =
         scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 96;
       if (pinned.current) setNewBelow(false);
     };
-    const observer = new ResizeObserver(changed);
+    const interact = () => {
+      anchoring.current = false;
+    };
+    const key = (event: Event) => {
+      if (
+        [
+          "ArrowUp",
+          "ArrowDown",
+          "PageUp",
+          "PageDown",
+          "Home",
+          "End",
+          " ",
+        ].includes((event as KeyboardEvent).key)
+      )
+        interact();
+    };
+    let frame = 0;
+    const schedule = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(changed);
+    };
+    const observer = new ResizeObserver(schedule);
     observer.observe(content);
     scroll.addEventListener("scroll", scrolled);
-    const frame = requestAnimationFrame(changed);
+    root.addEventListener("wheel", interact, { passive: true, capture: true });
+    root.addEventListener("touchstart", interact, {
+      passive: true,
+      capture: true,
+    });
+    root.addEventListener("pointerdown", interact, true);
+    root.addEventListener("keydown", key, true);
+    schedule();
     return () => {
       cancelAnimationFrame(frame);
       observer.disconnect();
       scroll.removeEventListener("scroll", scrolled);
+      root.removeEventListener("wheel", interact, true);
+      root.removeEventListener("touchstart", interact, true);
+      root.removeEventListener("pointerdown", interact, true);
+      root.removeEventListener("keydown", key, true);
     };
-  }, [scrollRef, messages]);
+  }, [scrollRef, messages, selected.mail.id]);
   const own = (mail: Mail) =>
     parseAddresses(mail.sender).some(
       (a) =>
@@ -611,12 +663,13 @@ export function ConversationReader({
       !selected.mail.references?.length)
   ) {
     return (
-      <div className="sb-host">
-        <ScrollPane
-          className="reader-scroll"
-          id="mail-reader-content"
-          scrollerRef={scrollRef}
-        >
+      <ScrollArea
+        className="reader-scroll reader-scroll-area"
+        type="always"
+        viewportRef={scrollRef}
+        viewportProps={{ id: "mail-reader-content" } as ComponentProps<"div">}
+      >
+        <div className="reader-scroll-content">
           <ParseWarnings mail={selected.mail} />
           {selected.html ? (
             <MailContent
@@ -635,54 +688,53 @@ export function ConversationReader({
               onAttachment(selected.mail, index, name)
             }
           />
-        </ScrollPane>
-      </div>
+        </div>
+      </ScrollArea>
     );
   }
   return (
     <>
-      <div className="sb-host">
-        <ScrollPane
-          className="reader-scroll conversation-scroll"
-          id="mail-reader-content"
-          scrollerRef={scrollRef}
-        >
-          <div className="conversation-stream" ref={stream}>
-            <div className="conversation-start">
-              <Badge variant="secondary">{messages.length} 封邮件</Badge>
-              <span>按时间排列</span>
-            </div>
-            {error && (
-              <div role="alert" className="turn-error">
-                对话加载失败
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setRetry((n) => n + 1)}
-                >
-                  重新加载对话
-                </Button>
-              </div>
-            )}
-            {messages.map((mail) => (
-              <Turn
-                key={mail.id}
-                mail={mail}
-                selected={mail.id === selected.mail.id ? selected : null}
-                own={own(mail)}
-                demo={demo}
-                onReply={onReply}
-                onExport={onExport}
-                onAttachment={onAttachment}
-                onAction={onAction}
-                onLink={onLink}
-                onInteract={onInteract}
-                onLoaded={loaded}
-              />
-            ))}
+      <ScrollArea
+        className="reader-scroll reader-scroll-area conversation-scroll"
+        type="always"
+        viewportRef={scrollRef}
+        viewportProps={{ id: "mail-reader-content" } as ComponentProps<"div">}
+      >
+        <div className="reader-scroll-content conversation-stream" ref={stream}>
+          <div className="conversation-start">
+            <Badge variant="secondary">{messages.length} 封邮件</Badge>
+            <span>按时间排列</span>
           </div>
-        </ScrollPane>
-      </div>
+          {error && (
+            <div role="alert" className="turn-error">
+              对话加载失败
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setRetry((n) => n + 1)}
+              >
+                重新加载对话
+              </Button>
+            </div>
+          )}
+          {messages.map((mail) => (
+            <Turn
+              key={mail.id}
+              mail={mail}
+              selected={mail.id === selected.mail.id ? selected : null}
+              own={own(mail)}
+              demo={demo}
+              onReply={onReply}
+              onExport={onExport}
+              onAttachment={onAttachment}
+              onAction={onAction}
+              onLink={onLink}
+              onInteract={onInteract}
+              onLoaded={loaded}
+            />
+          ))}
+        </div>
+      </ScrollArea>
       {newBelow && (
         <Button
           variant="secondary"

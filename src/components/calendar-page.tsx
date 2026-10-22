@@ -398,6 +398,27 @@ export function CalendarPage({
   }, []);
 
   useEffect(() => {
+    const refresh = () => {
+      void call<AppleCalendarStatus>("apple_calendar_status")
+        .then((status) => {
+          setAppleStatus(status);
+          if (status === "fullAccess" && appleCalendars.length === 0)
+            void loadAppleCalendars();
+        })
+        .catch(() => {});
+    };
+    const visibility = () => {
+      if (document.visibilityState === "visible") refresh();
+    };
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", visibility);
+    return () => {
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", visibility);
+    };
+  }, [appleCalendars.length]);
+
+  useEffect(() => {
     if (
       appleStatus !== "fullAccess" ||
       !appleEnabled ||
@@ -837,7 +858,13 @@ export function CalendarPage({
       const text = await call<string>("fetch_calendar_subscription", {
         url: subscription.url,
       });
-      const events = parseIcs(text)
+      const today = new Date();
+      const events = parseIcs(text, {
+        expand: {
+          from: new Date(today.getFullYear() - 2, 0, 1),
+          to: new Date(today.getFullYear() + 4, 0, 1),
+        },
+      })
         .filter(
           (event) =>
             !isChinaHolidayUrl(subscription.url) || Boolean(event.specialDay),

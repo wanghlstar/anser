@@ -495,6 +495,10 @@ export default function App() {
     token: string;
     click: number;
   } | null>(null);
+  const [notificationSelected, setNotificationSelected] = useState<{
+    id: string;
+    click: number;
+  } | null>(null);
   const notificationGeneration = useRef(0);
   const notificationReading = useRef("");
   const notificationContext = useRef({ page, search, composing, demo });
@@ -557,6 +561,10 @@ export default function App() {
           listMode: queryRef.current.listMode,
         });
         notificationReading.current = mail.id;
+        setNotificationSelected({
+          id: mail.id,
+          click: notificationToken.click,
+        });
         setSelected(mail.id);
         readingNeighbors.current = null;
         setDetailRetry((value) => value + 1);
@@ -1119,6 +1127,7 @@ export default function App() {
   ) {
     ++notificationGeneration.current;
     setNotificationToken(null);
+    setNotificationSelected(null);
     notificationReading.current = "";
     setPage("mail");
     setSearch("");
@@ -1532,6 +1541,7 @@ export default function App() {
   async function openMail(m: Mail, messages = data.messages) {
     ++notificationGeneration.current;
     setNotificationToken(null);
+    setNotificationSelected(null);
     notificationReading.current = "";
     const index = messages.findIndex(
       (item) =>
@@ -3730,8 +3740,9 @@ export default function App() {
                                       {grouped &&
                                         (m.conversationCount || 0) > 1 && (
                                           <Badge
-                                            variant="secondary"
+                                            variant="outline"
                                             className="conversation-count"
+                                            aria-label={`此对话包含 ${m.conversationCount} 封邮件`}
                                           >
                                             {m.conversationCount}
                                           </Badge>
@@ -4390,9 +4401,11 @@ export default function App() {
                       <h1>{detail.mail.subject}</h1>
                     </div>
                     <ConversationReader
-                      key={`${selected}:${query.listMode}`}
+                      key={`${selected}:${query.listMode}:${notificationSelected?.click ?? "list"}`}
                       selected={detail}
-                      singleMessage={!grouped}
+                      singleMessage={
+                        !grouped || notificationSelected?.id === selected
+                      }
                       revision={data.messages}
                       accounts={data.accounts}
                       demo={demo}

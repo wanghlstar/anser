@@ -104,4 +104,74 @@ describe("ics", () => {
       parseIcs("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nEND:VCALENDAR\r\n"),
     ).toEqual([]);
   });
+  it("converts TZID wall times to UTC across DST", () => {
+    const text = [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "BEGIN:VEVENT",
+      "UID:tz-1",
+      "DTSTART;TZID=America/New_York:20260308T013000",
+      "DTEND;TZID=America/New_York:20260308T023000",
+      "RRULE:FREQ=DAILY;COUNT=2",
+      "SUMMARY:跨夏令时",
+      "END:VEVENT",
+      "END:VCALENDAR",
+    ].join("\r\n");
+    const parsed = parseIcs(text, {
+      expand: { from: new Date("2026-03-01"), to: new Date("2026-03-12") },
+    });
+    expect(parsed.map((event) => event.start)).toEqual([
+      "2026-03-08T06:30:00.000Z",
+      "2026-03-09T05:30:00.000Z",
+    ]);
+    expect(parsed.every((event) => event.repeat === "none")).toBe(true);
+    expect(new Set(parsed.map((event) => event.id)).size).toBe(2);
+  });
+
+  it("expands interval, byday, count, exdate and rdate", () => {
+    const text = [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "BEGIN:VEVENT",
+      "UID:repeat-1",
+      "DTSTART;TZID=Asia/Shanghai:20261006T090000",
+      "DTEND;TZID=Asia/Shanghai:20261006T100000",
+      "RRULE:FREQ=WEEKLY;INTERVAL=2;BYDAY=TU;COUNT=3",
+      "EXDATE;TZID=Asia/Shanghai:20261020T090000",
+      "RDATE;TZID=Asia/Shanghai:20261023T090000",
+      "SUMMARY:双周会",
+      "END:VEVENT",
+      "END:VCALENDAR",
+    ].join("\r\n");
+    const parsed = parseIcs(text, {
+      expand: { from: new Date("2026-09-01"), to: new Date("2027-01-01") },
+    });
+    expect(parsed.map((event) => event.start)).toEqual([
+      "2026-10-06T01:00:00.000Z",
+      "2026-10-23T01:00:00.000Z",
+      "2026-11-03T01:00:00.000Z",
+    ]);
+  });
+
+  it("keeps inclusive all-day ends when expanding repeat", () => {
+    const text = [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "BEGIN:VEVENT",
+      "UID:allday-1",
+      "DTSTART;VALUE=DATE:20261024",
+      "DTEND;VALUE=DATE:20261027",
+      "RRULE:FREQ=DAILY;COUNT=2",
+      "SUMMARY:三天活动",
+      "END:VEVENT",
+      "END:VCALENDAR",
+    ].join("\r\n");
+    const parsed = parseIcs(text, {
+      expand: { from: new Date("2026-10-01"), to: new Date("2026-11-01") },
+    });
+    expect(parsed.map((event) => [event.start, event.end])).toEqual([
+      ["2026-10-24", "2026-10-26"],
+      ["2026-10-25", "2026-10-27"],
+    ]);
+  });
 });

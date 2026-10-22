@@ -553,6 +553,11 @@ fn apple_calendar_status() -> String {
 }
 
 #[tauri::command]
+fn open_apple_calendar_settings() -> Result<()> {
+    apple_calendar::open_settings()
+}
+
+#[tauri::command]
 async fn connect_apple_calendar() -> Result<Vec<apple_calendar::AppleCalendarInfo>> {
     tauri::async_runtime::spawn_blocking(apple_calendar::connect)
         .await
@@ -3505,6 +3510,7 @@ pub fn run() {
             delete_contact,
             contact_suggestions,
             apple_calendar_status,
+            open_apple_calendar_settings,
             connect_apple_calendar,
             list_apple_calendars,
             list_apple_calendar_events,

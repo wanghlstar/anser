@@ -1071,3 +1071,11 @@ GitHub CI 和两架构发布工作流已推送；首次 Checks 已成功，Relea
 - 数据处理：用户此前通过文件导入的 246 条中国大陆节假日日程已从本地 `calendar_events` 删除；真实预览中中国大陆订阅同步 40 条、中国香港订阅同步 51 条。
 - 验证：Rust 392 passed / 2 ignored；前端全量 497 passed；`tsc`、`check:ui`、`cargo fmt --check`、桌面构建通过；预览确认 Apple 日历已连接并列出“生日”等日历，订阅顺序为中国大陆、中国香港。用户已验收 Apple 只读叠加、订阅编辑与侧栏折叠。
 - 发布：版本统一为 0.2.3，新增 `docs/releases/v0.2.3.md`；最低系统版本 macOS 13。
+
+## 阅读与订阅增强（2026-10-22，fix/reader-calendar-followups，未发版）
+
+- 触发：用户要求先修复上游 0.1.25 的阅读体验问题，并优先补订阅 ICS 的 TZID/重复规则与 Apple 权限恢复；明确“不发版，听我说发再发”。
+- 阅读：通知每次点击按绑定的单封邮件重新定位，重复点同一通知会重建单封阅读区并回到正文开头；长对话打开时锚定选中邮件标题，异步正文/图片加载不丢锚点，只有滚轮/触摸/按下/滚动键才解除。阅读正文改用 shadcn `ScrollArea`（`type="always"`），顶部信息与底部回复固定，正文独立滚动；会话数量 Badge 改为 outline 并补 aria-label。
+- 订阅 ICS：解析 `TZID`（IANA，含夏令时）并按事件时区换算 UTC；支持 `RRULE` 的 `INTERVAL/BYDAY/BYMONTHDAY/BYMONTH/COUNT/UNTIL`、`EXDATE`、`RDATE`；订阅同步时按当前年 -2 / +4 年展开并缓存为普通事件，保留 UID 作为稳定 ID，避免重复累积。全天事件结束日按 ICS 排他语义减 1，展开后仍保持多日跨度。
+- Apple 权限恢复：新增 `open_apple_calendar_settings` 命令，授权被拒时可打开“系统设置 → 隐私与安全性 → 日历”；窗口重新获得焦点或页面恢复可见时重查授权，权限恢复后自动重载日历列表。
+- 验证：前端全量 61 文件 / 501 例通过（新增 `conversation-reader.test.tsx` 1 例、`ics.test.ts` 8 例）；Rust 392 passed / 2 ignored；`tsc`、Prettier、`cargo fmt --check`、`check:ui` 通过。已构建预览并验证中国大陆/中国香港订阅重新同步（40 / 51 条）、Apple 类别与刷新正常；未发版。
