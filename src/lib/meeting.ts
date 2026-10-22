@@ -12,9 +12,17 @@ const PROVIDER_LABELS: Record<MeetingProvider, string> = {
   wecom: "企业微信会议",
   tencent: "腾讯会议",
 };
+const APP_LABELS: Record<MeetingProvider, string> = {
+  wecom: "打开企业微信",
+  tencent: "打开腾讯会议",
+};
 
 export function meetingProviderLabel(provider: MeetingProvider): string {
   return PROVIDER_LABELS[provider];
+}
+
+export function meetingAppLabel(provider: MeetingProvider): string {
+  return APP_LABELS[provider];
 }
 
 function explicitOffset(text: string): number | null {

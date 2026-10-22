@@ -115,6 +115,7 @@ it("keeps the selected header in view as a long conversation loads, then release
         onAttachment={async () => {}}
         onAction={noop}
         onLink={noop}
+        onMeetingApp={noop}
       />,
     ),
   );
@@ -181,6 +182,7 @@ it("offers to add a meeting from plain text without resending", async () => {
         onAttachment={async () => {}}
         onAction={noop}
         onLink={noop}
+        onMeetingApp={noop}
       />,
     ),
   );
@@ -201,4 +203,61 @@ it("offers to add a meeting from plain text without resending", async () => {
       }),
     }),
   );
+});
+
+it("copies a meeting code and opens the meeting app when no link exists", async () => {
+  selected = {
+    mail: {
+      ...selected.mail,
+      body: "会议时间：2026/10/19 16:10-17:10 (GMT+08:00)\n\n#企业微信会议：491-185-654",
+    },
+    html: "",
+    attachments: [],
+  };
+  const writeText = vi.fn(() => Promise.resolve());
+  Object.defineProperty(navigator, "clipboard", {
+    configurable: true,
+    value: { writeText },
+  });
+  const noop = vi.fn();
+  const onMeetingApp = vi.fn();
+  await act(async () =>
+    root.render(
+      <ConversationReader
+        selected={selected}
+        singleMessage
+        revision={[]}
+        accounts={[]}
+        demo
+        editorOpen
+        scrollRef={scrollRef}
+        onReply={noop}
+        onEdit={noop}
+        onSent={noop}
+        onExport={noop}
+        onAttachment={async () => {}}
+        onAction={noop}
+        onLink={noop}
+        onMeetingApp={onMeetingApp}
+      />,
+    ),
+  );
+  expect(host.textContent).toContain("检测到企业微信会议");
+  const copy = [...host.querySelectorAll("button")].find((button) =>
+    button.textContent?.includes("复制会议号"),
+  );
+  expect(copy).not.toBeUndefined();
+  await act(async () => copy!.click());
+  expect(writeText).toHaveBeenCalledWith("491-185-654");
+  const open = [...host.querySelectorAll("button")].find((button) =>
+    button.textContent?.includes("打开企业微信"),
+  );
+  expect(open).not.toBeUndefined();
+  await act(async () => open!.click());
+  expect(onMeetingApp).toHaveBeenCalledWith("wecom");
+  expect(
+    [...host.querySelectorAll("button")].some((button) =>
+      button.textContent?.includes("加入会议"),
+    ),
+  ).toBe(false);
 });

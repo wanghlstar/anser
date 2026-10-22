@@ -2355,6 +2355,15 @@ fn web_link(url: &str) -> Result<url::Url> {
 fn open_mail_link(url: String) -> Result<()> {
     open::that(web_link(&url)?.as_str()).map_err(err)
 }
+#[tauri::command]
+fn open_meeting_app(provider: String) -> Result<()> {
+    let url = match provider.as_str() {
+        "wecom" => "wxwork://",
+        "tencent" => "wemeet://",
+        _ => return Err("不支持的会议应用".into()),
+    };
+    open::that(url).map_err(|e| format!("无法打开会议应用，请确认已安装：{e}"))
+}
 fn mail_navigation_target(url: &url::Url) -> Option<String> {
     if url.scheme() != "https"
         || url.host_str() != Some("yanxin-mail-link.invalid")
@@ -3601,7 +3610,8 @@ pub fn run() {
             check_data_dir,
             migrate_data_dir,
             restart_app,
-            open_mail_link
+            open_mail_link,
+            open_meeting_app
         ])
         .build(tauri::generate_context!())
         .expect("failed to build Yanxin")

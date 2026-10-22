@@ -20,6 +20,7 @@ import {
   ChevronRight,
   Clock,
   Copy,
+  ExternalLink,
   FileDown,
   FileUp,
   Globe2,
@@ -38,6 +39,7 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { call, isDemo } from "@/lib/api";
 import { eventsToIcs, parseIcs } from "@/lib/ics";
+import { meetingAppLabel, type MeetingProvider } from "@/lib/meeting";
 import { lunarInfo } from "@/lib/lunar";
 import {
   CALENDAR_COLORS,
@@ -260,11 +262,13 @@ export function CalendarPage({
   onSeedConsumed,
   onOpenMail,
   onOpenLink,
+  onOpenMeetingApp,
 }: {
   seed: CalendarEvent | null;
   onSeedConsumed: () => void;
   onOpenMail?: (id: string) => void;
   onOpenLink?: (url: string) => void;
+  onOpenMeetingApp?: (provider: MeetingProvider) => void;
 }) {
   const [view, setView] = useState<CalendarView>("month");
   const [anchor, setAnchor] = useState(() => new Date());
@@ -1606,6 +1610,7 @@ export function CalendarPage({
           series={dialog.series}
           onOpenMail={onOpenMail}
           onOpenLink={onOpenLink}
+          onOpenMeetingApp={onOpenMeetingApp}
           onClose={() => setDialog(null)}
           onSave={async (event, scope) => {
             if (scope === "single" && dialog.series && dialog.occurrence) {
@@ -2598,6 +2603,7 @@ function EventEditor({
   series,
   onOpenMail,
   onOpenLink,
+  onOpenMeetingApp,
   onClose,
   onSave,
   onDelete,
@@ -2608,6 +2614,7 @@ function EventEditor({
   series: boolean;
   onOpenMail?: (id: string) => void;
   onOpenLink?: (url: string) => void;
+  onOpenMeetingApp?: (provider: MeetingProvider) => void;
   onClose: () => void;
   onSave: (event: CalendarEvent, scope: "single" | "series") => Promise<void>;
   onDelete?: (
@@ -2912,7 +2919,7 @@ function EventEditor({
               onChange={(event) => setNotes(event.target.value)}
             />
           </div>
-          {(event.meetingUrl || event.sourceMailId) && (
+          {(event.meetingUrl || event.meetingCode || event.sourceMailId) && (
             <div className="calendar-meeting-actions">
               {event.meetingUrl && onOpenLink && (
                 <Button
@@ -2925,6 +2932,37 @@ function EventEditor({
                   加入会议
                 </Button>
               )}
+              {!event.meetingUrl &&
+                event.meetingCode &&
+                event.meetingProvider && (
+                  <>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() =>
+                        void navigator.clipboard
+                          .writeText(event.meetingCode!)
+                          .then(() => toast.success("会议号已复制"))
+                          .catch((reason) => toast.error(String(reason)))
+                      }
+                    >
+                      <Copy />
+                      复制会议号
+                    </Button>
+                    {onOpenMeetingApp && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => onOpenMeetingApp(event.meetingProvider!)}
+                      >
+                        <ExternalLink />
+                        {meetingAppLabel(event.meetingProvider)}
+                      </Button>
+                    )}
+                  </>
+                )}
               {event.sourceMailId && onOpenMail && (
                 <Button
                   type="button"

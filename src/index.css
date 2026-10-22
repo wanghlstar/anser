@@ -4326,16 +4326,28 @@ body.sidebar-visible
   color: var(--foreground);
 }
 .meeting-banner-main small {
+  display: flex;
   overflow: hidden;
+  align-items: baseline;
+  gap: 2px;
   color: var(--muted-foreground);
   font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.meeting-banner .meeting-code-chip {
+  height: auto;
+  padding: 0 2px;
+  font-size: 11px;
+  line-height: 1.4;
+  vertical-align: baseline;
+}
 .meeting-banner-actions {
   display: flex;
   flex: 0 0 auto;
+  flex-wrap: wrap;
   align-items: center;
+  justify-content: flex-end;
   gap: 6px;
 }
 .meeting-banner-saved {

@@ -10,6 +10,8 @@ import {
   ArrowDown,
   ArrowDownToLine,
   CalendarPlus,
+  Copy,
+  ExternalLink,
   MoreHorizontal,
   Reply,
   ReplyAll,
@@ -42,11 +44,13 @@ import { call, newDraft } from "../lib/api";
 import { parseAddresses, replyRecipients } from "../lib/addresses";
 import { mailTime, prefixedSubject, replyHeaders } from "../lib/conversations";
 import {
+  meetingAppLabel,
   meetingKey,
   meetingNotes,
   meetingProviderLabel,
   meetingTimeLabel,
   parseMeeting,
+  type MeetingProvider,
 } from "../lib/meeting";
 import { senderName, senderAddress } from "../lib/providers";
 import type { Account, Compose, Detail, Mail } from "../lib/types";
@@ -68,7 +72,15 @@ function ParseWarnings({ mail }: { mail: Mail }) {
   );
 }
 
-function MeetingBanner({ mail }: { mail: Mail }) {
+function MeetingBanner({
+  mail,
+  onLink,
+  onMeetingApp,
+}: {
+  mail: Mail;
+  onLink: (href: string) => void;
+  onMeetingApp: (provider: MeetingProvider) => void;
+}) {
   const info = parseMeeting(mail.body || "");
   const ignoreKey = `yanxin-meeting-ignored:${mail.id}`;
   const [ignored, setIgnored] = useState(
@@ -122,6 +134,14 @@ function MeetingBanner({ mail }: { mail: Mail }) {
     setIgnored(true);
   }
 
+  function copyCode() {
+    if (!info?.code) return;
+    void navigator.clipboard
+      .writeText(info.code)
+      .then(() => toast.success("会议号已复制"))
+      .catch((reason) => toast.error(String(reason)));
+  }
+
   return (
     <Card className="meeting-banner" data-meeting-key={meetingKey(info)}>
       <Video className="meeting-banner-icon" aria-hidden="true" />
@@ -129,12 +149,45 @@ function MeetingBanner({ mail }: { mail: Mail }) {
         <strong>检测到{label}</strong>
         <span>{meetingTimeLabel(info)}</span>
         <small>
-          {info.code ? `会议号 ${info.code}` : ""}
+          {info.code ? (
+            <>
+              会议号{" "}
+              <Button
+                variant="link"
+                size="sm"
+                className="meeting-code-chip"
+                onClick={copyCode}
+              >
+                {info.code}
+              </Button>
+            </>
+          ) : null}
           {info.code && info.url ? " · " : ""}
           {info.url ? "可直接入会" : ""}
         </small>
       </div>
       <div className="meeting-banner-actions">
+        {info.url ? (
+          <Button variant="outline" size="sm" onClick={() => onLink(info!.url)}>
+            <ExternalLink />
+            加入会议
+          </Button>
+        ) : info.code ? (
+          <>
+            <Button variant="outline" size="sm" onClick={copyCode}>
+              <Copy />
+              复制会议号
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => onMeetingApp(info!.provider)}
+            >
+              <ExternalLink />
+              {meetingAppLabel(info!.provider)}
+            </Button>
+          </>
+        ) : null}
         {saved ? (
           <span className="meeting-banner-saved">已添加到日历</span>
         ) : (
@@ -595,6 +648,7 @@ export function ConversationReader({
   onAttachment,
   onAction,
   onLink,
+  onMeetingApp,
   onInteract,
 }: {
   selected: Detail;
@@ -611,6 +665,7 @@ export function ConversationReader({
   onAttachment: (mail: Mail, index: number, name: string) => Promise<void>;
   onAction: (mail: Mail, action: string, value: string) => void;
   onLink: (href: string) => void;
+  onMeetingApp: (provider: MeetingProvider) => void;
   onInteract?: () => void;
 }) {
   const [messages, setMessages] = useState<Mail[]>([selected.mail]);
@@ -767,7 +822,11 @@ export function ConversationReader({
       >
         <div className="reader-scroll-content">
           <ParseWarnings mail={selected.mail} />
-          <MeetingBanner mail={selected.mail} />
+          <MeetingBanner
+            mail={selected.mail}
+            onLink={onLink}
+            onMeetingApp={onMeetingApp}
+          />
           {selected.html ? (
             <MailContent
               html={selected.html}
@@ -798,7 +857,11 @@ export function ConversationReader({
         viewportProps={{ id: "mail-reader-content" } as ComponentProps<"div">}
       >
         <div className="reader-scroll-content conversation-stream" ref={stream}>
-          <MeetingBanner mail={selected.mail} />
+          <MeetingBanner
+            mail={selected.mail}
+            onLink={onLink}
+            onMeetingApp={onMeetingApp}
+          />
           <div className="conversation-start">
             <Badge variant="secondary">{messages.length} 封邮件</Badge>
             <span>按时间排列</span>

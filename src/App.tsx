@@ -656,6 +656,13 @@ export default function App() {
     window.addEventListener("keydown", restore);
     return () => window.removeEventListener("keydown", restore);
   }, [readerExpanded]);
+  async function openMeetingApp(provider: "wecom" | "tencent") {
+    if (!native) {
+      toast.info("演示模式不支持打开会议应用");
+      return;
+    }
+    await invoke("open_meeting_app", { provider });
+  }
   async function openMailLink(href: string) {
     const url = mailLink(href);
     if (!url) return;
@@ -2738,6 +2745,11 @@ export default function App() {
               onSeedConsumed={() => setCalendarSeed(null)}
               onOpenMail={(id) => void openMailById(id)}
               onOpenLink={(url) => void openMailLink(url)}
+              onOpenMeetingApp={(provider) =>
+                void openMeetingApp(provider).catch((e) =>
+                  toast.error(String(e)),
+                )
+              }
             />
           ) : page === "contacts" ? (
             <ContactsPanel
@@ -4440,6 +4452,11 @@ export default function App() {
                       }
                       onLink={(href) =>
                         void openMailLink(href).catch((e) =>
+                          toast.error(String(e)),
+                        )
+                      }
+                      onMeetingApp={(provider) =>
+                        void openMeetingApp(provider).catch((e) =>
                           toast.error(String(e)),
                         )
                       }

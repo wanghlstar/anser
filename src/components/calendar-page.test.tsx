@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { CalendarPage } from "./calendar-page";
@@ -421,5 +421,40 @@ describe("calendar page", () => {
       await flush();
     }
     expect(host.querySelector(".calendar-month")).not.toBeNull();
+  });
+
+  it("offers copy and open app for a code-only meeting event", async () => {
+    const onOpenMeetingApp = vi.fn();
+    const start = new Date();
+    const event = {
+      id: "",
+      title: "项目沟通会",
+      start: start.toISOString(),
+      end: new Date(start.getTime() + 60 * 60_000).toISOString(),
+      allDay: false,
+      location: "",
+      notes: "",
+      color: "green" as const,
+      reminderMinutes: 15,
+      repeat: "none" as const,
+      createdAt: "",
+      updatedAt: "",
+      meetingCode: "491-185-654",
+      meetingProvider: "wecom" as const,
+    };
+    await act(async () =>
+      root.render(
+        <CalendarPage
+          seed={event}
+          onSeedConsumed={() => {}}
+          onOpenMeetingApp={onOpenMeetingApp}
+        />,
+      ),
+    );
+    await flush();
+    expect(document.body.textContent).toContain("复制会议号");
+    expect(document.body.textContent).toContain("打开企业微信");
+    await act(async () => buttonByText("打开企业微信")!.click());
+    expect(onOpenMeetingApp).toHaveBeenCalledWith("wecom");
   });
 });
