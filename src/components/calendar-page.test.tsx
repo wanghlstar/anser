@@ -166,6 +166,135 @@ describe("calendar page", () => {
     ).toBe("true");
   });
 
+  it("adds and syncs the Hong Kong holiday subscription", async () => {
+    await act(async () =>
+      root.render(<CalendarPage seed={null} onSeedConsumed={() => {}} />),
+    );
+    await flush();
+    const preset = buttonByText("香港公众假期");
+    expect(preset).not.toBeUndefined();
+    await act(async () => preset!.click());
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    expect(host.textContent).toContain("香港公众假期");
+    expect(host.textContent).toContain("已同步");
+    expect(buttonByText("香港公众假期")).toBeUndefined();
+    expect(buttonByText("添加香港公众假期")).toBeUndefined();
+    const subscriptions = JSON.parse(
+      localStorage.getItem("mail-desktop-demo-v1-calendar-subscriptions") ||
+        "[]",
+    ) as { id: string; name: string }[];
+    expect(subscriptions[0]?.name).toBe("香港公众假期");
+    const events = JSON.parse(
+      localStorage.getItem(
+        "mail-desktop-demo-v1-calendar-subscription-events",
+      ) || "[]",
+    ) as { subscriptionId: string }[];
+    expect(events.length).toBe(6);
+    expect(events[0]?.subscriptionId).toBe(subscriptions[0]?.id);
+
+    const remove = host.querySelector<HTMLButtonElement>(
+      'button[aria-label="删除香港公众假期"]',
+    );
+    expect(remove).not.toBeNull();
+    await act(async () => remove!.click());
+    await flush();
+    const confirm = buttonByText("删除订阅");
+    expect(confirm).not.toBeUndefined();
+    await act(async () => confirm!.click());
+    await flush();
+    expect(
+      JSON.parse(
+        localStorage.getItem("mail-desktop-demo-v1-calendar-subscriptions") ||
+          "[]",
+      ),
+    ).toEqual([]);
+    expect(buttonByText("香港公众假期")).not.toBeUndefined();
+  });
+
+  it("shows subscription events as read-only and copies them locally", async () => {
+    const start = new Date();
+    start.setHours(10, 0, 0, 0);
+    const end = new Date(start.getTime() + 60 * 60 * 1000);
+    localStorage.setItem(
+      "mail-desktop-demo-v1-calendar-subscriptions",
+      JSON.stringify([
+        {
+          id: "sub-1",
+          name: "香港公众假期",
+          url: "https://www.1823.gov.hk/common/ical/sc.ics",
+          color: "orange",
+          enabled: true,
+          createdAt: "",
+          updatedAt: "",
+          lastSyncedAt: new Date().toISOString(),
+          lastError: "",
+        },
+      ]),
+    );
+    localStorage.setItem(
+      "mail-desktop-demo-v1-calendar-subscription-events",
+      JSON.stringify([
+        {
+          id: "sub-1:holiday-1",
+          title: "订阅假期",
+          start: start.toISOString(),
+          end: end.toISOString(),
+          allDay: false,
+          location: "",
+          notes: "",
+          color: "orange",
+          reminderMinutes: null,
+          repeat: "none",
+          createdAt: "",
+          updatedAt: "",
+          subscriptionId: "sub-1",
+        },
+      ]),
+    );
+    await act(async () =>
+      root.render(<CalendarPage seed={null} onSeedConsumed={() => {}} />),
+    );
+    await flush();
+    const pill = [...document.querySelectorAll("button")].find((button) =>
+      button.textContent?.includes("订阅假期"),
+    );
+    expect(pill).not.toBeUndefined();
+    await act(async () => pill!.click());
+    await flush();
+    expect(document.querySelector("#calendar-title")).toBeNull();
+
+    await act(async () =>
+      pill!.dispatchEvent(
+        new MouseEvent("contextmenu", {
+          bubbles: true,
+          clientX: 160,
+          clientY: 200,
+        }),
+      ),
+    );
+    await flush();
+    const labels = [...document.querySelectorAll('[role="menuitem"]')].map(
+      (node) => node.textContent,
+    );
+    expect(labels.some((text) => text?.includes("复制为本地日程"))).toBe(true);
+    expect(labels.some((text) => text?.includes("编辑日程"))).toBe(false);
+    const copy = [...document.querySelectorAll('[role="menuitem"]')].find(
+      (node) => node.textContent?.includes("复制为本地日程"),
+    );
+    await act(async () => (copy as HTMLElement).click());
+    await flush();
+    const stored = JSON.parse(
+      localStorage.getItem("mail-desktop-demo-v1-calendar") || "[]",
+    ) as { title: string; subscriptionId?: string }[];
+    expect(
+      stored.some(
+        (item) => item.title === "订阅假期（副本）" && !item.subscriptionId,
+      ),
+    ).toBe(true);
+  });
+
   it("switches between month, week and day views", async () => {
     await act(async () =>
       root.render(<CalendarPage seed={null} onSeedConsumed={() => {}} />),

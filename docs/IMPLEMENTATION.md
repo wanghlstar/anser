@@ -1050,3 +1050,12 @@ GitHub CI 和两架构发布工作流已推送；首次 Checks 已成功，Relea
 - 重复日程：编辑或删除时可选择「仅此日程」或「整个系列」；单次修改会另存一条独立日程并跳过原实例，单次删除只写例外；拖拽仍作用于整个系列。
 - ICS：`src/lib/ics.ts` 支持 VCALENDAR/VEVENT、全天与定时、DAILY/WEEKLY/MONTHLY/YEARLY、颜色、VALARM 提醒、折行与转义；导入按本地时间解析，暂不支持 TZID；演示模式禁用导入导出。
 - 验证：前端全量 488 passed（含 `lunar.test.ts` 4 例），Rust 389 passed / 2 ignored；`tsc`、`cargo fmt --check`、`check:ui`、生产构建通过。
+
+## 订阅日历（2026-10-22，feat/calendar）
+
+- 范围：新增只读 ICS 订阅，不做 CalDAV / Exchange。服务端只存订阅定义与解析后的事件缓存，订阅事件不可在雁信编辑或拖拽，右键仅提供「复制为本地日程」。
+- 后端：新增 `calendar_subscriptions`（名称、URL、颜色、启用、最后同步时间/错误）与 `calendar_subscription_events`；`list_calendar_events` 合并已启用订阅的事件；新增订阅增删改、启停、整批替换事件、错误记录命令；`fetch_calendar_subscription` 用 Rust 下载 ICS（20 秒超时、2MB 上限、支持 `webcal://`）。
+- 前端：日历侧栏新增「订阅日历」，支持启用/停用、手动刷新、删除；添加对话框接受 ICS 地址与颜色，并内置「香港公众假期」示例一键订阅（`https://www.1823.gov.hk/common/ical/sc.ics`，简体中文）。该示例可随时删除；添加后所有香港公众假期快捷入口自动隐藏，避免重复订阅。进入日历页时，超过 6 小时未同步的已启用订阅自动刷新。
+- 只读保护：`CalendarEvent.subscriptionId` 标记来源；点击/拖拽/缩放/右键编辑均被拦截，列表行显示订阅图标；复制时清除订阅标记并另存本地日程。
+- 验证：Rust 391 passed / 2 ignored；前端全量 489 passed；`tsc`、`cargo fmt --check` 通过；真实预览中香港公众假期订阅成功同步 51 条（2025–2027），应用包构建通过。
+- Apple 日历只读叠加仍待开发（用户已确认只读）。订阅日历先满足外部只读日历需求。

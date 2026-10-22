@@ -245,6 +245,7 @@ export interface CalendarEvent {
   repeat: CalendarRepeat;
   createdAt: string;
   updatedAt: string;
+  subscriptionId?: string;
 }
 export interface CalendarOccurrence {
   key: string;
@@ -252,6 +253,17 @@ export interface CalendarOccurrence {
   start: string;
   end: string;
   allDay: boolean;
+}
+export interface CalendarSubscription {
+  id: string;
+  name: string;
+  url: string;
+  color: CalendarColor;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+  lastSyncedAt: string;
+  lastError: string;
 }
 export interface OutboxRecord {
   id: string;

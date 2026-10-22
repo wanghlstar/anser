@@ -4969,6 +4969,70 @@ body.sidebar-visible
   font-size: 13px;
   cursor: pointer;
 }
+.calendar-subscriptions {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.calendar-subscriptions-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+.calendar-subscriptions-head h2 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted-foreground);
+  letter-spacing: 0.2px;
+}
+.calendar-subscription-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 2px;
+}
+.calendar-subscription-text {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+}
+.calendar-subscription-text strong {
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 550;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.calendar-subscription-text small {
+  overflow: hidden;
+  color: var(--muted-foreground);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.calendar-subscription-text small.is-error {
+  color: var(--destructive, #d33);
+}
+.calendar-subscription-preset {
+  justify-content: flex-start;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.calendar-subscription-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.calendar-subscription-form .calendar-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
 .calendar-color-dot {
   width: 9px;
   height: 9px;

@@ -23,7 +23,11 @@ import { emptySignature } from "./signatures";
 import { parseAddresses } from "./addresses";
 import { addDays, parse, startOfWeek } from "date-fns";
 import type { Address, Contact, OutboxRecord } from "./types";
-import type { CalendarEvent, CalendarOccurrence } from "./types";
+import type {
+  CalendarEvent,
+  CalendarOccurrence,
+  CalendarSubscription,
+} from "./types";
 export const native = isTauri();
 const key = "mail-desktop-demo-v1";
 let demo: Snapshot | null = null;
@@ -46,6 +50,8 @@ export function leaveDemo() {
   localStorage.removeItem(key + "-outbox");
   localStorage.removeItem(key + "-calendar");
   localStorage.removeItem(key + "-calendar-exceptions");
+  localStorage.removeItem(key + "-calendar-subscriptions");
+  localStorage.removeItem(key + "-calendar-subscription-events");
   localStorage.removeItem(key + "-auto-start");
   for (let i = localStorage.length - 1; i >= 0; i--) {
     const stored = localStorage.key(i);
@@ -257,6 +263,62 @@ function saveDemoCalendarExceptions(value: Record<string, string[]>) {
   localStorage.setItem(calendarKey + "-exceptions", JSON.stringify(value));
 }
 
+const subscriptionKey = key + "-calendar-subscriptions";
+const subscriptionEventKey = key + "-calendar-subscription-events";
+
+function demoCalendarSubscriptions(): CalendarSubscription[] {
+  try {
+    return JSON.parse(
+      localStorage.getItem(subscriptionKey) || "[]",
+    ) as CalendarSubscription[];
+  } catch {
+    return [];
+  }
+}
+
+function saveDemoCalendarSubscriptions(list: CalendarSubscription[]) {
+  localStorage.setItem(subscriptionKey, JSON.stringify(list));
+}
+
+function demoSubscriptionEvents(): CalendarEvent[] {
+  try {
+    return JSON.parse(
+      localStorage.getItem(subscriptionEventKey) || "[]",
+    ) as CalendarEvent[];
+  } catch {
+    return [];
+  }
+}
+
+function saveDemoSubscriptionEvents(events: CalendarEvent[]) {
+  localStorage.setItem(subscriptionEventKey, JSON.stringify(events));
+}
+
+function demoHolidayIcs() {
+  const events = [
+    ["20260101", "一月一日"],
+    ["20260217", "农历年初一"],
+    ["20260403", "耶稣受难节"],
+    ["20260701", "香港特别行政区成立纪念日"],
+    ["20261001", "国庆日"],
+    ["20261225", "圣诞节"],
+  ];
+  return [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//Anser Demo//HK Holidays//EN",
+    ...events.flatMap(([day, title]) => [
+      "BEGIN:VEVENT",
+      `UID:${day}@demo.hk`,
+      `DTSTART;VALUE=DATE:${day}`,
+      `DTEND;VALUE=DATE:${day}`,
+      `SUMMARY:${title}`,
+      "END:VEVENT",
+    ]),
+    "END:VCALENDAR",
+  ].join("\r\n");
+}
+
 function demoCalendarInRange(
   events: CalendarEvent[],
   from: string,
@@ -265,7 +327,18 @@ function demoCalendarInRange(
   const fromDate = new Date(from);
   const toDate = new Date(to);
   const exceptions = demoCalendarExceptions();
-  return events
+  const enabled = new Set(
+    demoCalendarSubscriptions()
+      .filter((item) => item.enabled)
+      .map((item) => item.id),
+  );
+  const all = [
+    ...events,
+    ...demoSubscriptionEvents().filter(
+      (event) => event.subscriptionId && enabled.has(event.subscriptionId),
+    ),
+  ];
+  return all
     .flatMap((event) => {
       if ((exceptions[event.id] || []).includes(event.start)) return [];
       const start = event.allDay
@@ -671,6 +744,112 @@ export async function call<T = void>(
         saveDemoCalendarExceptions(exceptions);
         break;
       }
+      case "list_calendar_subscriptions":
+        result = demoCalendarSubscriptions();
+        break;
+      case "save_calendar_subscription": {
+        const input = args.subscription as CalendarSubscription;
+        const list = demoCalendarSubscriptions();
+        const existing = list.find((item) => item.id === input.id);
+        const id = input.id || crypto.randomUUID();
+        const now = new Date().toISOString();
+        const saved: CalendarSubscription = {
+          ...input,
+          id,
+          name: input.name.trim(),
+          url: input.url.trim(),
+          createdAt: existing?.createdAt || now,
+          updatedAt: now,
+          lastSyncedAt: existing?.lastSyncedAt || "",
+          lastError: existing?.lastError || "",
+        };
+        if (!saved.name) throw new Error("请填写订阅名称");
+        saveDemoCalendarSubscriptions([
+          saved,
+          ...list.filter((item) => item.id !== id),
+        ]);
+        result = saved;
+        break;
+      }
+      case "set_calendar_subscription_enabled": {
+        const list = demoCalendarSubscriptions();
+        const id = String(args.id);
+        saveDemoCalendarSubscriptions(
+          list.map((item) =>
+            item.id === id
+              ? {
+                  ...item,
+                  enabled: Boolean(args.enabled),
+                  updatedAt: new Date().toISOString(),
+                }
+              : item,
+          ),
+        );
+        break;
+      }
+      case "delete_calendar_subscription": {
+        const id = String(args.id);
+        saveDemoCalendarSubscriptions(
+          demoCalendarSubscriptions().filter((item) => item.id !== id),
+        );
+        saveDemoSubscriptionEvents(
+          demoSubscriptionEvents().filter(
+            (event) => event.subscriptionId !== id,
+          ),
+        );
+        break;
+      }
+      case "replace_calendar_subscription_events": {
+        const id = String(args.id);
+        const now = new Date().toISOString();
+        const imported = (args.events as CalendarEvent[]).map(
+          (event, index) => ({
+            ...event,
+            id: `${id}:${event.id || index}`,
+            subscriptionId: id,
+            createdAt: now,
+            updatedAt: now,
+          }),
+        );
+        saveDemoSubscriptionEvents([
+          ...demoSubscriptionEvents().filter(
+            (event) => event.subscriptionId !== id,
+          ),
+          ...imported,
+        ]);
+        saveDemoCalendarSubscriptions(
+          demoCalendarSubscriptions().map((item) =>
+            item.id === id
+              ? { ...item, lastSyncedAt: now, lastError: "", updatedAt: now }
+              : item,
+          ),
+        );
+        result = imported.length;
+        break;
+      }
+      case "mark_calendar_subscription_error": {
+        const id = String(args.id);
+        saveDemoCalendarSubscriptions(
+          demoCalendarSubscriptions().map((item) =>
+            item.id === id
+              ? {
+                  ...item,
+                  lastError: String(args.message),
+                  updatedAt: new Date().toISOString(),
+                }
+              : item,
+          ),
+        );
+        break;
+      }
+      case "fetch_calendar_subscription":
+        if (String(args.url).includes("1823.gov.hk")) {
+          result = demoHolidayIcs();
+          break;
+        }
+        throw new Error(
+          "演示模式只提供香港公众假期示例订阅，请连接桌面客户端后添加其他地址。",
+        );
       case "contact_suggestions": {
         const saved = JSON.parse(
           localStorage.getItem(key + "-contacts") || "[]",

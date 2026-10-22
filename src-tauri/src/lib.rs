@@ -31,7 +31,7 @@ mod signatures;
 mod store;
 mod sync_control;
 mod update_history;
-use calendar::{CalendarEvent, CalendarOccurrence};
+use calendar::{CalendarEvent, CalendarOccurrence, CalendarSubscription};
 use models::*;
 use std::{
     path::Path,
@@ -593,6 +593,108 @@ async fn all_calendar_events(state: tauri::State<'_, AppState>) -> Result<Vec<Ca
     tauri::async_runtime::spawn_blocking(move || store.all_calendar_events())
         .await
         .map_err(err)?
+}
+#[tauri::command]
+async fn list_calendar_subscriptions(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<CalendarSubscription>> {
+    let store = state.store.clone();
+    tauri::async_runtime::spawn_blocking(move || store.calendar_subscriptions())
+        .await
+        .map_err(err)?
+}
+#[tauri::command]
+async fn save_calendar_subscription(
+    state: tauri::State<'_, AppState>,
+    subscription: CalendarSubscription,
+) -> Result<CalendarSubscription> {
+    let store = state.store.clone();
+    tauri::async_runtime::spawn_blocking(move || store.save_calendar_subscription(&subscription))
+        .await
+        .map_err(err)?
+}
+#[tauri::command]
+async fn set_calendar_subscription_enabled(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    enabled: bool,
+) -> Result<()> {
+    let store = state.store.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        store.set_calendar_subscription_enabled(&id, enabled)
+    })
+    .await
+    .map_err(err)?
+}
+#[tauri::command]
+async fn delete_calendar_subscription(state: tauri::State<'_, AppState>, id: String) -> Result<()> {
+    let store = state.store.clone();
+    tauri::async_runtime::spawn_blocking(move || store.delete_calendar_subscription(&id))
+        .await
+        .map_err(err)?
+}
+#[tauri::command]
+async fn replace_calendar_subscription_events(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    events: Vec<CalendarEvent>,
+) -> Result<usize> {
+    let store = state.store.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        store.replace_calendar_subscription_events(&id, &events)
+    })
+    .await
+    .map_err(err)?
+}
+#[tauri::command]
+async fn mark_calendar_subscription_error(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    message: String,
+) -> Result<()> {
+    let store = state.store.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        store.mark_calendar_subscription_error(&id, &message)
+    })
+    .await
+    .map_err(err)?
+}
+#[tauri::command]
+async fn fetch_calendar_subscription(url: String) -> Result<String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let raw = url.trim();
+        let target = match raw.strip_prefix("webcal://") {
+            Some(rest) => format!("https://{rest}"),
+            None => raw.to_string(),
+        };
+        if !(target.starts_with("https://") || target.starts_with("http://")) {
+            return Err("订阅地址需以 http(s):// 或 webcal:// 开头".to_string());
+        }
+        let client = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(20))
+            .user_agent("Anser Calendar/1.0")
+            .build()
+            .map_err(err)?;
+        let response = client
+            .get(&target)
+            .send()
+            .map_err(|e| format!("订阅下载失败：{e}"))?;
+        if !response.status().is_success() {
+            return Err(format!("订阅下载失败：HTTP {}", response.status()));
+        }
+        let text = response
+            .text()
+            .map_err(|e| format!("订阅内容读取失败：{e}"))?;
+        if text.len() > 2_000_000 {
+            return Err("订阅文件过大，已拒绝导入".into());
+        }
+        if !text.trim_start().starts_with("BEGIN:VCALENDAR") {
+            return Err("订阅地址返回的不是 ICS 日历".into());
+        }
+        Ok(text)
+    })
+    .await
+    .map_err(err)?
 }
 #[tauri::command]
 async fn list_outbox(state: tauri::State<'_, AppState>) -> Result<Vec<OutboxRecord>> {
@@ -3375,6 +3477,13 @@ pub fn run() {
             delete_calendar_event,
             skip_calendar_occurrence,
             all_calendar_events,
+            list_calendar_subscriptions,
+            save_calendar_subscription,
+            set_calendar_subscription_enabled,
+            delete_calendar_subscription,
+            replace_calendar_subscription_events,
+            mark_calendar_subscription_error,
+            fetch_calendar_subscription,
             list_outbox,
             sent_upload_action,
             retry_outbox,

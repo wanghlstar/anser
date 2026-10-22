@@ -37,6 +37,30 @@ pub struct CalendarEvent {
     pub created_at: String,
     #[serde(default)]
     pub updated_at: String,
+    /// 非空表示来自订阅日历，只读。
+    #[serde(default)]
+    pub subscription_id: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CalendarSubscription {
+    #[serde(default)]
+    pub id: String,
+    pub name: String,
+    pub url: String,
+    #[serde(default = "default_color")]
+    pub color: String,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub created_at: String,
+    #[serde(default)]
+    pub updated_at: String,
+    #[serde(default)]
+    pub last_synced_at: String,
+    #[serde(default)]
+    pub last_error: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -55,6 +79,9 @@ fn default_color() -> String {
 }
 fn default_repeat() -> String {
     "none".into()
+}
+fn default_true() -> bool {
+    true
 }
 
 fn parse_timed(value: &str) -> Result<DateTime<Utc>> {
@@ -322,11 +349,35 @@ fn read_event(row: &Row<'_>) -> rusqlite::Result<CalendarEvent> {
         repeat: row.get(9)?,
         created_at: row.get(10)?,
         updated_at: row.get(11)?,
+        subscription_id: String::new(),
+    })
+}
+
+fn read_subscription_event(row: &Row<'_>) -> rusqlite::Result<CalendarEvent> {
+    let mut event = read_event(row)?;
+    event.subscription_id = row.get(12)?;
+    Ok(event)
+}
+
+fn read_subscription(row: &Row<'_>) -> rusqlite::Result<CalendarSubscription> {
+    Ok(CalendarSubscription {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        url: row.get(2)?,
+        color: row.get(3)?,
+        enabled: row.get::<_, i64>(4)? != 0,
+        created_at: row.get(5)?,
+        updated_at: row.get(6)?,
+        last_synced_at: row.get(7)?,
+        last_error: row.get(8)?,
     })
 }
 
 const EVENT_COLUMNS: &str =
     "id,title,start,end,all_day,location,notes,color,reminder_minutes,repeat,created_at,updated_at";
+const SUBSCRIPTION_EVENT_COLUMNS: &str = "e.id,e.title,e.start,e.end,e.all_day,e.location,e.notes,e.color,e.reminder_minutes,e.repeat,e.created_at,e.updated_at,e.subscription_id";
+const SUBSCRIPTION_COLUMNS: &str =
+    "id,name,url,color,enabled,created_at,updated_at,last_synced_at,last_error";
 
 fn read_exclusions(db: &rusqlite::Connection) -> Result<HashSet<(String, String)>> {
     let mut query = db
@@ -347,6 +398,15 @@ impl Store {
             .map_err(err)?;
         let rows = query.query_map([], read_event).map_err(err)?;
         let mut events = Vec::new();
+        for row in rows {
+            events.push(row.map_err(err)?);
+        }
+        let mut query = db
+            .prepare(&format!(
+                "SELECT {SUBSCRIPTION_EVENT_COLUMNS} FROM calendar_subscription_events e JOIN calendar_subscriptions s ON s.id=e.subscription_id WHERE s.enabled=1"
+            ))
+            .map_err(err)?;
+        let rows = query.query_map([], read_subscription_event).map_err(err)?;
         for row in rows {
             events.push(row.map_err(err)?);
         }
@@ -382,7 +442,198 @@ impl Store {
         Ok(events)
     }
 
+    pub fn calendar_subscriptions(&self) -> Result<Vec<CalendarSubscription>> {
+        let db = self.db()?;
+        let mut query = db
+            .prepare(&format!(
+                "SELECT {SUBSCRIPTION_COLUMNS} FROM calendar_subscriptions ORDER BY created_at,name"
+            ))
+            .map_err(err)?;
+        let rows = query.query_map([], read_subscription).map_err(err)?;
+        rows.map(|row| row.map_err(err)).collect()
+    }
+
+    pub fn save_calendar_subscription(
+        &self,
+        subscription: &CalendarSubscription,
+    ) -> Result<CalendarSubscription> {
+        let name = subscription.name.trim();
+        let url = subscription.url.trim();
+        if name.is_empty() {
+            return Err("请填写订阅名称".into());
+        }
+        if !(url.starts_with("https://")
+            || url.starts_with("http://")
+            || url.starts_with("webcal://"))
+        {
+            return Err("订阅地址需以 http(s):// 或 webcal:// 开头".into());
+        }
+        if !COLORS.contains(&subscription.color.as_str()) {
+            return Err("订阅颜色无效".into());
+        }
+        let db = self.db()?;
+        let existing: Option<(String, String, String)> = db
+            .query_row(
+                "SELECT created_at,last_synced_at,last_error FROM calendar_subscriptions WHERE id=?1",
+                [&subscription.id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .ok();
+        let now = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+        let id = if subscription.id.trim().is_empty() {
+            uuid::Uuid::new_v4().to_string()
+        } else {
+            subscription.id.trim().to_string()
+        };
+        let (created_at, last_synced_at, last_error) =
+            existing.unwrap_or_else(|| (now.clone(), String::new(), String::new()));
+        let saved = CalendarSubscription {
+            id,
+            name: name.to_string(),
+            url: url.to_string(),
+            color: subscription.color.clone(),
+            enabled: subscription.enabled,
+            created_at,
+            updated_at: now,
+            last_synced_at,
+            last_error,
+        };
+        db.execute(
+            "INSERT INTO calendar_subscriptions(id,name,url,color,enabled,created_at,updated_at,last_synced_at,last_error) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9) ON CONFLICT(id) DO UPDATE SET name=excluded.name,url=excluded.url,color=excluded.color,enabled=excluded.enabled,updated_at=excluded.updated_at",
+            params![
+                saved.id,
+                saved.name,
+                saved.url,
+                saved.color,
+                if saved.enabled { 1 } else { 0 },
+                saved.created_at,
+                saved.updated_at,
+                saved.last_synced_at,
+                saved.last_error,
+            ],
+        )
+        .map_err(err)?;
+        Ok(saved)
+    }
+
+    pub fn set_calendar_subscription_enabled(&self, id: &str, enabled: bool) -> Result<()> {
+        let db = self.db()?;
+        let changed = db
+            .execute(
+                "UPDATE calendar_subscriptions SET enabled=?2,updated_at=?3 WHERE id=?1",
+                params![
+                    id,
+                    if enabled { 1 } else { 0 },
+                    Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+                ],
+            )
+            .map_err(err)?;
+        if changed == 0 {
+            return Err("订阅日历不存在".into());
+        }
+        Ok(())
+    }
+
+    pub fn delete_calendar_subscription(&self, id: &str) -> Result<()> {
+        let db = self.db()?;
+        let mut tx = db.unchecked_transaction().map_err(err)?;
+        tx.execute(
+            "DELETE FROM calendar_subscription_events WHERE subscription_id=?1",
+            [id],
+        )
+        .map_err(err)?;
+        tx.execute("DELETE FROM calendar_subscriptions WHERE id=?1", [id])
+            .map_err(err)?;
+        tx.commit().map_err(err)?;
+        Ok(())
+    }
+
+    /// 用最新解析结果整体替换订阅事件，避免残留已下线的假期。
+    pub fn replace_calendar_subscription_events(
+        &self,
+        subscription_id: &str,
+        events: &[CalendarEvent],
+    ) -> Result<usize> {
+        let db = self.db()?;
+        let exists: bool = db
+            .query_row(
+                "SELECT 1 FROM calendar_subscriptions WHERE id=?1",
+                [subscription_id],
+                |_| Ok(true),
+            )
+            .unwrap_or(false);
+        if !exists {
+            return Err("订阅日历不存在".into());
+        }
+        let now = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+        let mut tx = db.unchecked_transaction().map_err(err)?;
+        tx.execute(
+            "DELETE FROM calendar_subscription_events WHERE subscription_id=?1",
+            [subscription_id],
+        )
+        .map_err(err)?;
+        let mut count = 0;
+        for event in events {
+            event.validate()?;
+            let raw_id = if event.id.trim().is_empty() {
+                uuid::Uuid::new_v4().to_string()
+            } else {
+                event.id.trim().to_string()
+            };
+            let mut saved = event.clone().normalized(
+                format!("{subscription_id}:{raw_id}"),
+                now.clone(),
+                now.clone(),
+            );
+            saved.subscription_id = subscription_id.to_string();
+            tx.execute(
+                "INSERT INTO calendar_subscription_events(subscription_id,id,title,start,end,all_day,location,notes,color,reminder_minutes,repeat,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13) ON CONFLICT(subscription_id,id) DO UPDATE SET title=excluded.title,start=excluded.start,end=excluded.end,all_day=excluded.all_day,location=excluded.location,notes=excluded.notes,color=excluded.color,reminder_minutes=excluded.reminder_minutes,repeat=excluded.repeat,updated_at=excluded.updated_at",
+                params![
+                    saved.subscription_id,
+                    saved.id,
+                    saved.title,
+                    saved.start,
+                    saved.end,
+                    if saved.all_day { 1 } else { 0 },
+                    saved.location,
+                    saved.notes,
+                    saved.color,
+                    saved.reminder_minutes,
+                    saved.repeat,
+                    saved.created_at,
+                    saved.updated_at,
+                ],
+            )
+            .map_err(err)?;
+            count += 1;
+        }
+        tx.execute(
+            "UPDATE calendar_subscriptions SET last_synced_at=?2,last_error='',updated_at=?2 WHERE id=?1",
+            params![subscription_id, now],
+        )
+        .map_err(err)?;
+        tx.commit().map_err(err)?;
+        Ok(count)
+    }
+
+    pub fn mark_calendar_subscription_error(&self, id: &str, message: &str) -> Result<()> {
+        let db = self.db()?;
+        db.execute(
+            "UPDATE calendar_subscriptions SET last_error=?2,updated_at=?3 WHERE id=?1",
+            params![
+                id,
+                message,
+                Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+            ],
+        )
+        .map_err(err)?;
+        Ok(())
+    }
+
     pub fn save_calendar_event(&self, event: &CalendarEvent) -> Result<CalendarEvent> {
+        if !event.subscription_id.is_empty() {
+            return Err("订阅日历为只读".into());
+        }
         event.validate()?;
         let db = self.db()?;
         let existing_created: Option<String> = db
@@ -548,6 +799,7 @@ mod tests {
             repeat: "none".into(),
             created_at: String::new(),
             updated_at: String::new(),
+            subscription_id: String::new(),
         }
     }
 
@@ -705,6 +957,74 @@ mod tests {
         let all = store.all_calendar_events().unwrap();
         assert_eq!(all.len(), 2);
         assert_eq!(all.iter().filter(|item| item.repeat == "weekly").count(), 1);
+    }
+
+    #[test]
+    fn subscription_events_are_read_only_and_follow_enabled() {
+        let (_dir, store) = store();
+        let subscription = store
+            .save_calendar_subscription(&CalendarSubscription {
+                id: String::new(),
+                name: "香港公众假期".into(),
+                url: "https://www.1823.gov.hk/common/ical/sc.ics".into(),
+                color: "orange".into(),
+                enabled: true,
+                created_at: String::new(),
+                updated_at: String::new(),
+                last_synced_at: String::new(),
+                last_error: String::new(),
+            })
+            .unwrap();
+        let mut holiday = event("2026-07-01", "2026-07-01");
+        holiday.id = "20260701@1823.gov.hk".into();
+        holiday.title = "香港特別行政區成立紀念日".into();
+        holiday.all_day = true;
+        holiday.color = "orange".into();
+        assert_eq!(
+            store
+                .replace_calendar_subscription_events(&subscription.id, &[holiday])
+                .unwrap(),
+            1
+        );
+        let list = store
+            .calendar_events("2026-07-01T00:00:00Z", "2026-07-02T00:00:00Z")
+            .unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].event.subscription_id, subscription.id);
+        assert!(store.save_calendar_event(&list[0].event).is_err());
+
+        store
+            .set_calendar_subscription_enabled(&subscription.id, false)
+            .unwrap();
+        assert!(store
+            .calendar_events("2026-07-01T00:00:00Z", "2026-07-02T00:00:00Z")
+            .unwrap()
+            .is_empty());
+
+        store
+            .delete_calendar_subscription(&subscription.id)
+            .unwrap();
+        assert!(store.calendar_subscriptions().unwrap().is_empty());
+        assert!(store
+            .replace_calendar_subscription_events(&subscription.id, &[])
+            .is_err());
+    }
+
+    #[test]
+    fn rejects_invalid_subscription_url() {
+        let (_dir, store) = store();
+        let result = store.save_calendar_subscription(&CalendarSubscription {
+            id: String::new(),
+            name: "本地文件".into(),
+            url: "file:///tmp/calendar.ics".into(),
+            color: "blue".into(),
+            enabled: true,
+            created_at: String::new(),
+            updated_at: String::new(),
+            last_synced_at: String::new(),
+            last_error: String::new(),
+        });
+        assert!(result.is_err());
     }
 
     #[test]
