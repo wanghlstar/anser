@@ -12,6 +12,8 @@
   <array>
     <string>zh-Hans</string>
   </array>
+  <key>NSAppleEventsUsageDescription</key>
+  <string>用于把已打开的会议应用切换到前台。</string>
   <key>NSCalendarsUsageDescription</key>
   <string>用于在雁信日历中只读显示 macOS 日历事件。</string>
   <key>NSCalendarsFullAccessUsageDescription</key>

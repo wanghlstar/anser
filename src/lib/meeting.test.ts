@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { meetingNotes, meetingProviderLabel, parseMeeting } from "./meeting";
+import {
+  meetingNotes,
+  meetingProviderForUrl,
+  meetingProviderLabel,
+  parseMeeting,
+} from "./meeting";
 
 describe("parseMeeting", () => {
   it("parses a WeCom invitation", () => {
@@ -51,5 +56,15 @@ https://meeting.tencent.com/dm/abc
     expect(notes).toContain("会议号：123-456-789");
     expect(notes).toContain("入会链接：https://meeting.tencent.com/dm/abc");
     expect(notes).toContain("发件人：张三 <a@example.com>");
+  });
+
+  it("recognizes meeting links from mail body", () => {
+    expect(
+      meetingProviderForUrl("https://work.weixin.qq.com/webapp/tm/oraqwVNKFNh"),
+    ).toBe("wecom");
+    expect(
+      meetingProviderForUrl("https://meeting.tencent.com/dm/lW9AXeR8BUpk"),
+    ).toBe("tencent");
+    expect(meetingProviderForUrl("https://example.com/meeting")).toBeNull();
   });
 });

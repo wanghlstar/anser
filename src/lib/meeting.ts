@@ -16,6 +16,25 @@ export function meetingProviderLabel(provider: MeetingProvider): string {
   return PROVIDER_LABELS[provider];
 }
 
+export function meetingProviderForUrl(url: string): MeetingProvider | null {
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.toLowerCase();
+    if (
+      host === "work.weixin.qq.com" &&
+      parsed.pathname.startsWith("/webapp/tm/")
+    ) {
+      return "wecom";
+    }
+    if (host === "meeting.tencent.com" || host === "meeting.tencent.com.cn") {
+      return "tencent";
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
 function explicitOffset(text: string): number | null {
   const match = text.match(/(?:GMT|UTC)\s*([+-])\s*(\d{1,2})(?::?(\d{2}))?/i);
   if (match) {

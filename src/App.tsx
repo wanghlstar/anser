@@ -25,6 +25,7 @@ import {
 } from "./components/move-to-folder-menu";
 import { MailActionTooltip } from "./components/mail-action-tooltip";
 import { mailShortcut, mailShortcutKeys } from "./lib/mail-shortcuts";
+import { meetingProviderForUrl, parseMeeting } from "./lib/meeting";
 import { FolderMappingDialog } from "./components/folder-mapping-dialog";
 import { RetentionDialog } from "./components/retention-dialog";
 import { MailSignatures } from "./components/mail-signatures";
@@ -681,10 +682,22 @@ export default function App() {
       next.subject = url.searchParams.get("subject") ?? "";
       next.body = url.searchParams.get("body") ?? "";
       openCompose(next);
-    } else if (native) {
-      await invoke("open_mail_link", { url: url.href });
     } else {
-      window.open(url.href, "_blank", "noopener,noreferrer");
+      const provider = meetingProviderForUrl(url.href);
+      const info = provider ? parseMeeting(detail?.mail.body || "") : null;
+      const code = info?.provider === provider ? info.code : "";
+      if (provider && code) {
+        void navigator.clipboard.writeText(code).catch(() => {});
+        if (await openMeetingApp(provider)) {
+          toast.success("会议号已复制，已打开会议应用");
+          return;
+        }
+      }
+      if (native) {
+        await invoke("open_mail_link", { url: url.href });
+      } else {
+        window.open(url.href, "_blank", "noopener,noreferrer");
+      }
     }
   }
   const openMailLinkRef = useRef(openMailLink);

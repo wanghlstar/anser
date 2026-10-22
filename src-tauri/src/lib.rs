@@ -2357,17 +2357,12 @@ fn open_mail_link(url: String) -> Result<()> {
 }
 #[cfg(target_os = "macos")]
 fn activate_meeting_app(bundle_id: &str) -> bool {
-    use objc2_app_kit::{NSWorkspace, NSWorkspaceOpenConfiguration};
-    use objc2_foundation::NSString;
-    let workspace = NSWorkspace::sharedWorkspace();
-    let id = NSString::from_str(bundle_id);
-    let Some(url) = workspace.URLForApplicationWithBundleIdentifier(&id) else {
-        return false;
-    };
-    let config = NSWorkspaceOpenConfiguration::configuration();
-    config.setActivates(true);
-    workspace.openApplicationAtURL_configuration_completionHandler(&url, &config, None);
-    true
+    let script = format!(r#"tell application id "{bundle_id}" to activate"#);
+    std::process::Command::new("/usr/bin/osascript")
+        .args(["-e", &script])
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
 }
 
 #[tauri::command]
