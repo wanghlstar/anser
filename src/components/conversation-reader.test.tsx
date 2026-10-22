@@ -148,3 +148,57 @@ it("keeps the selected header in view as a long conversation loads, then release
   await resize();
   expect(scrollRef.current?.scrollTop).toBe(10000);
 });
+
+it("offers to add a meeting from plain text without resending", async () => {
+  selected = {
+    mail: {
+      ...selected.mail,
+      body: "会议时间：2026/10/16 14:31-15:31 (GMT+08:00)\n\n点击链接直接加入会议：\nhttps://meeting.tencent.com/dm/lW9AXeR8BUpk\n\n#腾讯会议：849-511-867",
+    },
+    html: "",
+    attachments: [],
+  };
+  backend.call.mockImplementation((command: string) =>
+    command === "save_meeting_event"
+      ? Promise.resolve({})
+      : Promise.resolve([]),
+  );
+  const noop = vi.fn();
+  await act(async () =>
+    root.render(
+      <ConversationReader
+        selected={selected}
+        singleMessage
+        revision={[]}
+        accounts={[]}
+        demo
+        editorOpen
+        scrollRef={scrollRef}
+        onReply={noop}
+        onEdit={noop}
+        onSent={noop}
+        onExport={noop}
+        onAttachment={async () => {}}
+        onAction={noop}
+        onLink={noop}
+      />,
+    ),
+  );
+  expect(host.textContent).toContain("检测到腾讯会议");
+  await act(async () => {
+    [...host.querySelectorAll("button")]
+      .find((button) => button.textContent?.includes("添加到日历"))
+      ?.click();
+  });
+  expect(backend.call).toHaveBeenCalledWith(
+    "save_meeting_event",
+    expect.objectContaining({
+      event: expect.objectContaining({
+        sourceMailId: selected.mail.id,
+        meetingUrl: "https://meeting.tencent.com/dm/lW9AXeR8BUpk",
+        meetingCode: "849-511-867",
+        reminderMinutes: 15,
+      }),
+    }),
+  );
+});

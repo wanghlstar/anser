@@ -604,6 +604,16 @@ async fn save_calendar_event(
         .map_err(err)?
 }
 #[tauri::command]
+async fn save_meeting_event(
+    state: tauri::State<'_, AppState>,
+    event: CalendarEvent,
+) -> Result<CalendarEvent> {
+    let store = state.store.clone();
+    tauri::async_runtime::spawn_blocking(move || store.save_meeting_event(&event))
+        .await
+        .map_err(err)?
+}
+#[tauri::command]
 async fn delete_calendar_event(state: tauri::State<'_, AppState>, id: String) -> Result<()> {
     let store = state.store.clone();
     tauri::async_runtime::spawn_blocking(move || store.delete_calendar_event(&id))
@@ -3516,6 +3526,7 @@ pub fn run() {
             list_apple_calendar_events,
             list_calendar_events,
             save_calendar_event,
+            save_meeting_event,
             delete_calendar_event,
             skip_calendar_occurrence,
             all_calendar_events,

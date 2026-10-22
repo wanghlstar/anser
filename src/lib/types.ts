@@ -249,6 +249,10 @@ export interface CalendarEvent {
   specialDay?: string;
   appleCalendarId?: string;
   appleCalendarTitle?: string;
+  sourceMailId?: string;
+  meetingUrl?: string;
+  meetingCode?: string;
+  meetingProvider?: "wecom" | "tencent";
 }
 export interface CalendarOccurrence {
   key: string;

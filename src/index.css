@@ -4291,6 +4291,57 @@ body.sidebar-visible
   gap: 24px;
   min-width: 0;
 }
+.meeting-banner {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  border-color: color-mix(in srgb, var(--primary) 24%, var(--border));
+  background: color-mix(in srgb, var(--primary) 5%, var(--card));
+}
+.conversation-stream .meeting-banner {
+  margin-bottom: 0;
+}
+.meeting-banner-icon {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  color: var(--primary);
+}
+.meeting-banner-main {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+}
+.meeting-banner-main strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+.meeting-banner-main span {
+  font-size: 12px;
+  color: var(--foreground);
+}
+.meeting-banner-main small {
+  overflow: hidden;
+  color: var(--muted-foreground);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.meeting-banner-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+}
+.meeting-banner-saved {
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
 .conversation-start {
   display: flex;
   align-items: center;
@@ -5710,6 +5761,11 @@ body.sidebar-visible
   margin: 0;
   font-size: 12px;
   color: var(--destructive, #d33);
+}
+.calendar-meeting-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 .calendar-dialog-footer {
   display: flex;

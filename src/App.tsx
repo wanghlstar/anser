@@ -1001,6 +1001,16 @@ export default function App() {
     },
     [data.accounts, detail, openCompose],
   );
+  async function openMailById(id: string) {
+    const mail = await call<Mail>("mail_metadata", { id }).catch(() => null);
+    if (!mail) {
+      toast.error("未找到原邮件");
+      return;
+    }
+    setPage("mail");
+    await openMail(mail);
+  }
+
   const createEventFromMail = useCallback((mail: Mail) => {
     setCalendarSeed(eventDraftFromMail(mail));
     setPage("calendar");
@@ -2726,6 +2736,8 @@ export default function App() {
             <CalendarPage
               seed={calendarSeed}
               onSeedConsumed={() => setCalendarSeed(null)}
+              onOpenMail={(id) => void openMailById(id)}
+              onOpenLink={(url) => void openMailLink(url)}
             />
           ) : page === "contacts" ? (
             <ContactsPanel

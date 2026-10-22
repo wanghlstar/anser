@@ -3,7 +3,7 @@ use crate::{
     store::Store,
 };
 use chrono::{DateTime, Datelike, Days, Duration, Local, Months, NaiveDate, TimeZone, Utc};
-use rusqlite::{params, Row};
+use rusqlite::{params, OptionalExtension, Row};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
@@ -40,6 +40,15 @@ pub struct CalendarEvent {
     /// 非空表示来自订阅日历，只读。
     #[serde(default)]
     pub subscription_id: String,
+    /// 从邮件创建时保留原邮件，便于回到邮件和去重。
+    #[serde(default)]
+    pub source_mail_id: String,
+    #[serde(default)]
+    pub meeting_url: String,
+    #[serde(default)]
+    pub meeting_code: String,
+    #[serde(default)]
+    pub meeting_provider: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -335,7 +344,7 @@ fn reminder_at(
     }
 }
 
-fn read_event(row: &Row<'_>) -> rusqlite::Result<CalendarEvent> {
+fn read_event_base(row: &Row<'_>) -> rusqlite::Result<CalendarEvent> {
     Ok(CalendarEvent {
         id: row.get(0)?,
         title: row.get(1)?,
@@ -350,11 +359,24 @@ fn read_event(row: &Row<'_>) -> rusqlite::Result<CalendarEvent> {
         created_at: row.get(10)?,
         updated_at: row.get(11)?,
         subscription_id: String::new(),
+        source_mail_id: String::new(),
+        meeting_url: String::new(),
+        meeting_code: String::new(),
+        meeting_provider: String::new(),
     })
 }
 
+fn read_event(row: &Row<'_>) -> rusqlite::Result<CalendarEvent> {
+    let mut event = read_event_base(row)?;
+    event.source_mail_id = row.get(12)?;
+    event.meeting_url = row.get(13)?;
+    event.meeting_code = row.get(14)?;
+    event.meeting_provider = row.get(15)?;
+    Ok(event)
+}
+
 fn read_subscription_event(row: &Row<'_>) -> rusqlite::Result<CalendarEvent> {
-    let mut event = read_event(row)?;
+    let mut event = read_event_base(row)?;
     event.subscription_id = row.get(12)?;
     Ok(event)
 }
@@ -373,8 +395,7 @@ fn read_subscription(row: &Row<'_>) -> rusqlite::Result<CalendarSubscription> {
     })
 }
 
-const EVENT_COLUMNS: &str =
-    "id,title,start,end,all_day,location,notes,color,reminder_minutes,repeat,created_at,updated_at";
+const EVENT_COLUMNS: &str = "id,title,start,end,all_day,location,notes,color,reminder_minutes,repeat,created_at,updated_at,source_mail_id,meeting_url,meeting_code,meeting_provider";
 const SUBSCRIPTION_EVENT_COLUMNS: &str = "e.id,e.title,e.start,e.end,e.all_day,e.location,e.notes,e.color,e.reminder_minutes,e.repeat,e.created_at,e.updated_at,e.subscription_id";
 const SUBSCRIPTION_COLUMNS: &str =
     "id,name,url,color,enabled,created_at,updated_at,last_synced_at,last_error";
@@ -654,7 +675,7 @@ impl Store {
                 .clone()
                 .normalized(id, existing_created.unwrap_or_else(|| now.clone()), now);
         db.execute(
-            "INSERT INTO calendar_events(id,title,start,end,all_day,location,notes,color,reminder_minutes,repeat,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12) ON CONFLICT(id) DO UPDATE SET title=excluded.title,start=excluded.start,end=excluded.end,all_day=excluded.all_day,location=excluded.location,notes=excluded.notes,color=excluded.color,reminder_minutes=excluded.reminder_minutes,repeat=excluded.repeat,updated_at=excluded.updated_at",
+            "INSERT INTO calendar_events(id,title,start,end,all_day,location,notes,color,reminder_minutes,repeat,created_at,updated_at,source_mail_id,meeting_url,meeting_code,meeting_provider) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16) ON CONFLICT(id) DO UPDATE SET title=excluded.title,start=excluded.start,end=excluded.end,all_day=excluded.all_day,location=excluded.location,notes=excluded.notes,color=excluded.color,reminder_minutes=excluded.reminder_minutes,repeat=excluded.repeat,updated_at=excluded.updated_at,source_mail_id=excluded.source_mail_id,meeting_url=excluded.meeting_url,meeting_code=excluded.meeting_code,meeting_provider=excluded.meeting_provider",
             params![
                 saved.id,
                 saved.title,
@@ -668,10 +689,35 @@ impl Store {
                 saved.repeat,
                 saved.created_at,
                 saved.updated_at,
+                saved.source_mail_id,
+                saved.meeting_url,
+                saved.meeting_code,
+                saved.meeting_provider,
             ],
         )
         .map_err(err)?;
         Ok(saved)
+    }
+
+    /// 从邮件加入会议日程：同一封原邮件只保留一条，重复点击时更新原日程。
+    pub fn save_meeting_event(&self, event: &CalendarEvent) -> Result<CalendarEvent> {
+        if event.source_mail_id.trim().is_empty() {
+            return Err("会议日程缺少原邮件".into());
+        }
+        let db = self.db()?;
+        let existing: Option<String> = db
+            .query_row(
+                "SELECT id FROM calendar_events WHERE source_mail_id=?1 LIMIT 1",
+                [&event.source_mail_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(err)?;
+        let mut saved = event.clone();
+        if let Some(id) = existing {
+            saved.id = id;
+        }
+        self.save_calendar_event(&saved)
     }
 
     /// 跳过重复系列中的某一次，不影响其他实例。
@@ -800,7 +846,37 @@ mod tests {
             created_at: String::new(),
             updated_at: String::new(),
             subscription_id: String::new(),
+            source_mail_id: String::new(),
+            meeting_url: String::new(),
+            meeting_code: String::new(),
+            meeting_provider: String::new(),
         }
+    }
+
+    #[test]
+    fn meeting_events_dedupe_by_source_mail() {
+        let (_dir, store) = store();
+        let mut meeting = event("2026-10-21T01:00:00Z", "2026-10-21T02:00:00Z");
+        meeting.id.clear();
+        meeting.source_mail_id = "mail-1".into();
+        meeting.meeting_url = "https://meeting.tencent.com/dm/abc".into();
+        meeting.meeting_code = "123-456-789".into();
+        meeting.meeting_provider = "tencent".into();
+        let first = store.save_meeting_event(&meeting).unwrap();
+        assert_eq!(first.source_mail_id, "mail-1");
+        assert_eq!(first.meeting_code, "123-456-789");
+        meeting.id.clear();
+        meeting.title = "周会（更新）".into();
+        let second = store.save_meeting_event(&meeting).unwrap();
+        assert_eq!(first.id, second.id);
+        let all = store.all_calendar_events().unwrap();
+        assert_eq!(
+            all.iter()
+                .filter(|item| item.source_mail_id == "mail-1")
+                .count(),
+            1
+        );
+        assert_eq!(all[0].title, "周会（更新）");
     }
 
     #[test]

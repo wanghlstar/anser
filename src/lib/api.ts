@@ -755,6 +755,28 @@ export async function call<T = void>(
         result = saved;
         break;
       }
+      case "save_meeting_event": {
+        const event = args.event as CalendarEvent;
+        const events = demoCalendarEvents();
+        const existing = events.find(
+          (item) =>
+            item.sourceMailId && item.sourceMailId === event.sourceMailId,
+        );
+        const id = existing?.id || event.id || crypto.randomUUID();
+        const saved: CalendarEvent = {
+          ...event,
+          id,
+          title: event.title.trim(),
+          createdAt:
+            existing?.createdAt || event.createdAt || new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+        if (!saved.title) throw new Error("请填写日程标题");
+        if (!saved.sourceMailId) throw new Error("会议日程缺少原邮件");
+        saveDemoCalendar([saved, ...events.filter((item) => item.id !== id)]);
+        result = saved;
+        break;
+      }
       case "delete_calendar_event": {
         const events = demoCalendarEvents().filter(
           (item) => item.id !== args.id,

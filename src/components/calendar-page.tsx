@@ -23,6 +23,7 @@ import {
   FileDown,
   FileUp,
   Globe2,
+  Mail,
   MapPin,
   MoreHorizontal,
   Pencil,
@@ -31,6 +32,7 @@ import {
   Repeat,
   Sun,
   Trash2,
+  Video,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -256,9 +258,13 @@ function loadAppleSelected(): string[] {
 export function CalendarPage({
   seed,
   onSeedConsumed,
+  onOpenMail,
+  onOpenLink,
 }: {
   seed: CalendarEvent | null;
   onSeedConsumed: () => void;
+  onOpenMail?: (id: string) => void;
+  onOpenLink?: (url: string) => void;
 }) {
   const [view, setView] = useState<CalendarView>("month");
   const [anchor, setAnchor] = useState(() => new Date());
@@ -1598,6 +1604,8 @@ export function CalendarPage({
           occurrence={dialog.occurrence}
           isNew={dialog.isNew}
           series={dialog.series}
+          onOpenMail={onOpenMail}
+          onOpenLink={onOpenLink}
           onClose={() => setDialog(null)}
           onSave={async (event, scope) => {
             if (scope === "single" && dialog.series && dialog.occurrence) {
@@ -2193,6 +2201,12 @@ function ListView({
                         </small>
                       )}
                     </span>
+                    {occurrence.event.meetingUrl && (
+                      <Video
+                        className="calendar-list-repeat"
+                        aria-label="会议日程"
+                      />
+                    )}
                     {occurrence.event.repeat !== "none" && (
                       <Repeat className="calendar-list-repeat" />
                     )}
@@ -2582,6 +2596,8 @@ function EventEditor({
   occurrence,
   isNew,
   series,
+  onOpenMail,
+  onOpenLink,
   onClose,
   onSave,
   onDelete,
@@ -2590,6 +2606,8 @@ function EventEditor({
   occurrence: CalendarOccurrence | null;
   isNew: boolean;
   series: boolean;
+  onOpenMail?: (id: string) => void;
+  onOpenLink?: (url: string) => void;
   onClose: () => void;
   onSave: (event: CalendarEvent, scope: "single" | "series") => Promise<void>;
   onDelete?: (
@@ -2894,6 +2912,32 @@ function EventEditor({
               onChange={(event) => setNotes(event.target.value)}
             />
           </div>
+          {(event.meetingUrl || event.sourceMailId) && (
+            <div className="calendar-meeting-actions">
+              {event.meetingUrl && onOpenLink && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => onOpenLink(event.meetingUrl!)}
+                >
+                  <Video />
+                  加入会议
+                </Button>
+              )}
+              {event.sourceMailId && onOpenMail && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => onOpenMail(event.sourceMailId!)}
+                >
+                  <Mail />
+                  查看原邮件
+                </Button>
+              )}
+            </div>
+          )}
           {error && <p className="calendar-form-error">{error}</p>}
         </div>
         <DialogFooter className="calendar-dialog-footer">

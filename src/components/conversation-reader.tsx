@@ -9,6 +9,7 @@ import {
 import {
   ArrowDown,
   ArrowDownToLine,
+  CalendarPlus,
   MoreHorizontal,
   Reply,
   ReplyAll,
@@ -17,6 +18,7 @@ import {
   SquarePen,
   Star,
   Trash2,
+  Video,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "./ui/button";
@@ -39,6 +41,13 @@ import { ScrollArea } from "./ui/scroll-area";
 import { call, newDraft } from "../lib/api";
 import { parseAddresses, replyRecipients } from "../lib/addresses";
 import { mailTime, prefixedSubject, replyHeaders } from "../lib/conversations";
+import {
+  meetingKey,
+  meetingNotes,
+  meetingProviderLabel,
+  meetingTimeLabel,
+  parseMeeting,
+} from "../lib/meeting";
 import { senderName, senderAddress } from "../lib/providers";
 import type { Account, Compose, Detail, Mail } from "../lib/types";
 
@@ -56,6 +65,93 @@ function ParseWarnings({ mail }: { mail: Mail }) {
         ))}
       </AlertDescription>
     </Alert>
+  );
+}
+
+function MeetingBanner({ mail }: { mail: Mail }) {
+  const info = parseMeeting(mail.body || "");
+  const ignoreKey = `yanxin-meeting-ignored:${mail.id}`;
+  const [ignored, setIgnored] = useState(
+    () => localStorage.getItem(ignoreKey) === "1",
+  );
+  const [saved, setSaved] = useState(false);
+  const [saving, setSaving] = useState(false);
+  if (!info || ignored) return null;
+  const label = meetingProviderLabel(info.provider);
+
+  async function addToCalendar() {
+    setSaving(true);
+    try {
+      await call("save_meeting_event", {
+        event: {
+          id: "",
+          title: mail.subject.trim() || label,
+          start: info!.start,
+          end: info!.end,
+          allDay: false,
+          location: "",
+          notes: meetingNotes(
+            info!,
+            `${senderName(mail.sender)} <${senderAddress(mail.sender)}>`,
+            mail.date,
+          ),
+          color: info!.provider === "tencent" ? "blue" : "green",
+          reminderMinutes: 15,
+          repeat: "none",
+          createdAt: "",
+          updatedAt: "",
+          sourceMailId: mail.id,
+          meetingUrl: info!.url,
+          meetingCode: info!.code,
+          meetingProvider: info!.provider,
+        },
+      });
+      setSaved(true);
+      toast.success("已添加到日历", {
+        description: meetingTimeLabel(info!),
+      });
+    } catch (reason) {
+      toast.error(String(reason));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function ignore() {
+    localStorage.setItem(ignoreKey, "1");
+    setIgnored(true);
+  }
+
+  return (
+    <Card className="meeting-banner" data-meeting-key={meetingKey(info)}>
+      <Video className="meeting-banner-icon" aria-hidden="true" />
+      <div className="meeting-banner-main">
+        <strong>检测到{label}</strong>
+        <span>{meetingTimeLabel(info)}</span>
+        <small>
+          {info.code ? `会议号 ${info.code}` : ""}
+          {info.code && info.url ? " · " : ""}
+          {info.url ? "可直接入会" : ""}
+        </small>
+      </div>
+      <div className="meeting-banner-actions">
+        {saved ? (
+          <span className="meeting-banner-saved">已添加到日历</span>
+        ) : (
+          <Button
+            size="sm"
+            disabled={saving}
+            onClick={() => void addToCalendar()}
+          >
+            <CalendarPlus />
+            {saving ? "添加中…" : "添加到日历"}
+          </Button>
+        )}
+        <Button variant="ghost" size="sm" onClick={ignore}>
+          忽略
+        </Button>
+      </div>
+    </Card>
   );
 }
 
@@ -671,6 +767,7 @@ export function ConversationReader({
       >
         <div className="reader-scroll-content">
           <ParseWarnings mail={selected.mail} />
+          <MeetingBanner mail={selected.mail} />
           {selected.html ? (
             <MailContent
               html={selected.html}
@@ -701,6 +798,7 @@ export function ConversationReader({
         viewportProps={{ id: "mail-reader-content" } as ComponentProps<"div">}
       >
         <div className="reader-scroll-content conversation-stream" ref={stream}>
+          <MeetingBanner mail={selected.mail} />
           <div className="conversation-start">
             <Badge variant="secondary">{messages.length} 封邮件</Badge>
             <span>按时间排列</span>

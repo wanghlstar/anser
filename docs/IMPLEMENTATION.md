@@ -1079,3 +1079,11 @@ GitHub CI 和两架构发布工作流已推送；首次 Checks 已成功，Relea
 - 订阅 ICS：解析 `TZID`（IANA，含夏令时）并按事件时区换算 UTC；支持 `RRULE` 的 `INTERVAL/BYDAY/BYMONTHDAY/BYMONTH/COUNT/UNTIL`、`EXDATE`、`RDATE`；订阅同步时按当前年 -2 / +4 年展开并缓存为普通事件，保留 UID 作为稳定 ID，避免重复累积。全天事件结束日按 ICS 排他语义减 1，展开后仍保持多日跨度。
 - Apple 权限恢复：新增 `open_apple_calendar_settings` 命令，授权被拒时可打开“系统设置 → 隐私与安全性 → 日历”；窗口重新获得焦点或页面恢复可见时重查授权，权限恢复后自动重载日历列表。
 - 验证：前端全量 61 文件 / 501 例通过（新增 `conversation-reader.test.tsx` 1 例、`ics.test.ts` 8 例）；Rust 392 passed / 2 ignored；`tsc`、Prettier、`cargo fmt --check`、`check:ui` 通过。已构建预览并验证中国大陆/中国香港订阅重新同步（40 / 51 条）、Apple 类别与刷新正常；随 0.2.3 发布。
+
+## 会议邀请识别第一阶段（2026-10-22，feat/mail-import-export，未发版）
+
+- 范围：识别企业微信会议 / 腾讯会议的纯文本通知，不自动创建、不做接受/拒绝；用户确认后才加入本地日历。
+- `src/lib/meeting.ts` 解析会议时间、GMT/UTC/中国标准时间、入会链接和 9 位会议号；缺少时间或链接/会议号时不误报。`src/lib/meeting.test.ts` 覆盖两类样例。
+- 阅读器顶部新增会议提示条，提供「添加到日历」和「忽略」；添加到日历按原邮件 ID 去重，标题取邮件主题，备注写入服务商、会议号、入会链接、发件人和邮件时间，默认提前 15 分钟提醒。忽略状态按邮件保存在本地。
+- `CalendarEvent` 增加 `sourceMailId/meetingUrl/meetingCode/meetingProvider`，后端 `calendar_events` 增加对应列和旧库迁移；新增 `save_meeting_event` 命令，同一原邮件只保留一条。日历编辑窗口提供「加入会议」「查看原邮件」，列表显示会议图标。
+- 验证：前端会议解析 4 例、阅读器会议提示 1 例通过；待全量门禁、构建预览。
