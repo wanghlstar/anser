@@ -72,6 +72,7 @@ beforeEach(() => {
     },
   );
   backend.call.mockReset();
+  localStorage.clear();
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
@@ -253,6 +254,57 @@ it("falls back to the meeting link when the app is unavailable", async () => {
   expect(onLink).toHaveBeenCalledWith(
     "https://meeting.tencent.com/dm/lW9AXeR8BUpk",
   );
+});
+
+it("can restore an ignored meeting reminder", async () => {
+  selected = {
+    mail: {
+      ...selected.mail,
+      body: "会议时间：2026/10/16 14:31-15:31 (GMT+08:00)\n\n#腾讯会议：849-511-867",
+    },
+    html: "",
+    attachments: [],
+  };
+  const noop = vi.fn();
+  await act(async () =>
+    root.render(
+      <ConversationReader
+        selected={selected}
+        singleMessage
+        revision={[]}
+        accounts={[]}
+        demo
+        editorOpen
+        scrollRef={scrollRef}
+        onReply={noop}
+        onEdit={noop}
+        onSent={noop}
+        onExport={noop}
+        onAttachment={async () => {}}
+        onAction={noop}
+        onLink={noop}
+        onMeetingApp={noop}
+      />,
+    ),
+  );
+  const ignore = [...host.querySelectorAll("button")].find(
+    (button) => button.textContent?.trim() === "忽略",
+  );
+  expect(ignore).not.toBeUndefined();
+  await act(async () => ignore!.click());
+  expect(
+    localStorage.getItem(`yanxin-meeting-ignored:${selected.mail.id}`),
+  ).toBe("1");
+  expect(host.textContent).toContain("已忽略腾讯会议提醒");
+  const restore = [...host.querySelectorAll("button")].find(
+    (button) => button.textContent?.trim() === "恢复提醒",
+  );
+  expect(restore).not.toBeUndefined();
+  await act(async () => restore!.click());
+  expect(
+    localStorage.getItem(`yanxin-meeting-ignored:${selected.mail.id}`),
+  ).toBeNull();
+  expect(host.textContent).toContain("检测到腾讯会议");
 });
 
 it("copies a meeting code and opens the meeting app when no link exists", async () => {

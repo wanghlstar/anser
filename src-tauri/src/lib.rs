@@ -2355,13 +2355,30 @@ fn web_link(url: &str) -> Result<url::Url> {
 fn open_mail_link(url: String) -> Result<()> {
     open::that(web_link(&url)?.as_str()).map_err(err)
 }
+#[cfg(target_os = "macos")]
+fn activate_running_app(bundle_id: &str) -> bool {
+    use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication};
+    use objc2_foundation::NSString;
+    let id = NSString::from_str(bundle_id);
+    let apps = NSRunningApplication::runningApplicationsWithBundleIdentifier(&id);
+    let Some(app) = apps.iter().next() else {
+        return false;
+    };
+    app.unhide();
+    app.activateWithOptions(NSApplicationActivationOptions::ActivateAllWindows)
+}
+
 #[tauri::command]
 fn open_meeting_app(provider: String) -> Result<()> {
-    let url = match provider.as_str() {
-        "wecom" => "wxwork://",
-        "tencent" => "wemeet://",
+    let (bundle_id, url) = match provider.as_str() {
+        "wecom" => ("com.tencent.WeWorkMac", "wxwork://"),
+        "tencent" => ("com.tencent.meeting", "wemeet://"),
         _ => return Err("不支持的会议应用".into()),
     };
+    #[cfg(target_os = "macos")]
+    if activate_running_app(bundle_id) {
+        return Ok(());
+    }
     open::that(url).map_err(|e| format!("无法打开会议应用，请确认已安装：{e}"))
 }
 fn mail_navigation_target(url: &url::Url) -> Option<String> {

@@ -89,8 +89,24 @@ function MeetingBanner({
   );
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
-  if (!info || ignored) return null;
+  if (!info) return null;
   const label = meetingProviderLabel(info.provider);
+  const restore = () => {
+    localStorage.removeItem(ignoreKey);
+    setIgnored(false);
+  };
+  if (ignored)
+    return (
+      <Card className="meeting-banner meeting-banner-restore">
+        <Video className="meeting-banner-icon" aria-hidden="true" />
+        <div className="meeting-banner-main">
+          <span>已忽略{label}提醒</span>
+        </div>
+        <Button variant="ghost" size="sm" onClick={restore}>
+          恢复提醒
+        </Button>
+      </Card>
+    );
 
   async function addToCalendar() {
     setSaving(true);
@@ -133,6 +149,9 @@ function MeetingBanner({
   function ignore() {
     localStorage.setItem(ignoreKey, "1");
     setIgnored(true);
+    toast("已忽略会议提醒", {
+      action: { label: "撤销", onClick: restore },
+    });
   }
 
   async function copyCode(notify = true): Promise<boolean> {

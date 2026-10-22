@@ -4354,6 +4354,21 @@ body.sidebar-visible
   color: var(--muted-foreground);
   font-size: 12px;
 }
+.meeting-banner-restore {
+  padding: 8px 12px;
+  border-style: dashed;
+  border-color: var(--border);
+  background: transparent;
+}
+.meeting-banner-restore .meeting-banner-icon {
+  width: 16px;
+  height: 16px;
+  color: var(--muted-foreground);
+}
+.meeting-banner-restore .meeting-banner-main span {
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
 .conversation-start {
   display: flex;
   align-items: center;
