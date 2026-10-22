@@ -300,7 +300,7 @@ export function CalendarPage({
   const [syncingSubscriptions, setSyncingSubscriptions] = useState<string[]>(
     [],
   );
-  const [appleOpen, setAppleOpen] = useState(true);
+  const [appleOpen, setAppleOpen] = useState(false);
   const [appleStatus, setAppleStatus] =
     useState<AppleCalendarStatus>("unknown");
   const [appleCalendars, setAppleCalendars] = useState<AppleCalendar[]>([]);

@@ -186,10 +186,10 @@ describe("calendar page", () => {
     );
     await flush();
     const section = host.querySelector(".calendar-apple")!;
-    expect(section.querySelector('[data-state="open"]')).not.toBeNull();
+    expect(section.querySelector('[data-state="closed"]')).not.toBeNull();
     await act(async () => buttonByText("Apple 日历")!.click());
     await flush();
-    expect(section.querySelector('[data-state="closed"]')).not.toBeNull();
+    expect(section.querySelector('[data-state="open"]')).not.toBeNull();
   });
 
   it("adds and syncs the Hong Kong holiday subscription", async () => {
@@ -245,6 +245,8 @@ describe("calendar page", () => {
     );
     await flush();
     expect(host.textContent).toContain("Apple 日历");
+    await act(async () => buttonByText("Apple 日历")!.click());
+    await flush();
     expect(host.textContent).toContain("仅桌面客户端支持读取 Apple 日历。");
   });
 
