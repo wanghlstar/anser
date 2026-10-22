@@ -1346,6 +1346,29 @@ impl Store {
             .map_err(err)?;
         Ok(())
     }
+    /// Persist a local rule flag and, unless a directory MOVE/COPY already
+    /// carries it, enqueue the same intent for the server atomically.
+    fn update_mail_with_flag(
+        &self,
+        m: &Mail,
+        action: &str,
+        value: bool,
+        sync_server: bool,
+    ) -> Result<()> {
+        let mut db = self.db()?;
+        let tx = db
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(err)?;
+        if sync_server {
+            crate::operations::enqueue(&tx, m, action, value)?;
+        }
+        tx.execute(
+            "UPDATE messages SET data=?2 WHERE id=?1",
+            params![m.id, serde_json::to_string(m).map_err(err)?],
+        )
+        .map_err(err)?;
+        tx.commit().map_err(err)
+    }
     #[cfg(test)]
     pub fn has_source(&self, account: &str, folder: &str, remote: &str) -> Result<bool> {
         self.db()?.query_row("SELECT EXISTS(SELECT 1 FROM sources WHERE account_id=?1 AND folder=?2 AND remote_id=?3)",params![account,folder,remote],|r|r.get(0)).map_err(err)
@@ -1597,7 +1620,8 @@ impl Store {
                     break;
                 }
                 if rules::remote(&r) {
-                    if self.apply_remote_rule(&r, &m, false, Some(observed))? {
+                    let flags = rules::chain_flags(configured, position);
+                    if self.apply_remote_rule_with_flags(&r, &m, false, Some(observed), &flags)? {
                         count += 1;
                     } else {
                         continue;
@@ -1607,26 +1631,47 @@ impl Store {
                     }
                     continue;
                 }
-                match r.action.as_str() {
-                    "folder" => m.local_folder = r.destination.clone(),
-                    "saveFolder" => m.local_folder = r.destination.clone(),
-                    "save" => {}
+                let flag = match r.action.as_str() {
+                    "folder" => {
+                        m.local_folder = r.destination.clone();
+                        None
+                    }
+                    "saveFolder" => {
+                        m.local_folder = r.destination.clone();
+                        None
+                    }
+                    "save" => None,
                     "read" => {
                         m.is_read = true;
                         m.local_read_override = Some(true);
+                        Some(("read", true))
                     }
                     "unread" => {
                         m.is_read = false;
                         m.local_read_override = Some(false);
+                        Some(("read", false))
                     }
                     "star" => {
                         m.starred = true;
                         m.local_star_override = Some(true);
+                        Some(("star", true))
                     }
-                    "trash" => m.trashed = true,
+                    "trash" => {
+                        m.trashed = true;
+                        None
+                    }
                     _ => return Err("未知动作".into()),
                 };
-                self.update_mail(&m)?;
+                if let Some((action, value)) = flag {
+                    self.update_mail_with_flag(
+                        &m,
+                        action,
+                        value,
+                        !rules::chain_has_remote(configured, position),
+                    )?;
+                } else {
+                    self.update_mail(&m)?;
+                }
                 if matches!(r.action.as_str(), "folder" | "saveFolder") {
                     self.relocate_archive_after_move_unlocked(&m.local_folder, &m.id);
                     if let Ok(updated) = self.mail(&m.id) {

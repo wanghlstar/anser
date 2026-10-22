@@ -3069,6 +3069,7 @@ pub fn run() {
             });
             realtime::start(store.clone(), app.handle().clone(), realtime);
             operations::start(store.clone(), app.handle().clone());
+            operations::start_flag_backfill(store.clone(), app.handle().clone());
             directory_operations::start(store.clone(), app.handle().clone());
             sent_uploads::start(store.clone(), app.handle().clone());
             archive_jobs::start(store.clone(), app.handle().clone());

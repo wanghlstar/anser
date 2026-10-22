@@ -3,7 +3,7 @@ use crate::{models::*, store::Store};
 use rusqlite::{params, OptionalExtension, Transaction};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashSet,
+    collections::{BTreeMap, HashSet},
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -27,6 +27,19 @@ pub struct Operation {
     pub attempts: i64,
     pub error: String,
     pub updated_at: i64,
+}
+#[derive(Clone, Debug)]
+pub(crate) struct FlagBackfillChange {
+    pub mail_id: String,
+    pub uid: u32,
+    pub action: String,
+    pub value: bool,
+}
+#[derive(Clone, Debug)]
+pub(crate) struct FlagBackfillBatch {
+    pub folder: String,
+    pub validity: u32,
+    pub changes: Vec<FlagBackfillChange>,
 }
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -149,6 +162,26 @@ pub fn enqueue(tx: &Transaction<'_>, mail: &Mail, action: &str, value: bool) -> 
     }
     Ok(())
 }
+/// Drop a temporary local override after the server confirmed the same value.
+/// A newer user change clears the override first, so this update becomes a no-op.
+pub(crate) fn clear_override_in(
+    tx: &rusqlite::Connection,
+    mail_id: &str,
+    action: &str,
+    value: bool,
+) -> Result<()> {
+    let (override_key, state_key) = match action {
+        "read" => ("$.localReadOverride", "$.isRead"),
+        "star" => ("$.localStarOverride", "$.starred"),
+        _ => return Ok(()),
+    };
+    tx.execute(
+        "UPDATE messages SET data=json_remove(data,?2) WHERE id=?1 AND json_extract(data,?3)=?4 AND json_extract(data,?2)=?4",
+        params![mail_id, override_key, state_key, value as i64],
+    )
+    .map_err(err)?;
+    Ok(())
+}
 fn decode(r: &rusqlite::Row<'_>) -> rusqlite::Result<Operation> {
     let data: String = r.get(0)?;
     let mut op: Operation = serde_json::from_str(&data).map_err(|e| {
@@ -189,6 +222,81 @@ impl Store {
             items,
         })
     }
+    /// Historical rule flags that were only applied locally. Skip sources with
+    /// an active move or an already queued normal flag operation.
+    pub(crate) fn flag_backfill_batches(&self, account_id: &str) -> Result<Vec<FlagBackfillBatch>> {
+        let db = self.db()?;
+        let mut stmt = db
+            .prepare(
+                "SELECT m.id,json_extract(m.data,'$.localReadOverride'),json_extract(m.data,'$.localStarOverride'),s.folder,s.remote_id
+                 FROM messages m JOIN sources s ON s.mail_id=m.id AND s.active=1
+                 WHERE m.account_id=?1
+                   AND (json_type(m.data,'$.localReadOverride') IN ('true','false')
+                     OR json_type(m.data,'$.localStarOverride') IN ('true','false'))
+                   AND NOT EXISTS(SELECT 1 FROM directory_operations d
+                     WHERE d.account_id=m.account_id AND json_extract(d.data,'$.mailId')=m.id
+                       AND d.status NOT IN ('completed','cancelled','blocked'))
+                   AND NOT EXISTS(SELECT 1 FROM server_operations o
+                     WHERE o.account_id=m.account_id AND o.folder=s.folder AND o.remote_id=s.remote_id
+                       AND o.status IN ('queued','running','blocked'))
+                 ORDER BY s.folder,s.remote_id",
+            )
+            .map_err(err)?;
+        let rows = stmt
+            .query_map([account_id], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, Option<i64>>(1)?,
+                    r.get::<_, Option<i64>>(2)?,
+                    r.get::<_, String>(3)?,
+                    r.get::<_, String>(4)?,
+                ))
+            })
+            .map_err(err)?;
+        let mut groups: BTreeMap<(String, u32), Vec<FlagBackfillChange>> = BTreeMap::new();
+        for row in rows {
+            let (mail_id, read, star, folder, remote) = row.map_err(err)?;
+            let Some((Some(validity), uid, _)) = remote_identity(&remote) else {
+                continue;
+            };
+            let entry = groups.entry((folder, validity)).or_default();
+            if let Some(value) = read {
+                entry.push(FlagBackfillChange {
+                    mail_id: mail_id.clone(),
+                    uid,
+                    action: "read".into(),
+                    value: value != 0,
+                });
+            }
+            if let Some(value) = star {
+                entry.push(FlagBackfillChange {
+                    mail_id,
+                    uid,
+                    action: "star".into(),
+                    value: value != 0,
+                });
+            }
+        }
+        Ok(groups
+            .into_iter()
+            .map(|((folder, validity), changes)| FlagBackfillBatch {
+                folder,
+                validity,
+                changes,
+            })
+            .collect())
+    }
+    /// Clear temporary overrides only after every active source was confirmed.
+    pub(crate) fn clear_synced_overrides(&self, items: &[(String, String, bool)]) -> Result<()> {
+        let mut db = self.db()?;
+        let tx = db
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(err)?;
+        for (mail_id, action, value) in items {
+            clear_override_in(&tx, mail_id, action, *value)?;
+        }
+        tx.commit().map_err(err)
+    }
     pub(crate) fn due_operations(&self, account: &str) -> Result<Vec<Operation>> {
         let db = self.db()?;
         let mut stmt = db.prepare(&format!("SELECT {COLUMNS} FROM (SELECT *,ROW_NUMBER() OVER(PARTITION BY folder ORDER BY CASE action WHEN 'delete' THEN 0 ELSE 1 END, updated_at,id) AS ordinal FROM server_operations WHERE account_id=?1 AND status='queued' AND next_attempt<=?2) WHERE ordinal=1 ORDER BY CASE action WHEN 'delete' THEN 0 ELSE 1 END, updated_at,id LIMIT 50")).map_err(err)?;
@@ -207,6 +315,7 @@ impl Store {
         op: &Operation,
         outcome: std::result::Result<(), Failure>,
     ) -> Result<()> {
+        let succeeded = outcome.is_ok();
         let (status, error, retry) = match outcome {
             Ok(()) => ("completed", String::new(), 0),
             Err(Failure::Blocked(e)) => ("blocked", e, 0),
@@ -218,6 +327,14 @@ impl Store {
         };
         // A newer click/undo must survive completion of an older in-flight request.
         self.db()?.execute("UPDATE server_operations SET status=?3,error=?4,next_attempt=?5,updated_at=?6 WHERE id=?1 AND revision=?2 AND status='running'", params![op.id,op.revision,status,error,retry,now()]).map_err(err)?;
+        if succeeded {
+            let mut db = self.db()?;
+            let tx = db
+                .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+                .map_err(err)?;
+            clear_override_in(&tx, &op.mail_id, &op.action, op.value)?;
+            tx.commit().map_err(err)?;
+        }
         Ok(())
     }
     pub fn retry_server_operation(&self, id: &str) -> Result<()> {
@@ -346,6 +463,107 @@ pub fn start(store: Store, app: tauri::AppHandle) {
     });
 }
 
+/// Repair flags that older rule versions only applied locally. Batches are
+/// grouped per folder/UIDVALIDITY so the first run is a few IMAP commands,
+/// not one login per message. Overrides are cleared only after the server
+/// confirms every active source for that flag.
+pub fn start_flag_backfill(store: Store, app: tauri::AppHandle) {
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_secs(5));
+        let mut reported: HashSet<String> = HashSet::new();
+        loop {
+            let mut attempted = false;
+            let mut synced: Vec<(String, String, bool)> = Vec::new();
+            let mut failed: HashSet<(String, String)> = HashSet::new();
+            if let Ok(accounts) = store.accounts() {
+                for a in accounts
+                    .into_iter()
+                    .filter(|a| a.enabled && a.protocol == "imap")
+                {
+                    let Ok(batches) = store.flag_backfill_batches(&a.id) else {
+                        continue;
+                    };
+                    for batch in batches {
+                        attempted = true;
+                        let Ok(gate) =
+                            crate::sync_control::folder_gate(&store.root, &a.id, &batch.folder)
+                        else {
+                            continue;
+                        };
+                        let Ok(_guard) = gate.try_lock() else {
+                            continue;
+                        };
+                        let changes = batch
+                            .changes
+                            .iter()
+                            .map(|c| (c.uid, c.action.clone(), c.value))
+                            .collect::<Vec<_>>();
+                        match crate::network::apply_flag_batch(
+                            &a,
+                            &batch.folder,
+                            batch.validity,
+                            &changes,
+                        ) {
+                            Ok(verified) => {
+                                let verified = verified.into_iter().collect::<HashSet<_>>();
+                                for change in &batch.changes {
+                                    if verified.contains(&change.uid) {
+                                        synced.push((
+                                            change.mail_id.clone(),
+                                            change.action.clone(),
+                                            change.value,
+                                        ));
+                                    } else {
+                                        failed.insert((
+                                            change.mail_id.clone(),
+                                            change.action.clone(),
+                                        ));
+                                    }
+                                }
+                            }
+                            Err(error) => {
+                                let folder = crate::remote::display_name(&batch.folder);
+                                if reported.insert(format!("{}:{folder}:{error}", a.email)) {
+                                    let _ = store.log(&format!(
+                                        "历史规则标记同步失败（{} / {folder}）：{error}",
+                                        a.email
+                                    ));
+                                }
+                                for change in &batch.changes {
+                                    failed.insert((change.mail_id.clone(), change.action.clone()));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            let mut seen = HashSet::new();
+            let clear = synced
+                .into_iter()
+                .filter(|(mail, action, _)| {
+                    !failed.contains(&(mail.clone(), action.clone()))
+                        && seen.insert((mail.clone(), action.clone()))
+                })
+                .collect::<Vec<_>>();
+            if !clear.is_empty() {
+                match store.clear_synced_overrides(&clear) {
+                    Ok(()) => {
+                        let _ =
+                            store.log(&format!("已将 {} 条历史规则标记同步到服务器", clear.len()));
+                        let _ = app.emit("mail-updated", ());
+                        let _ = app.emit("server-operations-updated", ());
+                    }
+                    Err(error) => {
+                        let _ = store.log(&format!("历史规则标记清理失败：{error}"));
+                    }
+                }
+            }
+            let wait = if attempted { 30 } else { 300 };
+            std::thread::sleep(Duration::from_secs(wait));
+        }
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -377,6 +595,34 @@ mod tests {
         assert!(!s.mail(&id).unwrap().starred);
         assert_eq!(s.server_operations().unwrap().pending, 1);
     }
+    #[test]
+    fn historical_overrides_group_skip_pending_work_and_clear_after_confirmation() {
+        let (_temp, s, a, id) = seed();
+        s.db()
+            .unwrap()
+            .execute(
+                "UPDATE messages SET data=json_set(data,'$.isRead',json('true'),'$.localReadOverride',json('true')) WHERE id=?1",
+                [&id],
+            )
+            .unwrap();
+        let batches = s.flag_backfill_batches(&a.id).unwrap();
+        assert_eq!(batches.len(), 1);
+        assert_eq!(batches[0].folder, "INBOX");
+        assert_eq!(batches[0].validity, 7);
+        assert_eq!(batches[0].changes.len(), 1);
+        assert_eq!(batches[0].changes[0].uid, 12);
+        assert_eq!(batches[0].changes[0].action, "read");
+        assert!(batches[0].changes[0].value);
+        s.change_mail(&id, "star", "true").unwrap();
+        assert!(s.flag_backfill_batches(&a.id).unwrap().is_empty());
+        s.clear_synced_overrides(&[(id.clone(), "read".into(), true)])
+            .unwrap();
+        let m = s.mail(&id).unwrap();
+        assert!(m.is_read);
+        assert_eq!(m.local_read_override, None);
+        assert_eq!(m.local_star_override, None);
+    }
+
     #[test]
     fn a_new_click_and_undo_survive_an_old_completion() {
         let (_temp, s, a, id) = seed();

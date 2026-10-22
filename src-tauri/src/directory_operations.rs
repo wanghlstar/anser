@@ -39,6 +39,9 @@ pub struct DirectoryOperation {
     /// None means native COPY/MOVE; old journal entries remain read-only after receipt.
     #[serde(default)]
     pub strategy: Option<String>,
+    /// Rule-implied flags written to the source before COPY/MOVE.
+    #[serde(default)]
+    pub flags: Vec<FlagChange>,
 }
 fn copy_kind() -> String {
     "copy".into()
@@ -190,7 +193,7 @@ impl Store {
             })
             .map_err(err)?;
         let mail: Mail = serde_json::from_str(&data).map_err(err)?;
-        let id = Self::queue_directory_in(&tx, &mail, source, target, kind)?;
+        let id = Self::queue_directory_in(&tx, &mail, source, target, kind, &[])?;
         tx.commit().map_err(err)?;
         Ok(id)
     }
@@ -200,6 +203,7 @@ impl Store {
         source: &str,
         target: &str,
         kind: &str,
+        flags: &[FlagChange],
     ) -> Result<String> {
         let mail_id = &mail.id;
         if source.eq_ignore_ascii_case(target) {
@@ -235,14 +239,37 @@ impl Store {
             receipt: None,
             receipt_origin: None,
             strategy: None,
+            flags: flags.to_vec(),
         };
         check(&tx, &op)?;
-        let existing: Option<(String,String)> = tx.query_row("SELECT id,status FROM directory_operations WHERE account_id=?1 AND folder=?2 AND remote_id=?3 AND target=?4 AND kind=?5",params![a.id,source,op.remote_id,target,kind],|r|Ok((r.get(0)?,r.get(1)?))).optional().map_err(err)?;
-        if let Some((id, status)) = existing {
+        let existing: Option<(String,String,String)> = tx.query_row("SELECT id,status,data FROM directory_operations WHERE account_id=?1 AND folder=?2 AND remote_id=?3 AND target=?4 AND kind=?5",params![a.id,source,op.remote_id,target,kind],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional().map_err(err)?;
+        if let Some((id, status, data)) = existing {
             if status == "cancelled" {
                 tx.execute("DELETE FROM directory_operations WHERE id=?1", [id])
                     .map_err(err)?;
             } else {
+                if !flags.is_empty()
+                    && matches!(status.as_str(), "queued" | "blocked" | "preparing")
+                {
+                    let mut operation: DirectoryOperation =
+                        serde_json::from_str(&data).map_err(err)?;
+                    for flag in flags {
+                        if let Some(existing) = operation
+                            .flags
+                            .iter_mut()
+                            .find(|item| item.action == flag.action)
+                        {
+                            *existing = flag.clone();
+                        } else {
+                            operation.flags.push(flag.clone());
+                        }
+                    }
+                    tx.execute(
+                        "UPDATE directory_operations SET data=?2 WHERE id=?1",
+                        params![id, serde_json::to_string(&operation).map_err(err)?],
+                    )
+                    .map_err(err)?;
+                }
                 return Ok(id);
             }
         }
@@ -527,6 +554,9 @@ impl Store {
             params![op.id, chrono::Utc::now().timestamp()],
         )
         .map_err(err)?;
+        for flag in &op.flags {
+            operations::clear_override_in(&tx, &op.mail_id, &flag.action, flag.value)?;
+        }
         tx.commit().map_err(err)?;
         // 提交后再搬本地存档文件：失败只记录日志，relPath 不变仍指向真实文件
         if op.kind == "move" {
@@ -1006,6 +1036,61 @@ pub(crate) mod tests {
         store.change_mail(&id, "star", "false").unwrap();
         assert!(!store.mail(&id).unwrap().starred);
     }
+    #[test]
+    fn directory_operation_carries_and_merges_rule_flags() {
+        let (_temp, store, _a, id) = fixture();
+        let mail = store.mail(&id).unwrap();
+        let mut db = store.db().unwrap();
+        let tx = db
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .unwrap();
+        let job = Store::queue_directory_in(
+            &tx,
+            &mail,
+            "INBOX",
+            "Archive",
+            "move",
+            &[FlagChange {
+                action: "read".into(),
+                value: true,
+            }],
+        )
+        .unwrap();
+        let again = Store::queue_directory_in(
+            &tx,
+            &mail,
+            "INBOX",
+            "Archive",
+            "move",
+            &[
+                FlagChange {
+                    action: "star".into(),
+                    value: true,
+                },
+                FlagChange {
+                    action: "read".into(),
+                    value: false,
+                },
+            ],
+        )
+        .unwrap();
+        tx.commit().unwrap();
+        assert_eq!(job, again);
+        assert_eq!(
+            store.directory_operation(&job).unwrap().flags,
+            vec![
+                FlagChange {
+                    action: "read".into(),
+                    value: false,
+                },
+                FlagChange {
+                    action: "star".into(),
+                    value: true,
+                },
+            ]
+        );
+    }
+
     #[test]
     fn move_completion_is_atomic_preserves_archives_and_only_retires_the_exact_source() {
         let (_temp, store, a, id) = fixture();

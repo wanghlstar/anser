@@ -449,6 +449,8 @@ impl Store {
                 return Ok(());
             }
             let r = job.rules[job.cursor].clone();
+            let flags = rules::chain_flags(&job.rules, job.cursor);
+            let chain_remote = rules::chain_has_remote(&job.rules, job.cursor);
             let mut evaluation = m.clone();
             evaluation.body = parsed.body.clone();
             evaluation.has_attachments = parsed.has_attachments;
@@ -520,7 +522,7 @@ impl Store {
                     remote_mail.body = evaluation.body.clone();
                     remote_mail.has_attachments = evaluation.has_attachments;
                     let retry = job.retry_queues && Self::unqueued_rule_failure_in(&tx, &r, &m.id)?;
-                    Self::apply_remote_rule_in(&tx, &r, &remote_mail, retry)?;
+                    Self::apply_remote_rule_in(&tx, &r, &remote_mail, retry, &flags)?;
                     let item: Option<(Option<String>, String, String)> = tx
                         .query_row(
                             "SELECT operation_id,status,error FROM rule_executions WHERE rule_id=?1 AND mail_id=?2 ORDER BY rowid DESC LIMIT 1",
@@ -546,24 +548,41 @@ impl Store {
                 } else {
                     m.has_attachments = parsed.has_attachments;
                     m.attachment_metadata_known = true;
-                    match r.action.as_str() {
-                        "folder" => m.local_folder = r.destination.clone(),
-                        "saveFolder" if !job.remote_only => m.local_folder = r.destination.clone(),
-                        "save" | "saveFolder" => {}
+                    let flag = match r.action.as_str() {
+                        "folder" => {
+                            m.local_folder = r.destination.clone();
+                            None
+                        }
+                        "saveFolder" if !job.remote_only => {
+                            m.local_folder = r.destination.clone();
+                            None
+                        }
+                        "save" | "saveFolder" => None,
                         "read" => {
                             m.is_read = true;
                             m.local_read_override = Some(true);
+                            Some(("read", true))
                         }
                         "unread" => {
                             m.is_read = false;
                             m.local_read_override = Some(false);
+                            Some(("read", false))
                         }
                         "star" => {
                             m.starred = true;
                             m.local_star_override = Some(true);
+                            Some(("star", true))
                         }
-                        "trash" => m.trashed = true,
+                        "trash" => {
+                            m.trashed = true;
+                            None
+                        }
                         _ => return Err("未知规则动作".into()),
+                    };
+                    if let Some((action, value)) = flag {
+                        if !chain_remote {
+                            operations::enqueue(&tx, &m, action, value)?;
+                        }
                     }
                     tx.execute(
                         "UPDATE messages SET data=?2 WHERE id=?1",

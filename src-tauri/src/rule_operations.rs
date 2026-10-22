@@ -71,12 +71,13 @@ impl Store {
         }
         self.db()?.query_row("SELECT EXISTS(SELECT 1 FROM sources WHERE account_id=?1 AND mail_id=?2 AND folder=?3 AND active=1)",params![mail.account_id,mail.id,rule.source_folder],|r|r.get(0)).map_err(err)
     }
-    pub fn apply_remote_rule(
+    pub fn apply_remote_rule_with_flags(
         &self,
         rule: &Rule,
         mail: &Mail,
         retry: bool,
         observed: Option<rules::ObservedStatus>,
+        flags: &[FlagChange],
     ) -> Result<bool> {
         rules::validate(rule)?;
         if !rules::remote(rule)
@@ -89,7 +90,7 @@ impl Store {
         let tx = db
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .map_err(err)?;
-        let result = Self::apply_remote_rule_in(&tx, rule, mail, retry)?;
+        let result = Self::apply_remote_rule_in(&tx, rule, mail, retry, flags)?;
         tx.commit().map_err(err)?;
         Ok(result)
     }
@@ -98,6 +99,7 @@ impl Store {
         rule: &Rule,
         mail: &Mail,
         retry: bool,
+        flags: &[FlagChange],
     ) -> Result<bool> {
         rules::validate(rule)?;
         let frozen = fingerprint(rule)?;
@@ -151,6 +153,7 @@ impl Store {
                 } else {
                     "move"
                 },
+                flags,
             )
         };
         let (operation_id, status, error) = match queued {
@@ -191,13 +194,16 @@ impl Store {
     }
     pub fn retry_rule_execution(&self, id: &str) -> Result<()> {
         let (rule_id, mail_id, frozen): (String,String,String) = self.db()?.query_row("SELECT rule_id,mail_id,fingerprint FROM rule_executions WHERE id=?1 AND operation_id IS NULL AND status='blocked'",[id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).map_err(|_| "此规则记录不能重试，请查看关联服务器任务")?;
-        let rule = rules::expand(&self.rules()?)
-            .into_iter()
-            .find(|r| r.id == rule_id && r.enabled)
+        let expanded = rules::expand(&self.rules()?);
+        let position = expanded
+            .iter()
+            .position(|r| r.id == rule_id && r.enabled)
             .ok_or("规则已删除或停用，不能重试")?;
+        let rule = expanded[position].clone();
         if fingerprint(&rule)? != frozen {
             return Err("规则配置已变化，请预览新规则后执行，旧记录保留".into());
         }
+        let flags = rules::chain_flags(&expanded, position);
         if Self::rule_blocks_move(&self.db()?, &mail_id)? {
             return Err(
                 "关联规则链尚未完成，请在规则处理任务中重新核对，不会提前入队服务器动作".into(),
@@ -207,7 +213,7 @@ impl Store {
         if !rules::matches(&rule, &mail) {
             return Err("邮件已不再匹配规则".into());
         }
-        self.apply_remote_rule(&rule, &mail, true, None)?;
+        self.apply_remote_rule_with_flags(&rule, &mail, true, None, &flags)?;
         Ok(())
     }
     pub fn rule_executions(&self) -> Result<Vec<RuleExecution>> {
@@ -689,6 +695,16 @@ mod multi_action_tests {
         let hit = store.rule_executions().unwrap().remove(0);
         assert_eq!(hit.status, "queued");
         assert!(hit.operation_id.is_some());
+        let op = store
+            .directory_operation(hit.operation_id.as_ref().unwrap())
+            .unwrap();
+        assert_eq!(
+            op.flags,
+            vec![FlagChange {
+                action: "read".into(),
+                value: true,
+            }]
+        );
     }
 
     #[test]

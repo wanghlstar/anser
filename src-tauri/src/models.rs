@@ -174,6 +174,14 @@ pub struct Rule {
     pub source_folder: String,
     pub stop: bool,
 }
+/// A server flag change implied by rule actions. `action` is `read` or `star`;
+/// `unread` is represented as `read=false`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FlagChange {
+    pub action: String,
+    pub value: bool,
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RuleAction {

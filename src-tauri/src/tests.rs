@@ -2986,18 +2986,27 @@ fn local_rule_flags_survive_refresh_upgrade_and_restart_until_explicit_user_chan
     assert!(m.is_read && m.starred && m.saved_locally);
     assert_eq!(m.local_read_override, Some(true));
     assert_eq!(m.local_star_override, Some(true));
-    assert_eq!(s.server_operations().unwrap().pending, 0);
+    assert_eq!(s.server_operations().unwrap().pending, 2);
+    for _ in 0..2 {
+        let op = s.due_operations(&a.id).unwrap().remove(0);
+        assert!(s.claim_operation(&op).unwrap());
+        s.finish_operation(&op, Ok(())).unwrap();
+    }
+    let m = s.mail(&id).unwrap();
+    assert!(m.is_read && m.starred);
+    assert_eq!(m.local_read_override, None);
+    assert_eq!(m.local_star_override, None);
     s.change_mail(&id, "read", "false").unwrap();
     let m = s.mail(&id).unwrap();
     assert_eq!(m.local_read_override, None);
-    assert_eq!(m.local_star_override, Some(true));
+    assert_eq!(m.local_star_override, None);
     let op = s.due_operations(&a.id).unwrap().remove(0);
-    s.claim_operation(&op).unwrap();
+    assert!(s.claim_operation(&op).unwrap());
     s.finish_operation(&op, Ok(())).unwrap();
     s.merge_remote_flags(&a, "INBOX", &[("7:12".into(), true, false)])
         .unwrap();
     let m = s.mail(&id).unwrap();
-    assert!(m.is_read && m.starred);
+    assert!(m.is_read && !m.starred);
 }
 
 #[test]

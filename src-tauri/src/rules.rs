@@ -387,6 +387,58 @@ pub fn expand(configured: &[Rule]) -> Vec<Rule> {
         .collect()
 }
 
+fn chain_base(id: &str) -> &str {
+    id.split_once('#').map_or(id, |(base, _)| base)
+}
+fn in_chain(id: &str, base: &str) -> bool {
+    id == base
+        || id
+            .strip_prefix(base)
+            .is_some_and(|rest| rest.starts_with('#'))
+}
+/// Flags from every step of the same configured rule. A server MOVE/COPY
+/// carries these so it can write them before the source UID disappears.
+pub fn chain_flags(expanded: &[Rule], index: usize) -> Vec<FlagChange> {
+    let Some(rule) = expanded.get(index) else {
+        return Vec::new();
+    };
+    let base = chain_base(&rule.id);
+    let mut out: Vec<FlagChange> = Vec::new();
+    for step in expanded.iter().filter(|step| in_chain(&step.id, base)) {
+        let change = match step.action.as_str() {
+            "read" => FlagChange {
+                action: "read".into(),
+                value: true,
+            },
+            "unread" => FlagChange {
+                action: "read".into(),
+                value: false,
+            },
+            "star" => FlagChange {
+                action: "star".into(),
+                value: true,
+            },
+            _ => continue,
+        };
+        if let Some(existing) = out.iter_mut().find(|item| item.action == change.action) {
+            *existing = change;
+        } else {
+            out.push(change);
+        }
+    }
+    out
+}
+/// Whether the same configured rule has a server COPY/MOVE step.
+pub fn chain_has_remote(expanded: &[Rule], index: usize) -> bool {
+    let Some(rule) = expanded.get(index) else {
+        return false;
+    };
+    let base = chain_base(&rule.id);
+    expanded
+        .iter()
+        .filter(|step| in_chain(&step.id, base))
+        .any(|step| matches!(step.action.as_str(), "serverMove" | "serverCopy"))
+}
 pub fn remote(rule: &Rule) -> bool {
     rule.action == "serverCopy"
         || rule.action == "serverMove"
@@ -540,6 +592,56 @@ mod body_tests {
             match_state_observed(&r, &mail, Some(observed), true),
             MatchState::Match
         );
+    }
+
+    #[test]
+    fn chain_flags_merge_later_steps_and_stay_inside_one_configured_rule() {
+        let mut r = rule("subject", "contains", "invoice");
+        r.action = "serverMove".into();
+        r.destination = "Archive".into();
+        r.actions = vec![
+            RuleAction {
+                action: "read".into(),
+                destination: String::new(),
+                source_folder: String::new(),
+            },
+            RuleAction {
+                action: "serverMove".into(),
+                destination: "Archive".into(),
+                source_folder: String::new(),
+            },
+            RuleAction {
+                action: "unread".into(),
+                destination: String::new(),
+                source_folder: String::new(),
+            },
+            RuleAction {
+                action: "star".into(),
+                destination: String::new(),
+                source_folder: String::new(),
+            },
+        ];
+        let mut other = rule("subject", "contains", "invoice");
+        other.id = "other".into();
+        other.action = "unstar".into();
+        let expanded = expand(&[r, other]);
+        assert_eq!(expanded.len(), 5);
+        assert_eq!(
+            chain_flags(&expanded, 1),
+            vec![
+                FlagChange {
+                    action: "read".into(),
+                    value: false,
+                },
+                FlagChange {
+                    action: "star".into(),
+                    value: true,
+                },
+            ]
+        );
+        assert!(chain_has_remote(&expanded, 0));
+        assert!(!chain_has_remote(&expanded, 4));
+        assert!(chain_flags(&expanded, 4).is_empty());
     }
 
     #[test]

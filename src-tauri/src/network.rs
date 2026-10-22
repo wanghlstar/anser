@@ -17,6 +17,7 @@ use lettre::{
 use native_tls::{TlsConnector, TlsStream};
 use scraper::{Html, Selector};
 use std::{
+    collections::BTreeMap,
     io::{BufRead, BufReader, Write},
     net::{TcpStream, ToSocketAddrs},
     panic::{catch_unwind, AssertUnwindSafe},
@@ -4352,6 +4353,232 @@ fn apply_flag_session<T: std::io::Read + Write>(
     Ok(())
 }
 
+/// Apply rule flags in the already-selected source mailbox before COPY/MOVE.
+/// `permanent_flags` comes from that SELECT, so no STATUS command can deselect
+/// the mailbox on Tencent servers.
+fn apply_directory_flags<T: std::io::Read + Write>(
+    session: &mut imap::Session<T>,
+    uid: u32,
+    flags: &[FlagChange],
+    permanent_flags: &[imap::types::Flag],
+) -> Result<()> {
+    use imap::types::Flag;
+    if flags.is_empty() {
+        return Ok(());
+    }
+    let uid_text = uid.to_string();
+    let before = session.uid_fetch(&uid_text, "(UID FLAGS)").map_err(err)?;
+    let message = before
+        .iter()
+        .find(|m| m.uid == Some(uid))
+        .ok_or("原服务器邮件已不存在；尚未提交")?;
+    let current_seen = message.flags().contains(&Flag::Seen);
+    let current_flagged = message.flags().contains(&Flag::Flagged);
+    drop(before);
+    let mut changes = Vec::new();
+    for change in flags {
+        let flag = match change.action.as_str() {
+            "read" => Flag::Seen,
+            "star" => Flag::Flagged,
+            _ => return Err("规则包含不支持的服务器状态".into()),
+        };
+        if !permanent_flags.is_empty() && !permanent_flags.contains(&flag) {
+            return Err("该服务器文件夹不允许永久修改已读或星标状态".into());
+        }
+        let current = if flag == Flag::Seen {
+            current_seen
+        } else {
+            current_flagged
+        };
+        if current != change.value {
+            changes.push((flag, change.value));
+        }
+    }
+    if changes.is_empty() {
+        return Ok(());
+    }
+    for value in [true, false] {
+        let names = changes
+            .iter()
+            .filter(|(_, wanted)| *wanted == value)
+            .map(|(flag, _)| match flag {
+                Flag::Seen => "\\Seen",
+                Flag::Flagged => "\\Flagged",
+                _ => "",
+            })
+            .filter(|name| !name.is_empty())
+            .collect::<Vec<_>>();
+        if names.is_empty() {
+            continue;
+        }
+        let direction = if value { "+" } else { "-" };
+        session
+            .uid_store(
+                &uid_text,
+                format!("{direction}FLAGS.SILENT ({})", names.join(" ")),
+            )
+            .map_err(err)?;
+    }
+    let after = session.uid_fetch(&uid_text, "(UID FLAGS)").map_err(err)?;
+    let message = after
+        .iter()
+        .find(|m| m.uid == Some(uid))
+        .ok_or("同步期间原服务器邮件已移除；尚未提交")?;
+    for change in flags {
+        let flag = match change.action.as_str() {
+            "read" => Flag::Seen,
+            _ => Flag::Flagged,
+        };
+        if message.flags().contains(&flag) != change.value {
+            return Err("服务器未保存规则状态，可能为只读文件夹；尚未提交".into());
+        }
+    }
+    Ok(())
+}
+/// One-time historical repair for local rule flags. A single session updates
+/// up to 200 UIDs per command and only reports UIDs the server confirmed.
+fn apply_flag_batch_session<T: std::io::Read + Write>(
+    session: &mut imap::Session<T>,
+    folder: &str,
+    validity: u32,
+    changes: &[(u32, String, bool)],
+) -> Result<Vec<u32>> {
+    use imap::types::Flag;
+    let mailbox = session.select(folder).map_err(err)?;
+    if mailbox.uid_validity != Some(validity) {
+        return Err("服务器文件夹的邮件标识已变化，本轮不写入".into());
+    }
+    let mut wanted: BTreeMap<u32, (Option<bool>, Option<bool>)> = BTreeMap::new();
+    for (uid, action, value) in changes {
+        let entry = wanted.entry(*uid).or_default();
+        match action.as_str() {
+            "read" => entry.0 = Some(*value),
+            "star" => entry.1 = Some(*value),
+            _ => return Err("历史规则包含不支持的服务器状态".into()),
+        }
+    }
+    if !mailbox.permanent_flags.is_empty() {
+        let read = wanted.values().any(|(value, _)| value.is_some());
+        let star = wanted.values().any(|(_, value)| value.is_some());
+        if (read && !mailbox.permanent_flags.contains(&Flag::Seen))
+            || (star && !mailbox.permanent_flags.contains(&Flag::Flagged))
+        {
+            return Err("该服务器文件夹不允许永久修改已读或星标状态".into());
+        }
+    }
+    let uids = wanted.keys().copied().collect::<Vec<_>>();
+    let mut verified = Vec::new();
+    for chunk in uids.chunks(200) {
+        let set = chunk
+            .iter()
+            .map(u32::to_string)
+            .collect::<Vec<_>>()
+            .join(",");
+        let before = session.uid_fetch(&set, "(UID FLAGS)").map_err(err)?;
+        let mut current = BTreeMap::new();
+        for message in before.iter() {
+            if let Some(uid) = message.uid {
+                current.insert(
+                    uid,
+                    (
+                        message.flags().contains(&Flag::Seen),
+                        message.flags().contains(&Flag::Flagged),
+                    ),
+                );
+            }
+        }
+        drop(before);
+        let mut plus_seen = Vec::new();
+        let mut minus_seen = Vec::new();
+        let mut plus_flagged = Vec::new();
+        let mut minus_flagged = Vec::new();
+        for uid in chunk {
+            let Some(flags) = current.get(uid) else {
+                continue;
+            };
+            let (read, star) = wanted.get(uid).copied().unwrap_or_default();
+            if let Some(value) = read {
+                if flags.0 != value {
+                    if value {
+                        plus_seen.push(*uid);
+                    } else {
+                        minus_seen.push(*uid);
+                    }
+                }
+            }
+            if let Some(value) = star {
+                if flags.1 != value {
+                    if value {
+                        plus_flagged.push(*uid);
+                    } else {
+                        minus_flagged.push(*uid);
+                    }
+                }
+            }
+        }
+        let mut writes = [
+            ("+", "\\Seen", plus_seen),
+            ("-", "\\Seen", minus_seen),
+            ("+", "\\Flagged", plus_flagged),
+            ("-", "\\Flagged", minus_flagged),
+        ];
+        let had_writes = writes.iter().any(|(_, _, list)| !list.is_empty());
+        for (direction, name, list) in &mut writes {
+            if list.is_empty() {
+                continue;
+            }
+            let set = list
+                .iter()
+                .map(u32::to_string)
+                .collect::<Vec<_>>()
+                .join(",");
+            session
+                .uid_store(&set, format!("{direction}FLAGS.SILENT ({name})"))
+                .map_err(err)?;
+        }
+        let confirmed = if had_writes {
+            let after = session.uid_fetch(&set, "(UID FLAGS)").map_err(err)?;
+            let mut map = BTreeMap::new();
+            for message in after.iter() {
+                if let Some(uid) = message.uid {
+                    map.insert(
+                        uid,
+                        (
+                            message.flags().contains(&Flag::Seen),
+                            message.flags().contains(&Flag::Flagged),
+                        ),
+                    );
+                }
+            }
+            map
+        } else {
+            current
+        };
+        for uid in chunk {
+            let Some(flags) = confirmed.get(uid) else {
+                continue;
+            };
+            let (read, star) = wanted.get(uid).copied().unwrap_or_default();
+            if read.is_none_or(|value| flags.0 == value)
+                && star.is_none_or(|value| flags.1 == value)
+            {
+                verified.push(*uid);
+            }
+        }
+    }
+    Ok(verified)
+}
+pub(crate) fn apply_flag_batch(
+    account: &Account,
+    folder: &str,
+    validity: u32,
+    changes: &[(u32, String, bool)],
+) -> Result<Vec<u32>> {
+    let secret = auth::credentials(account)?;
+    let mut session = imap_session(account, &secret)?;
+    apply_flag_batch_session(&mut session, folder, validity, changes)
+}
+
 // imap 2.4 consumes the tagged completion (including COPYUID). Capture only
 // this command's bounded response in memory; never record credentials or MIME.
 #[derive(Default, Debug)]
@@ -4722,6 +4949,7 @@ fn apply_copy_session<T: std::io::Read + Write>(
             }
         }
     }
+    apply_directory_flags(session, uid, &op.flags, &source.permanent_flags)?;
     store.submit_directory(op, &content_hash, compatibility)?;
     *capture.lock().map_err(err)? = CopyCapture {
         enabled: true,
@@ -4894,6 +5122,73 @@ mod copy_tests {
         let capture = capture.lock().unwrap();
         assert!(!String::from_utf8_lossy(&capture.input).contains("Content-Type"));
     }
+    #[test]
+    fn historical_flag_batch_writes_and_verifies_only_confirmed_uids() {
+        let changes = vec![
+            (12u32, "read".to_string(), true),
+            (12, "star".to_string(), true),
+        ];
+        let script = vec![
+            b"a1 OK login\r\n".to_vec(),
+            b"* 1 EXISTS\r\n* OK [UIDVALIDITY 7] valid\r\n* OK [PERMANENTFLAGS (\\Seen \\Flagged)]\r\na2 OK selected\r\n".to_vec(),
+            b"* 1 FETCH (UID 12 FLAGS ())\r\na3 OK fetched\r\n".to_vec(),
+            b"a4 OK stored\r\n".to_vec(),
+            b"a5 OK stored\r\n".to_vec(),
+            b"* 1 FETCH (UID 12 FLAGS (\\Seen \\Flagged))\r\na6 OK fetched\r\n".to_vec(),
+        ];
+        let (mut first, _capture, written) = session(script);
+        let verified = apply_flag_batch_session(&mut first, "INBOX", 7, &changes).unwrap();
+        assert_eq!(verified, vec![12]);
+        let commands = String::from_utf8(written.lock().unwrap().clone()).unwrap();
+        let seen = commands.find("+FLAGS.SILENT (\\Seen)").unwrap();
+        let flagged = commands.find("+FLAGS.SILENT (\\Flagged)").unwrap();
+        assert!(seen < flagged);
+        let (mut wrong, _capture, _written) = session(vec![
+            b"a1 OK login\r\n".to_vec(),
+            b"* 1 EXISTS\r\n* OK [UIDVALIDITY 8] valid\r\na2 OK selected\r\n".to_vec(),
+        ]);
+        assert!(apply_flag_batch_session(&mut wrong, "INBOX", 7, &changes).is_err());
+    }
+
+    #[test]
+    fn move_writes_rule_flags_before_submitting_the_move() {
+        let (_temp, store, _a, id) = crate::directory_operations::tests::fixture();
+        let job = store.queue_move(&id, "INBOX", "Archive").unwrap();
+        let op = store.directory_operation(&job).unwrap();
+        store.claim_copy(&op).unwrap();
+        let mut op = op;
+        op.flags = vec![FlagChange {
+            action: "read".into(),
+            value: true,
+        }];
+        let raw = crate::tests::raw();
+        let script = vec![
+            b"a1 OK login\r\n".to_vec(),
+            b"* CAPABILITY IMAP4rev1 UIDPLUS MOVE\r\na2 OK caps\r\n".to_vec(),
+            b"* 0 EXISTS\r\n* OK [UIDVALIDITY 9] valid\r\na3 OK examined\r\n".to_vec(),
+            b"* 1 EXISTS\r\n* OK [UIDVALIDITY 7] valid\r\na4 OK selected\r\n".to_vec(),
+            fetch("a5", 12, &raw),
+            b"* 1 FETCH (UID 12 FLAGS ())\r\na6 OK flags\r\n".to_vec(),
+            b"a7 OK stored\r\n".to_vec(),
+            b"* 1 FETCH (UID 12 FLAGS (\\Seen))\r\na8 OK flags\r\n".to_vec(),
+            b"* OK [COPYUID 9 12 34]\r\na9 OK moved\r\n".to_vec(),
+            b"* 1 EXISTS\r\n* OK [UIDVALIDITY 9] valid\r\na10 OK examined\r\n".to_vec(),
+            fetch("a11", 34, &raw),
+            b"* 0 EXISTS\r\n* OK [UIDVALIDITY 7] valid\r\na12 OK examined\r\n".to_vec(),
+            b"a13 OK fetched\r\n".to_vec(),
+        ];
+        let (mut session, capture, written) = session(script);
+        apply_copy_session(&store, &op, &mut session, &capture).unwrap();
+        let commands = String::from_utf8(written.lock().unwrap().clone()).unwrap();
+        let store_at = commands
+            .find("UID STORE 12 +FLAGS.SILENT (\\Seen)")
+            .unwrap();
+        let move_at = commands.find("UID MOVE 12 \"Archive\"").unwrap();
+        assert!(store_at < move_at);
+        assert_eq!(commands.matches("UID MOVE").count(), 1);
+        assert_eq!(store.directory_operation(&job).unwrap().status, "completed");
+    }
+
     #[test]
     fn submitted_disconnect_missing_or_wrong_receipt_never_requeues_copy() {
         for reply in [
