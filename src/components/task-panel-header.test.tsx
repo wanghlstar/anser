@@ -6,6 +6,7 @@ import { ArchiveJobsPanel } from "./archive-jobs";
 import { ServerOperations } from "./server-operations";
 import { FolderHealthPanel } from "./folder-health";
 import { DirectoryOperationsPanel } from "./server-copy";
+import { RuleRunsPanel } from "./rule-runs";
 import * as api from "@/lib/api";
 
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
@@ -165,4 +166,29 @@ it("keeps refresh busy for a slow request and releases it after failure", async 
   expect(host.textContent).toContain("Read fixture failed");
   expect(refresh.disabled).toBe(false);
   expect(refresh.getAttribute("aria-busy")).toBe("false");
+});
+it("keeps the rule task count in the trigger so refresh aligns with other cards", async () => {
+  vi.spyOn(api, "call").mockResolvedValue([
+    {
+      id: "queued",
+      accountEmail: "test@example.com",
+      subject: "Fixture",
+      step: "读取正文",
+      cursor: 0,
+      total: 1,
+      applied: 0,
+      status: "queued",
+      error: "",
+      updatedAt: "",
+    },
+  ] as never);
+  await act(async () => root.render(<RuleRunsPanel />));
+  const trigger = host.querySelector(
+    '[aria-label="展开或收起规则处理任务"]',
+  ) as HTMLButtonElement;
+  expect(trigger.textContent).toContain("1 项待处理");
+  const refresh = host.querySelector(
+    '[aria-label="刷新规则处理任务"]',
+  ) as HTMLButtonElement;
+  expect(refresh.parentElement?.textContent).not.toContain("项待处理");
 });

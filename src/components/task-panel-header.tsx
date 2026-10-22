@@ -11,6 +11,7 @@ export function TaskPanelHeader({
   description,
   onRefresh,
   action,
+  inlineAction,
   disabled = false,
   controls,
   compact = false,
@@ -19,6 +20,7 @@ export function TaskPanelHeader({
   description: ReactNode;
   onRefresh?: () => Promise<void>;
   action?: ReactNode;
+  inlineAction?: ReactNode;
   disabled?: boolean;
   controls?: string;
   compact?: boolean;
@@ -87,6 +89,7 @@ export function TaskPanelHeader({
               {description}
             </span>
           </span>
+          {inlineAction}
           <ChevronDown className="mt-0.5 transition-transform group-data-[state=open]:rotate-180 motion-reduce:transition-none" />
         </Button>
       </CollapsibleTrigger>

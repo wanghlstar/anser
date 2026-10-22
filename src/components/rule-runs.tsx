@@ -80,7 +80,7 @@ export function RuleRunsPanel({ onShowTasks }: { onShowTasks?: () => void }) {
           title="规则处理任务"
           description={`最近 100 项，当前 ${pending} 项待处理。在线正文按需核对；完整保存成功后再归类。`}
           onRefresh={() => reload.current()}
-          action={
+          inlineAction={
             <Badge
               variant={
                 items?.some((item) => item.status === "blocked")
