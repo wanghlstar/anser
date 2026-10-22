@@ -3641,6 +3641,19 @@ body.sidebar-visible
 .sidebar-bottom {
   padding-top: 12px;
 }
+.nav-trash {
+  margin-top: -4px;
+}
+.sidebar-bottom .nav-item {
+  min-height: 30px;
+  padding: 5px 9px;
+  gap: 8px;
+  font-size: 13px;
+}
+.sidebar-bottom .nav-item svg {
+  width: 15px;
+  height: 15px;
+}
 .storage-note {
   background: var(--background);
   border: 1px solid var(--border);

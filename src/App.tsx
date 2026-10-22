@@ -2721,7 +2721,7 @@ export default function App() {
                     </Button>
                   </div>
                 ))}
-                {nav("trash", Trash2)}
+                <div className="nav-trash">{nav("trash", Trash2)}</div>
               </ScrollPane>
             </SidebarContent>
             <SidebarFooter className="mail-sidebar-footer">
