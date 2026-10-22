@@ -166,26 +166,52 @@ describe("calendar page", () => {
     ).toBe("true");
   });
 
+  it("collapses calendar categories by default", async () => {
+    await act(async () =>
+      root.render(<CalendarPage seed={null} onSeedConsumed={() => {}} />),
+    );
+    await flush();
+    const section = host.querySelector(".calendar-colors")!;
+    expect(section.querySelectorAll(".calendar-color-row")).toHaveLength(0);
+    await act(async () => buttonByText("日历分类")!.click());
+    await flush();
+    expect(
+      section.querySelectorAll(".calendar-color-row").length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("collapses the Apple calendar section", async () => {
+    await act(async () =>
+      root.render(<CalendarPage seed={null} onSeedConsumed={() => {}} />),
+    );
+    await flush();
+    const section = host.querySelector(".calendar-apple")!;
+    expect(section.querySelector('[data-state="open"]')).not.toBeNull();
+    await act(async () => buttonByText("Apple 日历")!.click());
+    await flush();
+    expect(section.querySelector('[data-state="closed"]')).not.toBeNull();
+  });
+
   it("adds and syncs the Hong Kong holiday subscription", async () => {
     await act(async () =>
       root.render(<CalendarPage seed={null} onSeedConsumed={() => {}} />),
     );
     await flush();
-    const preset = buttonByText("香港公众假期");
+    const preset = buttonByText("中国香港公众假期");
     expect(preset).not.toBeUndefined();
     await act(async () => preset!.click());
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 50));
     });
-    expect(host.textContent).toContain("香港公众假期");
+    expect(host.textContent).toContain("中国香港公众假期");
     expect(host.textContent).toContain("已同步");
-    expect(buttonByText("香港公众假期")).toBeUndefined();
-    expect(buttonByText("添加香港公众假期")).toBeUndefined();
+    expect(buttonByText("中国香港公众假期")).toBeUndefined();
+    expect(buttonByText("添加中国香港公众假期")).toBeUndefined();
     const subscriptions = JSON.parse(
       localStorage.getItem("mail-desktop-demo-v1-calendar-subscriptions") ||
         "[]",
     ) as { id: string; name: string }[];
-    expect(subscriptions[0]?.name).toBe("香港公众假期");
+    expect(subscriptions[0]?.name).toBe("中国香港公众假期");
     const events = JSON.parse(
       localStorage.getItem(
         "mail-desktop-demo-v1-calendar-subscription-events",
@@ -195,7 +221,7 @@ describe("calendar page", () => {
     expect(events[0]?.subscriptionId).toBe(subscriptions[0]?.id);
 
     const remove = host.querySelector<HTMLButtonElement>(
-      'button[aria-label="删除香港公众假期"]',
+      'button[aria-label="删除中国香港公众假期"]',
     );
     expect(remove).not.toBeNull();
     await act(async () => remove!.click());
@@ -210,7 +236,97 @@ describe("calendar page", () => {
           "[]",
       ),
     ).toEqual([]);
-    expect(buttonByText("香港公众假期")).not.toBeUndefined();
+    expect(buttonByText("中国香港公众假期")).not.toBeUndefined();
+  });
+
+  it("shows Apple calendar as desktop-only in demo", async () => {
+    await act(async () =>
+      root.render(<CalendarPage seed={null} onSeedConsumed={() => {}} />),
+    );
+    await flush();
+    expect(host.textContent).toContain("Apple 日历");
+    expect(host.textContent).toContain("仅桌面客户端支持读取 Apple 日历。");
+  });
+
+  it("adds China holidays and hides lunar-only entries", async () => {
+    await act(async () =>
+      root.render(<CalendarPage seed={null} onSeedConsumed={() => {}} />),
+    );
+    await flush();
+    const preset = buttonByText("中国大陆节假日");
+    expect(preset).not.toBeUndefined();
+    await act(async () => preset!.click());
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    expect(host.textContent).toContain("中国大陆节假日");
+    expect(host.textContent).toContain("已同步");
+    expect(buttonByText("中国大陆节假日")).toBeUndefined();
+    const events = JSON.parse(
+      localStorage.getItem(
+        "mail-desktop-demo-v1-calendar-subscription-events",
+      ) || "[]",
+    ) as { title: string; specialDay?: string }[];
+    expect(events).toHaveLength(8);
+    expect(events.every((item) => Boolean(item.specialDay))).toBe(true);
+    expect(events.some((item) => item.title === "小寒")).toBe(false);
+  });
+
+  it("lists mainland holidays before Hong Kong", async () => {
+    await act(async () =>
+      root.render(<CalendarPage seed={null} onSeedConsumed={() => {}} />),
+    );
+    await flush();
+    await act(async () => buttonByText("中国大陆节假日")!.click());
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    await act(async () => buttonByText("中国香港公众假期")!.click());
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    const text = host.textContent || "";
+    expect(text.indexOf("中国大陆节假日")).toBeLessThan(
+      text.indexOf("中国香港公众假期"),
+    );
+  });
+
+  it("edits an existing subscription", async () => {
+    await act(async () =>
+      root.render(<CalendarPage seed={null} onSeedConsumed={() => {}} />),
+    );
+    await flush();
+    await act(async () => buttonByText("中国香港公众假期")!.click());
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    const edit = host.querySelector<HTMLButtonElement>(
+      'button[aria-label="编辑中国香港公众假期"]',
+    );
+    expect(edit).not.toBeNull();
+    await act(async () => edit!.click());
+    await flush();
+    expect(document.body.textContent).toContain("编辑订阅日历");
+    const input =
+      document.querySelector<HTMLInputElement>("#subscription-name")!;
+    const setValue = Object.getOwnPropertyDescriptor(
+      HTMLInputElement.prototype,
+      "value",
+    )!.set!;
+    await act(async () => {
+      setValue.call(input, "我的假期");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => buttonByText("保存修改")!.click());
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    const subscriptions = JSON.parse(
+      localStorage.getItem("mail-desktop-demo-v1-calendar-subscriptions") ||
+        "[]",
+    ) as { name: string }[];
+    expect(subscriptions[0]?.name).toBe("我的假期");
+    expect(host.textContent).toContain("我的假期");
   });
 
   it("shows subscription events as read-only and copies them locally", async () => {
@@ -222,7 +338,7 @@ describe("calendar page", () => {
       JSON.stringify([
         {
           id: "sub-1",
-          name: "香港公众假期",
+          name: "中国香港公众假期",
           url: "https://www.1823.gov.hk/common/ical/sc.ics",
           color: "orange",
           enabled: true,

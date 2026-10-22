@@ -1,3 +1,4 @@
+mod apple_calendar;
 mod archive;
 mod archive_deletion;
 mod archive_jobs;
@@ -547,6 +548,36 @@ async fn contact_suggestions(state: tauri::State<'_, AppState>) -> Result<Vec<Ad
         .map_err(err)?
 }
 #[tauri::command]
+fn apple_calendar_status() -> String {
+    apple_calendar::status()
+}
+
+#[tauri::command]
+async fn connect_apple_calendar() -> Result<Vec<apple_calendar::AppleCalendarInfo>> {
+    tauri::async_runtime::spawn_blocking(apple_calendar::connect)
+        .await
+        .map_err(err)?
+}
+
+#[tauri::command]
+async fn list_apple_calendars() -> Result<Vec<apple_calendar::AppleCalendarInfo>> {
+    tauri::async_runtime::spawn_blocking(apple_calendar::list_calendars)
+        .await
+        .map_err(err)?
+}
+
+#[tauri::command]
+async fn list_apple_calendar_events(
+    from: String,
+    to: String,
+    calendar_ids: Vec<String>,
+) -> Result<Vec<apple_calendar::AppleCalendarEvent>> {
+    tauri::async_runtime::spawn_blocking(move || apple_calendar::events(&from, &to, calendar_ids))
+        .await
+        .map_err(err)?
+}
+
+#[tauri::command]
 async fn list_calendar_events(
     state: tauri::State<'_, AppState>,
     from: String,
@@ -685,10 +716,11 @@ async fn fetch_calendar_subscription(url: String) -> Result<String> {
         let text = response
             .text()
             .map_err(|e| format!("订阅内容读取失败：{e}"))?;
+        let text = text.trim_start_matches('\u{feff}').trim_start().to_string();
         if text.len() > 2_000_000 {
             return Err("订阅文件过大，已拒绝导入".into());
         }
-        if !text.trim_start().starts_with("BEGIN:VCALENDAR") {
+        if !text.starts_with("BEGIN:VCALENDAR") {
             return Err("订阅地址返回的不是 ICS 日历".into());
         }
         Ok(text)
@@ -3472,6 +3504,10 @@ pub fn run() {
             save_contact,
             delete_contact,
             contact_suggestions,
+            apple_calendar_status,
+            connect_apple_calendar,
+            list_apple_calendars,
+            list_apple_calendar_events,
             list_calendar_events,
             save_calendar_event,
             delete_calendar_event,

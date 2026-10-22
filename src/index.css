@@ -4954,12 +4954,38 @@ body.sidebar-visible
   border-radius: 12px;
   background: var(--card);
 }
-.calendar-colors h2 {
-  margin: 0 0 9px;
+.calendar-side-heading {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted-foreground);
   font-size: 12px;
   font-weight: 600;
-  color: var(--muted-foreground);
   letter-spacing: 0.2px;
+  text-align: left;
+  cursor: pointer;
+}
+.calendar-side-heading:hover {
+  color: var(--foreground);
+}
+.calendar-side-chevron {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  transform: rotate(-90deg);
+  transition: transform 0.15s ease;
+}
+.calendar-side-chevron.is-open {
+  transform: rotate(0deg);
+}
+.calendar-colors .calendar-side-heading {
+  margin-bottom: 9px;
 }
 .calendar-color-row {
   display: flex;
@@ -4973,6 +4999,40 @@ body.sidebar-visible
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+.calendar-apple {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.calendar-apple-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 2px;
+  font-size: 12px;
+}
+.calendar-apple-name {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.calendar-apple-hint {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--muted-foreground);
+  font-size: 11px;
+  line-height: 1.5;
+}
+.calendar-apple-error {
+  overflow: hidden;
+  color: var(--destructive, #d33);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .calendar-subscriptions-head {
   display: flex;
@@ -5022,6 +5082,11 @@ body.sidebar-visible
   justify-content: flex-start;
   color: var(--muted-foreground);
   font-size: 12px;
+}
+.calendar-subscription-presets {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 .calendar-subscription-form {
   display: flex;

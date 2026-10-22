@@ -246,6 +246,9 @@ export interface CalendarEvent {
   createdAt: string;
   updatedAt: string;
   subscriptionId?: string;
+  specialDay?: string;
+  appleCalendarId?: string;
+  appleCalendarTitle?: string;
 }
 export interface CalendarOccurrence {
   key: string;
@@ -264,6 +267,33 @@ export interface CalendarSubscription {
   updatedAt: string;
   lastSyncedAt: string;
   lastError: string;
+}
+export type AppleCalendarStatus =
+  | "notDetermined"
+  | "restricted"
+  | "denied"
+  | "fullAccess"
+  | "writeOnly"
+  | "unknown"
+  | "unavailable";
+export interface AppleCalendar {
+  id: string;
+  title: string;
+  sourceTitle: string;
+  color: CalendarColor;
+  readOnly: boolean;
+}
+export interface AppleCalendarEvent {
+  id: string;
+  calendarId: string;
+  calendarTitle: string;
+  title: string;
+  start: string;
+  end: string;
+  allDay: boolean;
+  location: string;
+  notes: string;
+  color: CalendarColor;
 }
 export interface OutboxRecord {
   id: string;

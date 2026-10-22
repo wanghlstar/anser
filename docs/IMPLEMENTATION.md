@@ -1059,3 +1059,14 @@ GitHub CI 和两架构发布工作流已推送；首次 Checks 已成功，Relea
 - 只读保护：`CalendarEvent.subscriptionId` 标记来源；点击/拖拽/缩放/右键编辑均被拦截，列表行显示订阅图标；复制时清除订阅标记并另存本地日程。
 - 验证：Rust 391 passed / 2 ignored；前端全量 489 passed；`tsc`、`cargo fmt --check` 通过；真实预览中香港公众假期订阅成功同步 51 条（2025–2027），应用包构建通过。
 - Apple 日历只读叠加仍待开发（用户已确认只读）。订阅日历先满足外部只读日历需求。
+
+## Apple 日历只读叠加与中国节假日订阅（2026-10-22，feat/calendar）
+
+- 范围：Apple 日历只读叠加，不做写入；订阅只读。用户主要用途是同步 Apple 日历中的生日等系统日历事件。
+- Apple 后端：`src-tauri/src/apple_calendar.rs` 使用 `eventkit 0.4`，新增 `apple_calendar_status`、`connect_apple_calendar`、`list_apple_calendars`、`list_apple_calendar_events`；读取当前范围事件，全天事件结束日按 EventKit 排他规则减 1，最多 5000 条。`tauri.conf.json` 最低系统版本提升到 macOS 13；`Info.plist` 增加日历权限说明。
+- 关键修复：Tauri 默认启用 hardened runtime，自签应用直接请求日历权限会返回 false 且不弹系统授权。新增 `src-tauri/entitlements.plist`（`com.apple.security.personal-information.calendars`）并在 `bundle.macOS.entitlements` 引用；同时给 `build.rs` 增加 Swift runtime 的 `-rpath /usr/lib/swift`，解决 `cargo test` 加载 `libswift_Concurrency.dylib` 失败。
+- Apple 前端：侧栏“Apple 日历”支持连接、授权拒绝提示、显示开关、日历多选、刷新；事件合并为只读 occurrence，带 Apple 图标；点击/拖拽/缩放被拦截，右键仅“复制为本地日程”。
+- 中国节假日：内置订阅 `https://calendars.icloud.com/holidays/cn_zh.ics`，名称“中国大陆节假日”；只保留 `X-APPLE-SPECIAL-DAY` 非空的事件，过滤节气/农历条目。香港内置订阅更名“中国香港公众假期”；订阅列表固定中国大陆在前、中国香港在后。订阅支持编辑名称/URL/颜色，URL 改变后重新同步。
+- 订阅下载：reqwest 启用 `gzip`；iCloud 即使不主动请求 gzip 也返回压缩内容，之前被误判为“url 不是日历”。下载后先去 BOM/空白再校验 `BEGIN:VCALENDAR`。
+- 数据处理：用户此前通过文件导入的 246 条中国大陆节假日日程已从本地 `calendar_events` 删除；真实预览中中国大陆订阅同步 40 条、中国香港订阅同步 51 条。
+- 验证：Rust 392 passed / 2 ignored；前端日历相关 21 例通过；`tsc`、`check:ui`、`cargo fmt --check`、桌面构建通过；预览确认 Apple 日历已连接并列出“生日”等日历，订阅顺序为中国大陆、中国香港。

@@ -12,8 +12,10 @@ import {
 } from "date-fns";
 import { zhCN } from "date-fns/locale";
 import {
+  Apple,
   CalendarDays,
   CalendarPlus,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Clock,
@@ -57,6 +59,9 @@ import {
   type CalendarView,
 } from "@/lib/calendar";
 import type {
+  AppleCalendar,
+  AppleCalendarEvent,
+  AppleCalendarStatus,
   CalendarColor,
   CalendarEvent,
   CalendarOccurrence,
@@ -76,6 +81,11 @@ import {
 import { Button } from "./ui/button";
 import { Calendar } from "./ui/calendar";
 import { Checkbox } from "./ui/checkbox";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "./ui/collapsible";
 import {
   Dialog,
   DialogContent,
@@ -115,10 +125,59 @@ const HOURS = Array.from({ length: 24 }, (_, hour) => hour);
 const MINUTES = [0, 15, 30, 45];
 const COLOR_STORAGE_KEY = "yanxin-calendar-hidden-colors";
 const HK_HOLIDAYS_URL = "https://www.1823.gov.hk/common/ical/sc.ics";
+const CN_HOLIDAYS_URL = "https://calendars.icloud.com/holidays/cn_zh.ics";
+const CN_HOLIDAYS_NAME = "中国大陆节假日";
+const HK_HOLIDAYS_NAME = "中国香港公众假期";
 const SUBSCRIPTION_REFRESH_MS = 6 * 60 * 60 * 1000;
+const APPLE_ENABLED_KEY = "yanxin-calendar-apple-enabled";
+const APPLE_SELECTED_KEY = "yanxin-calendar-apple-selected";
 
-function isSubscriptionEvent(event: CalendarEvent) {
-  return Boolean(event.subscriptionId);
+function isChinaHolidayUrl(url: string) {
+  return url.trim().replace(/\/+$/, "") === CN_HOLIDAYS_URL;
+}
+
+function sameSubscriptionUrl(left: string, right: string) {
+  return left.trim().replace(/\/+$/, "") === right.replace(/\/+$/, "");
+}
+
+function holidaySubscriptionRank(url: string) {
+  if (sameSubscriptionUrl(url, CN_HOLIDAYS_URL)) return 0;
+  if (sameSubscriptionUrl(url, HK_HOLIDAYS_URL)) return 1;
+  return 2;
+}
+
+function isReadOnlyEvent(event: CalendarEvent) {
+  return Boolean(event.subscriptionId || event.appleCalendarId);
+}
+
+function readOnlyLabel(event: CalendarEvent) {
+  return event.appleCalendarId ? "Apple 日历" : "订阅日历";
+}
+
+function appleOccurrence(event: AppleCalendarEvent): CalendarOccurrence {
+  const id = `apple:${event.id}`;
+  return {
+    key: id,
+    event: {
+      id,
+      title: event.title,
+      start: event.start,
+      end: event.end,
+      allDay: event.allDay,
+      location: event.location,
+      notes: event.notes,
+      color: event.color,
+      reminderMinutes: null,
+      repeat: "none",
+      createdAt: "",
+      updatedAt: "",
+      appleCalendarId: event.calendarId,
+      appleCalendarTitle: event.calendarTitle,
+    },
+    start: event.start,
+    end: event.end,
+    allDay: event.allDay,
+  };
 }
 
 type DialogState = {
@@ -183,6 +242,17 @@ function loadHiddenColors(): CalendarColor[] {
   }
 }
 
+function loadAppleSelected(): string[] {
+  try {
+    const stored = JSON.parse(
+      localStorage.getItem(APPLE_SELECTED_KEY) || "[]",
+    ) as string[];
+    return Array.isArray(stored) ? stored : [];
+  } catch {
+    return [];
+  }
+}
+
 export function CalendarPage({
   seed,
   onSeedConsumed,
@@ -199,6 +269,7 @@ export function CalendarPage({
   const [reload, setReload] = useState(0);
   const [hiddenColors, setHiddenColors] =
     useState<CalendarColor[]>(loadHiddenColors);
+  const [colorsOpen, setColorsOpen] = useState(false);
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const [drag, setDrag] = useState<DragState | null>(null);
   const [pendingSeries, setPendingSeries] = useState<CalendarEvent | null>(
@@ -210,12 +281,27 @@ export function CalendarPage({
   const [subscriptions, setSubscriptions] = useState<CalendarSubscription[]>(
     [],
   );
-  const [subscriptionDialog, setSubscriptionDialog] = useState(false);
+  const [subscriptionDialog, setSubscriptionDialog] = useState<
+    CalendarSubscription | "new" | null
+  >(null);
   const [subscriptionToDelete, setSubscriptionToDelete] =
     useState<CalendarSubscription | null>(null);
   const [syncingSubscriptions, setSyncingSubscriptions] = useState<string[]>(
     [],
   );
+  const [appleOpen, setAppleOpen] = useState(true);
+  const [appleStatus, setAppleStatus] =
+    useState<AppleCalendarStatus>("unknown");
+  const [appleCalendars, setAppleCalendars] = useState<AppleCalendar[]>([]);
+  const [appleSelected, setAppleSelected] =
+    useState<string[]>(loadAppleSelected);
+  const [appleEnabled, setAppleEnabled] = useState(
+    () => localStorage.getItem(APPLE_ENABLED_KEY) === "1",
+  );
+  const [appleEvents, setAppleEvents] = useState<AppleCalendarEvent[]>([]);
+  const [appleBusy, setAppleBusy] = useState(false);
+  const [appleLoading, setAppleLoading] = useState(false);
+  const [appleError, setAppleError] = useState("");
   const [now, setNow] = useState(() => new Date());
   const dialogKey = useRef(0);
   const dragId = useRef(0);
@@ -228,10 +314,23 @@ export function CalendarPage({
 
   const range = useMemo(() => rangeForView(view, anchor), [view, anchor]);
   const days = useMemo(() => daysForView(view, anchor), [view, anchor]);
+  const appleOccurrences = useMemo(
+    () => appleEvents.map(appleOccurrence),
+    [appleEvents],
+  );
+  const mergedOccurrences = useMemo(
+    () =>
+      [...occurrences, ...appleOccurrences].sort((left, right) =>
+        left.start.localeCompare(right.start),
+      ),
+    [occurrences, appleOccurrences],
+  );
   const visible = useMemo(
     () =>
-      occurrences.filter((item) => !hiddenColors.includes(item.event.color)),
-    [occurrences, hiddenColors],
+      mergedOccurrences.filter(
+        (item) => !hiddenColors.includes(item.event.color),
+      ),
+    [mergedOccurrences, hiddenColors],
   );
 
   useEffect(() => {
@@ -281,6 +380,56 @@ export function CalendarPage({
       alive = false;
     };
   }, []);
+
+  useEffect(() => {
+    let alive = true;
+    void call<AppleCalendarStatus>("apple_calendar_status")
+      .then((status) => {
+        if (!alive) return;
+        setAppleStatus(status);
+        if (status === "fullAccess") void loadAppleCalendars();
+      })
+      .catch(() => {
+        if (alive) setAppleStatus("unavailable");
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (
+      appleStatus !== "fullAccess" ||
+      !appleEnabled ||
+      appleSelected.length === 0
+    ) {
+      setAppleEvents([]);
+      setAppleLoading(false);
+      return;
+    }
+    let alive = true;
+    setAppleLoading(true);
+    setAppleError("");
+    void call<AppleCalendarEvent[]>("list_apple_calendar_events", {
+      from: range.from.toISOString(),
+      to: range.to.toISOString(),
+      calendarIds: appleSelected,
+    })
+      .then((items) => {
+        if (alive) setAppleEvents(items);
+      })
+      .catch((reason) => {
+        if (!alive) return;
+        setAppleEvents([]);
+        setAppleError(String(reason));
+      })
+      .finally(() => {
+        if (alive) setAppleLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [appleStatus, appleEnabled, appleSelected, range.from, range.to]);
 
   useEffect(() => {
     if (!seed) return;
@@ -482,8 +631,10 @@ export function CalendarPage({
   }
 
   function openEdit(occurrence: CalendarOccurrence) {
-    if (isSubscriptionEvent(occurrence.event)) {
-      toast.info("订阅日历为只读，可右键复制为本地日程");
+    if (isReadOnlyEvent(occurrence.event)) {
+      toast.info(
+        `${readOnlyLabel(occurrence.event)}为只读，可右键复制为本地日程`,
+      );
       return;
     }
     const series = occurrence.event.repeat !== "none";
@@ -601,11 +752,11 @@ export function CalendarPage({
         createdAt: "",
         updatedAt: "",
         subscriptionId: "",
+        appleCalendarId: "",
+        appleCalendarTitle: "",
       });
       toast.success(
-        isSubscriptionEvent(occurrence.event)
-          ? "已复制为本地日程"
-          : "日程已复制",
+        isReadOnlyEvent(occurrence.event) ? "已复制为本地日程" : "日程已复制",
       );
     } catch (reason) {
       toast.error(String(reason));
@@ -686,10 +837,15 @@ export function CalendarPage({
       const text = await call<string>("fetch_calendar_subscription", {
         url: subscription.url,
       });
-      const events = parseIcs(text).map((event) => ({
-        ...event,
-        color: subscription.color,
-      }));
+      const events = parseIcs(text)
+        .filter(
+          (event) =>
+            !isChinaHolidayUrl(subscription.url) || Boolean(event.specialDay),
+        )
+        .map((event) => ({
+          ...event,
+          color: subscription.color,
+        }));
       await call("replace_calendar_subscription_events", {
         id: subscription.id,
         events,
@@ -719,14 +875,15 @@ export function CalendarPage({
 
   async function saveSubscription(subscription: CalendarSubscription) {
     try {
+      const editing = Boolean(subscription.id);
       const saved = await call<CalendarSubscription>(
         "save_calendar_subscription",
         { subscription },
       );
       await loadSubscriptions();
-      setSubscriptionDialog(false);
+      setSubscriptionDialog(null);
       setReload((value) => value + 1);
-      toast.success("订阅日历已保存");
+      toast.success(editing ? "订阅日历已更新" : "订阅日历已保存");
       await syncSubscription(saved);
     } catch (reason) {
       throw reason;
@@ -761,8 +918,14 @@ export function CalendarPage({
     }
   }
 
-  async function addHongKongHolidays() {
-    const existing = subscriptions.find((item) => item.url === HK_HOLIDAYS_URL);
+  async function addPresetSubscription(
+    name: string,
+    url: string,
+    color: CalendarColor,
+  ) {
+    const existing = subscriptions.find((item) =>
+      sameSubscriptionUrl(item.url, url),
+    );
     if (existing) {
       if (!existing.enabled) await toggleSubscription(existing, true);
       await syncSubscription(existing);
@@ -770,14 +933,100 @@ export function CalendarPage({
     }
     await saveSubscription({
       id: "",
-      name: "香港公众假期",
-      url: HK_HOLIDAYS_URL,
-      color: "orange",
+      name,
+      url,
+      color,
       enabled: true,
       createdAt: "",
       updatedAt: "",
       lastSyncedAt: "",
       lastError: "",
+    });
+  }
+
+  async function addHongKongHolidays() {
+    await addPresetSubscription(HK_HOLIDAYS_NAME, HK_HOLIDAYS_URL, "orange");
+  }
+
+  async function addChinaHolidays() {
+    await addPresetSubscription(CN_HOLIDAYS_NAME, CN_HOLIDAYS_URL, "purple");
+  }
+
+  function saveAppleSelected(ids: string[]) {
+    localStorage.setItem(APPLE_SELECTED_KEY, JSON.stringify(ids));
+  }
+
+  function saveAppleEnabled(enabled: boolean) {
+    localStorage.setItem(APPLE_ENABLED_KEY, enabled ? "1" : "0");
+  }
+
+  async function loadAppleCalendars() {
+    setAppleBusy(true);
+    setAppleError("");
+    try {
+      const list = await call<AppleCalendar[]>("list_apple_calendars");
+      setAppleCalendars(list);
+      const ids = list.map((item) => item.id);
+      const stored = localStorage.getItem(APPLE_SELECTED_KEY);
+      const saved = loadAppleSelected();
+      const next =
+        stored === null ? ids : saved.filter((id) => ids.includes(id));
+      setAppleSelected(next);
+      saveAppleSelected(next);
+    } catch (reason) {
+      setAppleError(String(reason));
+      const status = await call<AppleCalendarStatus>(
+        "apple_calendar_status",
+      ).catch(() => null);
+      if (status) setAppleStatus(status);
+    } finally {
+      setAppleBusy(false);
+    }
+  }
+
+  async function connectApple() {
+    setAppleBusy(true);
+    setAppleError("");
+    try {
+      const list = await call<AppleCalendar[]>("connect_apple_calendar");
+      setAppleStatus("fullAccess");
+      setAppleCalendars(list);
+      const ids = list.map((item) => item.id);
+      const stored = localStorage.getItem(APPLE_SELECTED_KEY);
+      const saved = loadAppleSelected();
+      const next =
+        stored === null ? ids : saved.filter((id) => ids.includes(id));
+      setAppleSelected(next);
+      saveAppleSelected(next);
+      if (next.length) {
+        setAppleEnabled(true);
+        saveAppleEnabled(true);
+      }
+      toast.success("已连接 Apple 日历");
+    } catch (reason) {
+      setAppleError(String(reason));
+      const status = await call<AppleCalendarStatus>(
+        "apple_calendar_status",
+      ).catch(() => null);
+      if (status) setAppleStatus(status);
+    } finally {
+      setAppleBusy(false);
+    }
+  }
+
+  function toggleAppleEnabled(enabled: boolean) {
+    setAppleEnabled(enabled);
+    saveAppleEnabled(enabled);
+    if (!enabled) setAppleEvents([]);
+  }
+
+  function toggleAppleCalendar(id: string, checked: boolean) {
+    setAppleSelected((current) => {
+      const next = checked
+        ? [...new Set([...current, id])]
+        : current.filter((item) => item !== id);
+      saveAppleSelected(next);
+      return next;
     });
   }
 
@@ -812,9 +1061,11 @@ export function CalendarPage({
     event: React.PointerEvent,
   ) {
     if (event.button !== 0) return;
-    if (isSubscriptionEvent(occurrence.event)) {
+    if (isReadOnlyEvent(occurrence.event)) {
       event.stopPropagation();
-      toast.info("订阅日历为只读，可右键复制为本地日程");
+      toast.info(
+        `${readOnlyLabel(occurrence.event)}为只读，可右键复制为本地日程`,
+      );
       return;
     }
     event.stopPropagation();
@@ -845,9 +1096,11 @@ export function CalendarPage({
     event: React.PointerEvent,
   ) {
     if (event.button !== 0) return;
-    if (isSubscriptionEvent(occurrence.event)) {
+    if (isReadOnlyEvent(occurrence.event)) {
       event.stopPropagation();
-      toast.info("订阅日历为只读，可右键复制为本地日程");
+      toast.info(
+        `${readOnlyLabel(occurrence.event)}为只读，可右键复制为本地日程`,
+      );
       return;
     }
     event.stopPropagation();
@@ -880,9 +1133,11 @@ export function CalendarPage({
     event: React.PointerEvent,
   ) {
     if (event.button !== 0) return;
-    if (isSubscriptionEvent(occurrence.event)) {
+    if (isReadOnlyEvent(occurrence.event)) {
       event.stopPropagation();
-      toast.info("订阅日历为只读，可右键复制为本地日程");
+      toast.info(
+        `${readOnlyLabel(occurrence.event)}为只读，可右键复制为本地日程`,
+      );
       return;
     }
     event.stopPropagation();
@@ -997,33 +1252,162 @@ export function CalendarPage({
             onSelect={(day) => day && selectDay(day)}
             className="calendar-mini"
           />
-          <div className="calendar-colors">
-            <h2>日历分类</h2>
-            {CALENDAR_COLORS.map((color) => {
-              const checked = !hiddenColors.includes(color.value);
-              return (
-                <Label key={color.value} className="calendar-color-row">
-                  <Checkbox
-                    checked={checked}
-                    onCheckedChange={(next) =>
-                      setHiddenColors((current) =>
-                        next === true
-                          ? current.filter((item) => item !== color.value)
-                          : [...current, color.value],
-                      )
-                    }
-                  />
-                  <span
-                    className={cn(
-                      "calendar-color-dot",
-                      `calendar-tone-${color.value}`,
-                    )}
-                  />
-                  <span>{color.label}</span>
-                </Label>
-              );
-            })}
-          </div>
+          <Collapsible
+            open={colorsOpen}
+            onOpenChange={setColorsOpen}
+            className="calendar-colors"
+          >
+            <CollapsibleTrigger type="button" className="calendar-side-heading">
+              <span>日历分类</span>
+              <ChevronDown
+                className={cn("calendar-side-chevron", colorsOpen && "is-open")}
+              />
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              {CALENDAR_COLORS.map((color) => {
+                const checked = !hiddenColors.includes(color.value);
+                return (
+                  <Label key={color.value} className="calendar-color-row">
+                    <Checkbox
+                      checked={checked}
+                      onCheckedChange={(next) =>
+                        setHiddenColors((current) =>
+                          next === true
+                            ? current.filter((item) => item !== color.value)
+                            : [...current, color.value],
+                        )
+                      }
+                    />
+                    <span
+                      className={cn(
+                        "calendar-color-dot",
+                        `calendar-tone-${color.value}`,
+                      )}
+                    />
+                    <span>{color.label}</span>
+                  </Label>
+                );
+              })}
+            </CollapsibleContent>
+          </Collapsible>
+          <Collapsible
+            open={appleOpen}
+            onOpenChange={setAppleOpen}
+            className="calendar-apple"
+          >
+            <div className="calendar-subscriptions-head">
+              <CollapsibleTrigger
+                type="button"
+                className="calendar-side-heading"
+              >
+                <span>Apple 日历</span>
+                <ChevronDown
+                  className={cn(
+                    "calendar-side-chevron",
+                    appleOpen && "is-open",
+                  )}
+                />
+              </CollapsibleTrigger>
+              {appleStatus === "fullAccess" && (
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  aria-label="刷新 Apple 日历"
+                  disabled={appleBusy}
+                  onClick={() => void loadAppleCalendars()}
+                >
+                  <RefreshCw className={cn(appleBusy && "animate-spin")} />
+                </Button>
+              )}
+            </div>
+            <CollapsibleContent>
+              {appleStatus === "unknown" && (
+                <small className="calendar-apple-hint">正在检查权限…</small>
+              )}
+              {appleStatus === "unavailable" && (
+                <small className="calendar-apple-hint">
+                  仅桌面客户端支持读取 Apple 日历。
+                </small>
+              )}
+              {appleStatus === "notDetermined" && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="calendar-subscription-preset"
+                  disabled={appleBusy}
+                  onClick={() => void connectApple()}
+                >
+                  <Apple />
+                  {appleBusy ? "正在连接…" : "连接 Apple 日历"}
+                </Button>
+              )}
+              {(appleStatus === "denied" ||
+                appleStatus === "restricted" ||
+                appleStatus === "writeOnly") && (
+                <div className="calendar-apple-hint">
+                  <span>未授权读取系统日历，请在系统设置中允许雁信访问。</span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="calendar-subscription-preset"
+                    disabled={appleBusy}
+                    onClick={() => void connectApple()}
+                  >
+                    重新授权
+                  </Button>
+                </div>
+              )}
+              {appleStatus === "fullAccess" && (
+                <>
+                  <Label className="calendar-color-row">
+                    <Checkbox
+                      checked={appleEnabled}
+                      onCheckedChange={(next) =>
+                        toggleAppleEnabled(next === true)
+                      }
+                    />
+                    <span>显示 Apple 日历</span>
+                  </Label>
+                  {appleEnabled &&
+                    appleCalendars.map((calendar) => (
+                      <Label className="calendar-apple-row" key={calendar.id}>
+                        <Checkbox
+                          checked={appleSelected.includes(calendar.id)}
+                          onCheckedChange={(next) =>
+                            toggleAppleCalendar(calendar.id, next === true)
+                          }
+                        />
+                        <span
+                          className={cn(
+                            "calendar-color-dot",
+                            `calendar-tone-${calendar.color}`,
+                          )}
+                        />
+                        <span
+                          className="calendar-apple-name"
+                          title={`${calendar.sourceTitle} · ${calendar.title}`}
+                        >
+                          {calendar.title}
+                        </span>
+                      </Label>
+                    ))}
+                  {appleEnabled && appleCalendars.length === 0 && (
+                    <small className="calendar-apple-hint">
+                      系统日历中没有可显示的日历。
+                    </small>
+                  )}
+                  {appleLoading && (
+                    <small className="calendar-apple-hint">正在读取…</small>
+                  )}
+                </>
+              )}
+              {appleError && (
+                <small className="calendar-apple-error" title={appleError}>
+                  {appleError}
+                </small>
+              )}
+            </CollapsibleContent>
+          </Collapsible>
           <div className="calendar-subscriptions">
             <div className="calendar-subscriptions-head">
               <h2>订阅日历</h2>
@@ -1031,23 +1415,19 @@ export function CalendarPage({
                 variant="ghost"
                 size="icon-xs"
                 aria-label="添加订阅日历"
-                onClick={() => setSubscriptionDialog(true)}
+                onClick={() => setSubscriptionDialog("new")}
               >
                 <Plus />
               </Button>
             </div>
-            {subscriptions.length === 0 ? (
-              <Button
-                variant="outline"
-                size="sm"
-                className="calendar-subscription-preset"
-                onClick={() => void addHongKongHolidays()}
-              >
-                <Globe2 />
-                香港公众假期
-              </Button>
-            ) : (
-              subscriptions.map((item) => (
+            {[...subscriptions]
+              .sort(
+                (left, right) =>
+                  holidaySubscriptionRank(left.url) -
+                    holidaySubscriptionRank(right.url) ||
+                  left.name.localeCompare(right.name, "zh-CN"),
+              )
+              .map((item) => (
                 <div className="calendar-subscription-row" key={item.id}>
                   <Checkbox
                     checked={item.enabled}
@@ -1078,6 +1458,14 @@ export function CalendarPage({
                   <Button
                     variant="ghost"
                     size="icon-xs"
+                    aria-label={`编辑${item.name}`}
+                    onClick={() => setSubscriptionDialog(item)}
+                  >
+                    <Pencil />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
                     aria-label={`刷新${item.name}`}
                     disabled={syncingSubscriptions.includes(item.id)}
                     onClick={() => void syncSubscription(item)}
@@ -1098,22 +1486,33 @@ export function CalendarPage({
                     <Trash2 />
                   </Button>
                 </div>
-              ))
+              ))}
+            {!subscriptions.some((item) =>
+              sameSubscriptionUrl(item.url, CN_HOLIDAYS_URL),
+            ) && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="calendar-subscription-preset"
+                onClick={() => void addChinaHolidays()}
+              >
+                <Globe2 />
+                {CN_HOLIDAYS_NAME}
+              </Button>
             )}
-            {subscriptions.length > 0 &&
-              !subscriptions.some((item) =>
-                item.url.includes("1823.gov.hk"),
-              ) && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="calendar-subscription-preset"
-                  onClick={() => void addHongKongHolidays()}
-                >
-                  <Globe2 />
-                  添加香港公众假期
-                </Button>
-              )}
+            {!subscriptions.some((item) =>
+              sameSubscriptionUrl(item.url, HK_HOLIDAYS_URL),
+            ) && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="calendar-subscription-preset"
+                onClick={() => void addHongKongHolidays()}
+              >
+                <Globe2 />
+                {HK_HOLIDAYS_NAME}
+              </Button>
+            )}
           </div>
         </aside>
         <div className="calendar-main">
@@ -1308,14 +1707,24 @@ export function CalendarPage({
       </AlertDialog>
       {subscriptionDialog && (
         <SubscriptionDialog
+          subscription={
+            subscriptionDialog === "new" ? null : subscriptionDialog
+          }
           hasHongKong={subscriptions.some((item) =>
-            item.url.includes("1823.gov.hk"),
+            sameSubscriptionUrl(item.url, HK_HOLIDAYS_URL),
           )}
-          onClose={() => setSubscriptionDialog(false)}
+          hasChina={subscriptions.some((item) =>
+            sameSubscriptionUrl(item.url, CN_HOLIDAYS_URL),
+          )}
+          onClose={() => setSubscriptionDialog(null)}
           onSave={saveSubscription}
           onUseHongKong={() => {
-            setSubscriptionDialog(false);
+            setSubscriptionDialog(null);
             void addHongKongHolidays();
+          }}
+          onUseChina={() => {
+            setSubscriptionDialog(null);
+            void addChinaHolidays();
           }}
         />
       )}
@@ -1324,19 +1733,28 @@ export function CalendarPage({
 }
 
 function SubscriptionDialog({
+  subscription,
   hasHongKong,
+  hasChina,
   onClose,
   onSave,
   onUseHongKong,
+  onUseChina,
 }: {
+  subscription: CalendarSubscription | null;
   hasHongKong: boolean;
+  hasChina: boolean;
   onClose: () => void;
   onSave: (subscription: CalendarSubscription) => Promise<void>;
   onUseHongKong: () => void;
+  onUseChina: () => void;
 }) {
-  const [name, setName] = useState("");
-  const [url, setUrl] = useState("");
-  const [color, setColor] = useState<CalendarColor>("orange");
+  const editing = Boolean(subscription?.id);
+  const [name, setName] = useState(subscription?.name ?? "");
+  const [url, setUrl] = useState(subscription?.url ?? "");
+  const [color, setColor] = useState<CalendarColor>(
+    subscription?.color ?? "orange",
+  );
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -1345,15 +1763,15 @@ function SubscriptionDialog({
     setError("");
     try {
       await onSave({
-        id: "",
+        id: subscription?.id ?? "",
         name,
         url,
         color,
-        enabled: true,
-        createdAt: "",
-        updatedAt: "",
-        lastSyncedAt: "",
-        lastError: "",
+        enabled: subscription?.enabled ?? true,
+        createdAt: subscription?.createdAt ?? "",
+        updatedAt: subscription?.updatedAt ?? "",
+        lastSyncedAt: subscription?.lastSyncedAt ?? "",
+        lastError: subscription?.lastError ?? "",
       });
     } catch (reason) {
       setError(String(reason));
@@ -1366,29 +1784,44 @@ function SubscriptionDialog({
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>添加订阅日历</DialogTitle>
+          <DialogTitle>{editing ? "编辑订阅日历" : "添加订阅日历"}</DialogTitle>
           <DialogDescription>
-            支持 iCalendar（.ics）地址，例如香港公众假期。
+            支持 iCalendar（.ics）地址，例如中国大陆或中国香港公众假期。
           </DialogDescription>
         </DialogHeader>
         <div className="calendar-subscription-form">
-          {!hasHongKong && (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={onUseHongKong}
-            >
-              <Globe2 />
-              使用香港公众假期
-            </Button>
+          {!editing && (!hasHongKong || !hasChina) && (
+            <div className="calendar-subscription-presets">
+              {!hasChina && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={onUseChina}
+                >
+                  <Globe2 />
+                  使用{CN_HOLIDAYS_NAME}
+                </Button>
+              )}
+              {!hasHongKong && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={onUseHongKong}
+                >
+                  <Globe2 />
+                  使用{HK_HOLIDAYS_NAME}
+                </Button>
+              )}
+            </div>
           )}
           <div className="calendar-field">
             <Label htmlFor="subscription-name">名称</Label>
             <Input
               id="subscription-name"
               value={name}
-              placeholder="香港公众假期"
+              placeholder="中国大陆节假日"
               onChange={(event) => setName(event.target.value)}
             />
           </div>
@@ -1429,7 +1862,13 @@ function SubscriptionDialog({
             disabled={saving || !name.trim() || !url.trim()}
             onClick={() => void submit()}
           >
-            {saving ? "正在添加…" : "添加订阅"}
+            {saving
+              ? editing
+                ? "正在保存…"
+                : "正在添加…"
+              : editing
+                ? "保存修改"
+                : "添加订阅"}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -1612,7 +2051,7 @@ function EventContextMenu({
   onDuplicate: (occurrence: CalendarOccurrence) => void;
   children: React.ReactNode;
 }) {
-  const readOnly = isSubscriptionEvent(occurrence.event);
+  const readOnly = isReadOnlyEvent(occurrence.event);
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
@@ -1731,12 +2170,18 @@ function ListView({
                     {occurrence.event.repeat !== "none" && (
                       <Repeat className="calendar-list-repeat" />
                     )}
-                    {isSubscriptionEvent(occurrence.event) && (
-                      <Globe2
-                        className="calendar-list-repeat"
-                        aria-label="订阅日历"
-                      />
-                    )}
+                    {isReadOnlyEvent(occurrence.event) &&
+                      (occurrence.event.appleCalendarId ? (
+                        <Apple
+                          className="calendar-list-repeat"
+                          aria-label="Apple 日历"
+                        />
+                      ) : (
+                        <Globe2
+                          className="calendar-list-repeat"
+                          aria-label="订阅日历"
+                        />
+                      ))}
                   </Button>
                 </EventContextMenu>
               ))}

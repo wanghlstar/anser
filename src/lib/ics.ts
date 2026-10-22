@@ -207,6 +207,7 @@ export function parseIcs(text: string): CalendarEvent[] {
   let repeat: CalendarRepeat = "none";
   let color: CalendarColor = "blue";
   let reminder: number | null = null;
+  let specialDay = "";
 
   for (const line of lines) {
     if (line.trim() === "BEGIN:VALARM") {
@@ -227,6 +228,7 @@ export function parseIcs(text: string): CalendarEvent[] {
       repeat = "none";
       color = "blue";
       reminder = null;
+      specialDay = "";
       continue;
     }
     if (line.trim() === "END:VEVENT") {
@@ -260,6 +262,7 @@ export function parseIcs(text: string): CalendarEvent[] {
         repeat,
         createdAt: "",
         updatedAt: "",
+        ...(specialDay ? { specialDay } : {}),
       });
       continue;
     }
@@ -289,6 +292,9 @@ export function parseIcs(text: string): CalendarEvent[] {
         if (COLORS.includes(property.value as CalendarColor)) {
           color = property.value as CalendarColor;
         }
+        break;
+      case "X-APPLE-SPECIAL-DAY":
+        specialDay = property.value.trim();
         break;
       case "RRULE": {
         const freq = /(?:^|;)FREQ=([A-Z]+)/i

@@ -12,5 +12,9 @@
   <array>
     <string>zh-Hans</string>
   </array>
+  <key>NSCalendarsUsageDescription</key>
+  <string>用于在雁信日历中只读显示 macOS 日历事件。</string>
+  <key>NSCalendarsFullAccessUsageDescription</key>
+  <string>用于在雁信日历中只读显示 macOS 日历事件。</string>
 </dict>
 </plist>

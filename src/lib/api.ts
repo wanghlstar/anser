@@ -319,6 +319,35 @@ function demoHolidayIcs() {
   ].join("\r\n");
 }
 
+function demoChinaHolidayIcs() {
+  const events = [
+    ["20260101", "20260104", "元旦（休）", "WORK-HOLIDAY"],
+    ["20260215", "20260224", "春节（休）", "WORK-HOLIDAY"],
+    ["20260214", "20260215", "春节（班）", "ALTERNATE-WORKDAY"],
+    ["20260404", "20260407", "清明（休）", "WORK-HOLIDAY"],
+    ["20260501", "20260506", "劳动节（休）", "WORK-HOLIDAY"],
+    ["20260619", "20260622", "端午（休）", "WORK-HOLIDAY"],
+    ["20260925", "20260928", "中秋（休）", "WORK-HOLIDAY"],
+    ["20261001", "20261008", "国庆（休）", "WORK-HOLIDAY"],
+    ["20260105", "20260106", "小寒", ""],
+  ];
+  return [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//Anser Demo//CN Holidays//ZH",
+    ...events.flatMap(([start, end, title, special]) => [
+      "BEGIN:VEVENT",
+      `UID:${start}-${title}@demo.cn`,
+      `DTSTART;VALUE=DATE:${start}`,
+      `DTEND;VALUE=DATE:${end}`,
+      `SUMMARY:${title}`,
+      ...(special ? [`X-APPLE-SPECIAL-DAY:${special}`] : []),
+      "END:VEVENT",
+    ]),
+    "END:VCALENDAR",
+  ].join("\r\n");
+}
+
 function demoCalendarInRange(
   events: CalendarEvent[],
   from: string,
@@ -843,13 +872,27 @@ export async function call<T = void>(
         break;
       }
       case "fetch_calendar_subscription":
+        if (
+          String(args.url).trim().replace(/\/+$/, "") ===
+          "https://calendars.icloud.com/holidays/cn_zh.ics"
+        ) {
+          result = demoChinaHolidayIcs();
+          break;
+        }
         if (String(args.url).includes("1823.gov.hk")) {
           result = demoHolidayIcs();
           break;
         }
         throw new Error(
-          "演示模式只提供香港公众假期示例订阅，请连接桌面客户端后添加其他地址。",
+          "演示模式只提供香港和中国大陆节假日示例订阅，请连接桌面客户端后添加其他地址。",
         );
+      case "apple_calendar_status":
+        result = "unavailable";
+        break;
+      case "connect_apple_calendar":
+      case "list_apple_calendars":
+      case "list_apple_calendar_events":
+        throw new Error("演示模式不支持读取 Apple 日历，请使用桌面客户端。");
       case "contact_suggestions": {
         const saved = JSON.parse(
           localStorage.getItem(key + "-contacts") || "[]",

@@ -7,6 +7,7 @@ fn main() {
             .compile("anser_notifications");
         println!("cargo:rustc-link-lib=framework=Foundation");
         println!("cargo:rustc-link-lib=framework=UserNotifications");
+        println!("cargo:rustc-link-arg=-Wl,-rpath,/usr/lib/swift");
         println!("cargo:rerun-if-changed=src/macos_notifications.m");
     }
     tauri_build::build()

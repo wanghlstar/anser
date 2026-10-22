@@ -75,6 +75,30 @@ describe("ics", () => {
     expect(parsed[0].reminderMinutes).toBeNull();
   });
 
+  it("reads Apple special-day markers", () => {
+    const text = [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "BEGIN:VEVENT",
+      "UID:holiday",
+      "DTSTART;VALUE=DATE:20261001",
+      "DTEND;VALUE=DATE:20261002",
+      "SUMMARY:国庆（休）",
+      "X-APPLE-SPECIAL-DAY:WORK-HOLIDAY",
+      "END:VEVENT",
+      "BEGIN:VEVENT",
+      "UID:term",
+      "DTSTART;VALUE=DATE:20261008",
+      "DTEND;VALUE=DATE:20261009",
+      "SUMMARY:寒露",
+      "END:VEVENT",
+      "END:VCALENDAR",
+    ].join("\r\n");
+    const parsed = parseIcs(text);
+    expect(parsed[0].specialDay).toBe("WORK-HOLIDAY");
+    expect(parsed[1].specialDay).toBeUndefined();
+  });
+
   it("ignores calendars without events", () => {
     expect(
       parseIcs("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nEND:VCALENDAR\r\n"),
