@@ -44,7 +44,6 @@ import { call, newDraft } from "../lib/api";
 import { parseAddresses, replyRecipients } from "../lib/addresses";
 import { mailTime, prefixedSubject, replyHeaders } from "../lib/conversations";
 import {
-  meetingAppLabel,
   meetingKey,
   meetingNotes,
   meetingProviderLabel,
@@ -79,7 +78,9 @@ function MeetingBanner({
 }: {
   mail: Mail;
   onLink: (href: string) => void;
-  onMeetingApp: (provider: MeetingProvider) => void;
+  onMeetingApp: (
+    provider: MeetingProvider,
+  ) => boolean | void | Promise<boolean | void>;
 }) {
   const info = parseMeeting(mail.body || "");
   const ignoreKey = `yanxin-meeting-ignored:${mail.id}`;
@@ -134,12 +135,42 @@ function MeetingBanner({
     setIgnored(true);
   }
 
-  function copyCode() {
-    if (!info?.code) return;
-    void navigator.clipboard
-      .writeText(info.code)
-      .then(() => toast.success("会议号已复制"))
-      .catch((reason) => toast.error(String(reason)));
+  async function copyCode(notify = true): Promise<boolean> {
+    if (!info?.code) return false;
+    try {
+      await navigator.clipboard.writeText(info.code);
+      if (notify) toast.success("会议号已复制");
+      return true;
+    } catch (reason) {
+      toast.error(String(reason));
+      return false;
+    }
+  }
+
+  async function joinMeeting() {
+    if (!info) return;
+    if (info.code) {
+      const copied = await copyCode(false);
+      const opened = await onMeetingApp(info.provider);
+      if (opened !== false) {
+        toast.success(
+          copied ? "会议号已复制，已打开会议应用" : "已打开会议应用",
+        );
+        return;
+      }
+      if (info.url) {
+        onLink(info.url);
+        toast.info(
+          copied
+            ? "会议号已复制，正在用浏览器打开会议链接"
+            : "正在用浏览器打开会议链接",
+        );
+        return;
+      }
+      if (copied) toast.info("会议号已复制，未找到会议应用");
+      return;
+    }
+    if (info.url) onLink(info.url);
   }
 
   return (
@@ -156,7 +187,7 @@ function MeetingBanner({
                 variant="link"
                 size="sm"
                 className="meeting-code-chip"
-                onClick={copyCode}
+                onClick={() => void copyCode()}
               >
                 {info.code}
               </Button>
@@ -167,26 +198,17 @@ function MeetingBanner({
         </small>
       </div>
       <div className="meeting-banner-actions">
-        {info.url ? (
-          <Button variant="outline" size="sm" onClick={() => onLink(info!.url)}>
+        {info.url || info.code ? (
+          <Button size="sm" onClick={() => void joinMeeting()}>
             <ExternalLink />
             加入会议
           </Button>
-        ) : info.code ? (
-          <>
-            <Button variant="outline" size="sm" onClick={copyCode}>
-              <Copy />
-              复制会议号
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => onMeetingApp(info!.provider)}
-            >
-              <ExternalLink />
-              {meetingAppLabel(info!.provider)}
-            </Button>
-          </>
+        ) : null}
+        {info.code ? (
+          <Button variant="outline" size="sm" onClick={() => void copyCode()}>
+            <Copy />
+            复制会议号
+          </Button>
         ) : null}
         {saved ? (
           <span className="meeting-banner-saved">已添加到日历</span>
@@ -665,7 +687,9 @@ export function ConversationReader({
   onAttachment: (mail: Mail, index: number, name: string) => Promise<void>;
   onAction: (mail: Mail, action: string, value: string) => void;
   onLink: (href: string) => void;
-  onMeetingApp: (provider: MeetingProvider) => void;
+  onMeetingApp: (
+    provider: MeetingProvider,
+  ) => boolean | void | Promise<boolean | void>;
   onInteract?: () => void;
 }) {
   const [messages, setMessages] = useState<Mail[]>([selected.mail]);

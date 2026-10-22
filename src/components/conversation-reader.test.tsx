@@ -205,6 +205,56 @@ it("offers to add a meeting from plain text without resending", async () => {
   );
 });
 
+it("falls back to the meeting link when the app is unavailable", async () => {
+  selected = {
+    mail: {
+      ...selected.mail,
+      body: "会议时间：2026/10/16 14:31-15:31 (GMT+08:00)\n\n点击链接直接加入会议：\nhttps://meeting.tencent.com/dm/lW9AXeR8BUpk\n\n#腾讯会议：849-511-867",
+    },
+    html: "",
+    attachments: [],
+  };
+  const writeText = vi.fn(() => Promise.resolve());
+  Object.defineProperty(navigator, "clipboard", {
+    configurable: true,
+    value: { writeText },
+  });
+  const noop = vi.fn();
+  const onMeetingApp = vi.fn(() => Promise.resolve(false));
+  const onLink = vi.fn();
+  await act(async () =>
+    root.render(
+      <ConversationReader
+        selected={selected}
+        singleMessage
+        revision={[]}
+        accounts={[]}
+        demo
+        editorOpen
+        scrollRef={scrollRef}
+        onReply={noop}
+        onEdit={noop}
+        onSent={noop}
+        onExport={noop}
+        onAttachment={async () => {}}
+        onAction={noop}
+        onLink={onLink}
+        onMeetingApp={onMeetingApp}
+      />,
+    ),
+  );
+  const join = [...host.querySelectorAll("button")].find((button) =>
+    button.textContent?.includes("加入会议"),
+  );
+  expect(join).not.toBeUndefined();
+  await act(async () => join!.click());
+  expect(writeText).toHaveBeenCalledWith("849-511-867");
+  expect(onMeetingApp).toHaveBeenCalledWith("tencent");
+  expect(onLink).toHaveBeenCalledWith(
+    "https://meeting.tencent.com/dm/lW9AXeR8BUpk",
+  );
+});
+
 it("copies a meeting code and opens the meeting app when no link exists", async () => {
   selected = {
     mail: {
@@ -249,15 +299,11 @@ it("copies a meeting code and opens the meeting app when no link exists", async 
   expect(copy).not.toBeUndefined();
   await act(async () => copy!.click());
   expect(writeText).toHaveBeenCalledWith("491-185-654");
-  const open = [...host.querySelectorAll("button")].find((button) =>
-    button.textContent?.includes("打开企业微信"),
+  const join = [...host.querySelectorAll("button")].find((button) =>
+    button.textContent?.includes("加入会议"),
   );
-  expect(open).not.toBeUndefined();
-  await act(async () => open!.click());
+  expect(join).not.toBeUndefined();
+  await act(async () => join!.click());
+  expect(writeText).toHaveBeenCalledWith("491-185-654");
   expect(onMeetingApp).toHaveBeenCalledWith("wecom");
-  expect(
-    [...host.querySelectorAll("button")].some((button) =>
-      button.textContent?.includes("加入会议"),
-    ),
-  ).toBe(false);
 });

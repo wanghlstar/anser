@@ -423,8 +423,14 @@ describe("calendar page", () => {
     expect(host.querySelector(".calendar-month")).not.toBeNull();
   });
 
-  it("offers copy and open app for a code-only meeting event", async () => {
+  it("joins a code-only meeting through the native app", async () => {
+    const writeText = vi.fn(() => Promise.resolve());
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
     const onOpenMeetingApp = vi.fn();
+    const onOpenMail = vi.fn();
     const start = new Date();
     const event = {
       id: "",
@@ -441,6 +447,7 @@ describe("calendar page", () => {
       updatedAt: "",
       meetingCode: "491-185-654",
       meetingProvider: "wecom" as const,
+      sourceMailId: "mail-1",
     };
     await act(async () =>
       root.render(
@@ -448,13 +455,18 @@ describe("calendar page", () => {
           seed={event}
           onSeedConsumed={() => {}}
           onOpenMeetingApp={onOpenMeetingApp}
+          onOpenMail={onOpenMail}
         />,
       ),
     );
     await flush();
     expect(document.body.textContent).toContain("复制会议号");
-    expect(document.body.textContent).toContain("打开企业微信");
-    await act(async () => buttonByText("打开企业微信")!.click());
+    expect(document.body.textContent).toContain("加入会议");
+    expect(document.body.textContent).toContain("查看原邮件");
+    await act(async () => buttonByText("加入会议")!.click());
+    expect(writeText).toHaveBeenCalledWith("491-185-654");
     expect(onOpenMeetingApp).toHaveBeenCalledWith("wecom");
+    await act(async () => buttonByText("查看原邮件")!.click());
+    expect(onOpenMail).toHaveBeenCalledWith("mail-1");
   });
 });
