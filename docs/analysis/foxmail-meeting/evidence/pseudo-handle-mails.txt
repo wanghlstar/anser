@@ -1,0 +1,319 @@
+    var_50 = r28;
+    decomp_var_48 = r27;
+    var_40 = r26;
+    decomp_var_38 = r25;
+    var_30 = r24;
+    decomp_var_28 = r23;
+    var_20 = r22;
+    decomp_var_18 = r21;
+    var_10 = r20;
+    decomp_var_8 = r19;
+    saved_fp = r29;
+    decomp_var_m8 = r30;
+    r31 = r31 + 0xffffffffffffffa0 - 0x270;
+    var_2A8 = self;
+    var_2A0 = arg5;
+    var_68 = **___stack_chk_guard;
+    var_298 = [arg2 retain];
+    var_280 = [arg3 retain];
+    var_288 = [arg4 retain];
+    if (sub_10051fc7c() <= 0x0) {
+            r0 = sub_10051fb48(&var_218, "/Volumes/data/workspace/build/src/foxmail/app/ui/CalendarMonthDayView.mm", 0x36a, 0x0);
+            r22 = sub_10000cf98(std::__1::basic_ostream<char, std::__1::char_traits<char> >::operator<<(sub_10000cf98(&var_218 + 0x8, "[Calendar]handleMeetingOperationWithMails, type:", 0x30)), ", subject:", 0xa);
+            r21 = [[var_288 subject] retain];
+            r19 = &var_230;
+            sub_1005356e4();
+            r8 = var_219;
+            r10 = var_230;
+            r11 = decomp_var_228;
+            bool_6 = sign_extend_64(r8) < 0x0;
+            if (sign_extend_64(r8) >= 0x0) {
+                    r1 = r19;
+            }
+            else {
+                    r1 = r10;
+            }
+            if (!bool_6) {
+                    r2 = r8;
+            }
+            else {
+                    r2 = r11;
+            }
+            sub_10000cf98(r22, r1, r2);
+            if ((sign_extend_64(var_219) & 0xffffffff80000000) != 0x0) {
+                    operator delete(var_230);
+            }
+            [r21 release];
+            sub_10051fb98();
+    }
+    var_270 = q0;
+    var_260 = q0;
+    r0 = [var_298 retain];
+    r23 = r0;
+    r0 = [r0 countByEnumeratingWithState:&var_270 objects:&decomp_var_e8 count:0x10];
+    r26 = r0;
+    if (r0 != 0x0) {
+            r27 = 0x0;
+            var_290 = 0x0;
+            r22 = *var_260;
+            do {
+                    r19 = 0x0;
+                    while (true) {
+                            if (*var_260 != r22) {
+                                    objc_enumerationMutation(r23);
+                            }
+                            r28 = *(var_268 + r19 * 0x8);
+                            r0 = [r28 profile];
+                            r0 = [r0 retain];
+                            r21 = r0;
+                            r25 = [[r0 mailAddress] retain];
+                            r20 = [[var_280 mailAddress] retain];
+                            r24 = [r25 isEqualToString:r20];
+                            [r20 release];
+                            [r25 release];
+                            [r21 release];
+                            if ((r24 & 0x1) == 0x0) {
+                                    r19 = r19 + 0x1;
+                                    if (r26 != r19) {
+                                            continue;
+                                    }
+                                    temp_0 = 0x0;
+                                    break;
+                            }
+                            if ([r23 count] == 0x1) {
+                                    r20 = [r28 retain];
+                                    [var_290 release];
+                                    var_290 = r20;
+                                    temp_0 = 0x1;
+                                    break;
+                            }
+                            r21 = [[r28 subject] retain];
+                            r25 = [[var_288 subject] retain];
+                            if ([r21 isEqualToString:r25] != 0x0) {
+                                    if ([r28 mailType] == 0x1) {
+                                            r20 = 0x1;
+                                    }
+                                    [r25 release];
+                                    [r21 release];
+                                    if (r20 != 0x0 && r27 < [r28 date]) {
+                                            r20 = [r28 retain];
+                                            [var_290 release];
+                                            r27 = [r20 date];
+                                            var_290 = r20;
+                                    }
+                            }
+                            else {
+                                    [r25 release];
+                                    [r21 release];
+                            }
+                            r19 = r19 + 0x1;
+                            if (r26 != r19) {
+                                    continue;
+                            }
+                            temp_0 = 0x0;
+                            break;
+                    }
+                    if (temp_0 != 0x0) {
+                            break;
+                    }
+                    r0 = [r23 countByEnumeratingWithState:&var_270 objects:&decomp_var_e8 count:0x10];
+                    r26 = r0;
+            } while (r0 != 0x0);
+            [r23 release];
+            if (var_290 != 0x0) {
+                    r8 = var_2A0;
+                    if (r8 != 0x2) {
+                            if (r8 != 0x1) {
+                                    if (r8 == 0x0) {
+                                            r19 = var_290;
+                                            objc_unsafeClaimAutoreleasedReturnValue([UIManager openViewWindow:r19]);
+                                    }
+                                    else {
+                                            r19 = var_290;
+                                    }
+                            }
+                            else {
+                                    if (([var_290 isContentLoaded] & 0x1) == 0x0) {
+                                            r0 = [var_290 profile];
+                                            r0 = [r0 retain];
+                                            r25 = r0;
+                                            r21 = [[r0 mailService] retain];
+                                            decomp_var_f0 = var_290;
+                                            r0 = [NSArray arrayWithObjects:&decomp_var_f0 count:0x1];
+                                            r26 = [r0 retain];
+                                            [r21 loadMails:r26 handleSessionMail:0x0];
+                                            [r26 release];
+                                            [r21 release];
+                                            [r25 release];
+                                            r19 = 0x0;
+                                            while (true) {
+                                                    r0 = [var_290 isContentLoaded];
+                                                    if (r19 > 0x9) {
+                                                            r8 = 0x1;
+                                                    }
+                                                    else {
+                                                            r8 = r0;
+                                                    }
+                                                    if ((r8 & 0x1) != 0x0) {
+                                                            break;
+                                                    }
+                                                    r19 = r19 + 0x1;
+                                                    sleep(0x1);
+                                            }
+                                    }
+                                    r0 = [FMMail mailForReedit:var_290];
+                                    r0 = [r0 retain];
+                                    r21 = r0;
+                                    [r0 setIsUpdateMeeting:0x1];
+                                    objc_unsafeClaimAutoreleasedReturnValue([UIManager openEditorWindow:r21 andFocusOn:0x4]);
+                                    [r21 release];
+                                    r19 = var_290;
+                            }
+                    }
+                    else {
+                            r19 = var_290;
+                            [var_2A8 deleteEvent:var_288 showFailTips:0x0];
+                            var_218 = 0x0;
+                            var_210 = 0x0;
+                            r20 = [r19 mail];
+                            sub_10000ce44(&var_230, "sequence");
+                            r0 = sub_100e183ec(r20 + 0x30, &var_230, &var_218);
+                            if ((sign_extend_64(var_219) & 0xffffffff80000000) != 0x0) {
+                                    operator delete(var_230);
+                            }
+                            r8 = var_201;
+                            r9 = sign_extend_64(r8);
+                            r10 = var_210;
+                            if (r9 < 0x0) {
+                                    r8 = r10;
+                            }
+                            if (r8 != 0x0) {
+                                    var_274 = 0x0;
+                                    r10 = var_218;
+                                    bool_21 = r9 < 0x0;
+                                    r9 = &var_218;
+                                    if (bool_21) {
+                                            r9 = r10;
+                                    }
+                                    var_230 = r9;
+                                    sub_10052f958(&var_230, &var_274);
+                                    r8 = var_274;
+                                    if (r8 > 0x0) {
+                                            r19 = 0x1;
+                                    }
+                            }
+                            else {
+                                    r19 = 0x0;
+                            }
+                            if ([var_280 protocolType] != 0x2) {
+                                    r8 = 0x1;
+                            }
+                            if (((r8 | r19) & 0x1) != 0x0) {
+                                    r25 = [[FMMail mailForCancelMeeting:var_290] retain];
+                                    r0 = [NSBundle mainBundle];
+                                    r0 = [r0 retain];
+                                    r21 = r0;
+                                    r26 = [[r0 localizedStringForKey:@"calendar_editevent_window_has_canceled" value:@"" table:0x0] retain];
+                                    [r21 release];
+                                    r21 = [[var_290 subject] retain];
+                                    r20 = [[NSString stringWithFormat:@"%@%@", r3, r4] retain];
+                                    [r25 setSubject:r20];
+                                    [r20 release];
+                                    [r21 release];
+                                    [r25 setMailType:0x4];
+                                    [UIManager sendMail:r25];
+                                    [r26 release];
+                                    [r25 release];
+                            }
+                            if ((sign_extend_64(var_201) & 0xffffffff80000000) != 0x0) {
+                                    operator delete(var_218);
+                            }
+                            r19 = var_290;
+                    }
+                    [r19 release];
+                    [var_288 release];
+                    [var_280 release];
+                    [r23 release];
+                    if (**___stack_chk_guard != var_68) {
+                            __stack_chk_fail();
+                    }
+            }
+            else {
+                    if (sub_10051fc7c() <= 0x0) {
+                            r0 = sub_10051fb48(&var_218, "/Volumes/data/workspace/build/src/foxmail/app/ui/CalendarMonthDayView.mm", 0x37e, 0x0);
+                            r22 = sub_10000cf98(&var_218 + 0x8, "[Calendar]handleMeetingOperationWithMails, opMail is nil. event subject:", 0x48);
+                            r21 = [[var_288 subject] retain];
+                            r19 = &var_230;
+                            sub_1005356e4();
+                            r8 = var_219;
+                            r10 = var_230;
+                            r11 = decomp_var_228;
+                            bool_10 = sign_extend_64(r8) < 0x0;
+                            if (sign_extend_64(r8) >= 0x0) {
+                                    r1 = r19;
+                            }
+                            else {
+                                    r1 = r10;
+                            }
+                            if (!bool_10) {
+                                    r2 = r8;
+                            }
+                            else {
+                                    r2 = r11;
+                            }
+                            sub_10000cf98(r22, r1, r2);
+                            if ((sign_extend_64(var_219) & 0xffffffff80000000) != 0x0) {
+                                    operator delete(var_230);
+                            }
+                            [r21 release];
+                            sub_10051fb98();
+                    }
+                    [0x0 release];
+                    [var_288 release];
+                    [var_280 release];
+                    [r23 release];
+                    if (**___stack_chk_guard != var_68) {
+                            __stack_chk_fail();
+                    }
+            }
+    }
+    else {
+            [r23 release];
+            if (sub_10051fc7c() <= 0x0) {
+                    r0 = sub_10051fb48(&var_218, "/Volumes/data/workspace/build/src/foxmail/app/ui/CalendarMonthDayView.mm", 0x37e, 0x0);
+                    r22 = sub_10000cf98(&var_218 + 0x8, "[Calendar]handleMeetingOperationWithMails, opMail is nil. event subject:", 0x48);
+                    r21 = [[var_288 subject] retain];
+                    r19 = &var_230;
+                    sub_1005356e4();
+                    r8 = var_219;
+                    r10 = var_230;
+                    r11 = decomp_var_228;
+                    bool_7 = sign_extend_64(r8) < 0x0;
+                    if (sign_extend_64(r8) >= 0x0) {
+                            r1 = r19;
+                    }
+                    else {
+                            r1 = r10;
+                    }
+                    if (!bool_7) {
+                            r2 = r8;
+                    }
+                    else {
+                            r2 = r11;
+                    }
+                    sub_10000cf98(r22, r1, r2);
+                    if ((sign_extend_64(var_219) & 0xffffffff80000000) != 0x0) {
+                            operator delete(var_230);
+                    }
+                    [r21 release];
+                    sub_10051fb98();
+            }
+            [0x0 release];
+            [var_288 release];
+            [var_280 release];
+            [r23 release];
+            if (**___stack_chk_guard != var_68) {
+                    __stack_chk_fail();
+            }
+    }
+    return;

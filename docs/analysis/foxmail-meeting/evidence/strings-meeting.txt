@@ -1,0 +1,333 @@
+.mail_meeting_container
+23ns3__MeetingMessageType
+30ns3__MeetingRequestMessageType
+31ns3__MeetingResponseMessageType
+35ns3__MeetingCancellationMessageType
+</RequestId></Request></MeetingResponse>
+</calendar:MeetingStatus>
+<MeetingResponse xmlns="MeetingResponse"><Request><UserResponse>
+<calendar:MeetingStatus>
+@"<MeetingFloatWindowDelegate>"
+@"FCActiveSyncMeetingResponseInfo"
+@"FCActiveSyncMeetingResponseResult"
+@"MeetingDateButton"
+@"MeetingFloatWindowController"
+CActiveSyncHander CommandMeetingResponse End
+CActiveSyncHander CommandMeetingResponse Start
+Check failed: fmMail.mailType == EIT_MEETING_REQUEST || fmMail.mailType == EIT_MEETING_CANCELLATION|| fmMail.mailType == EIT_MEETING_RESPONSE. 
+Check failed: meeting_attachment.content_.size() == (size_t)meeting_attachment.size_. 
+Check failed: meeting_request.location.size(). 
+CommandSendMeetingInvitation Start
+CommandSendMeetingInvitation Stop
+CommandSendMeetingResponse Start
+CommandSendMeetingResponse Stop
+Condition:IsMeetingRequest
+Condition:IsMeetingResponse
+Copying ns3__MeetingCancellationMessageType %p -> %p
+Copying ns3__MeetingMessageType %p -> %p
+Copying ns3__MeetingRequestMessageType %p -> %p
+Copying ns3__MeetingResponseMessageType %p -> %p
+DELETE FROM mail_meeting_info WHERE 
+Delete mail meeting info failed , mailid = 
+DoSendMeetingInvitation
+ErrorCalendarMeetingRequestIsOutOfDate
+ErrorMeetingSuggestionGenerationFailed
+ErrorSendMeetingCancellationsRequired
+ErrorSendMeetingInvitationsOrCancellationsRequired
+ErrorSendMeetingInvitationsRequired
+ErrorSentMeetingRequestUpdate
+Exception:IsMeetingRequest
+Exception:IsMeetingResponse
+ExchangeCommandSendMeetingInvitation_
+ExchangeCommandSendMeetingResponse_
+FCActiveSyncMeetingResponseInfo
+FCActiveSyncMeetingResponseResult
+FilterMeetingTime_v2
+InnerUpdateEvent change meeting to normal event? Igore! eventid:
+Invalid meeting request.
+Meeting
+MeetingDateButton
+MeetingFloatWindowController
+MeetingFloatWindowDelegate
+MeetingMessageType
+MeetingRequest
+MeetingResponse
+MeetingResponse:
+MeetingStatus
+MeetingStatus;
+Meetings
+N4base8internal9BindStateINS0_15RunnableAdapterIMN4mail18MailPostOfficeImplEFv13scoped_refptrINS3_4MailEERKN10mailDefine15MeetingResponseERK14ProtocolResultEEEFvPS4_S7_SB_SE_EFvNS_7WeakPtrIS4_EES7_S9_EEE
+N5boost3_bi6bind_tIvNS_4_mfi3mf3Iv16CExchangeHandlerRK13CProtocolInfoRK25ExchangeMeetingInvitationRKN4base8CallbackIFvRK14ProtocolResultEEEEENS0_5list4INS0_5valueINS_10shared_ptrIS4_EEEENSM_IS5_EENSM_IS8_EENSM_ISH_EEEEEE
+N5boost3_bi6bind_tIvNS_4_mfi3mf4Iv16CExchangeHandlerRK13CProtocolInfo23ExchangeMeetingResponseRK16ExchangeIdentityRKN4base8CallbackIFvRK14ProtocolResultEEEEENS0_5list5INS0_5valueINS_10shared_ptrIS4_EEEENSN_IS5_EENSN_IS8_EENSN_IS9_EENSN_ISI_EEEEEE
+NewMeetingRequest
+OnSendMeetingInvitation
+OnSendMeetingResponse
+OnlineMeetingConfLink
+OnlineMeetingExternalLink
+SELECT  a.mailid, a.clsid, a.subject, a.regular_subject, a.sender, a.from_, a.to_,    a.reply_to, a.transcribe, a.privacy, a.date, a.timezone, a.size, a.attachment, a.alert, a.readstat, a.deliverstat,    a.reference, a.messageid, a.star, a.remark, a.fileexist, a.inline_attch_exist, a.session_root_id, a.abstract ,    a.attachment_delete, a.exchange_mail_flag, a.mail_download_type, a.mail_avatar_code, a.mail_send_fail, a.mail_read_receipt ,    a.disiposition_notification_to , a.mail_imported , a.mail_receivedate ,a.popdeleteservercache , a.mailparsehugeattachment, a.mail_type, a.groupmail_last_sender, a.X_To,a.timed_send_flag, a.priority , a.csender ,    b.isOutOfDate, b.startTime, b.endTime, b.timeZone, b.duration, b.location, b.isCancelled, b.associateCalendarId, b.isResponseRequested, b.meetingResponse ,    b.isSetReminder, b.reminderMinutesBeforeStart, b.isAllDayEvent, b.meetingUid, b.organizer, b.dtstamp, b.calendarUid, b.recurrence, b.attendees, b.sequence,    b.isChineseLunar FROM mailinfo as a left join mail_meeting_info as b on a.mailid = b.mailid ORDER BY a.date DESC LIMIT 0
+SELECT  a.mailid, a.clsid, a.subject, a.regular_subject, a.sender, a.from_, a.to_,    a.reply_to, a.transcribe, a.privacy, a.date, a.timezone, a.size, a.attachment, a.alert, a.readstat, a.deliverstat,    a.reference, a.messageid, a.star, a.remark, a.fileexist, a.inline_attch_exist, a.session_root_id, a.abstract ,    a.attachment_delete, a.exchange_mail_flag, a.mail_download_type, a.mail_avatar_code, a.mail_send_fail, a.mail_read_receipt ,    a.disiposition_notification_to , a.mail_imported , a.mail_receivedate ,a.popdeleteservercache , a.mailparsehugeattachment, a.mail_type, a.groupmail_last_sender, a.X_To,a.timed_send_flag, a.priority , a.csender ,    b.isOutOfDate, b.startTime, b.endTime, b.timeZone, b.duration, b.location, b.isCancelled, b.associateCalendarId, b.isResponseRequested, b.meetingResponse ,    b.isSetReminder, b.reminderMinutesBeforeStart, b.isAllDayEvent, b.meetingUid, b.organizer, b.dtstamp, b.calendarUid, b.recurrence, b.attendees, b.sequence,    b.isChineseLunar FROM mailinfo as a left join mail_meeting_info as b on a.mailid = b.mailid join mail_box_info as c on a.mailid = c.mail_id 
+SELECT %s FROM mail_meeting_info WHERE %s = ?
+SendMeetingCancellations
+SendMeetingInvitations
+SendMeetingInvitationsOrCancellations
+Sync calendar must be called with the mail contains meeting info!
+T@"<MeetingFloatWindowDelegate>",&,N,V_windowDelegate
+T@"FCActiveSyncMeetingResponseInfo",&,N,V_meetingResponseInfo
+T@"FCActiveSyncMeetingResponseResult",&,N,V_meetingResponseResult
+T@"MeetingDateButton",W,V_endCycleDateButton
+T@"MeetingDateButton",W,V_startCycleDateButton
+T@"NSString",C,N,V_meetingAssociateCalendarId
+T@"NSString",C,N,V_meetingDuration
+T@"NSString",C,N,V_meetingEndTime
+T@"NSString",C,N,V_meetingLocation
+T@"NSString",C,N,V_meetingStartTime
+T@"NSString",C,N,V_meetingTimeZone
+T@"NSString",C,V_meetingAttendees
+T@"NSString",C,V_meetingCalendarUID
+T@"NSString",C,V_meetingIsChineseLunar
+T@"NSString",C,V_meetingRecurrence
+T@"NSString",C,V_meetingUID
+TB,N,V_isUpdateMeeting
+TB,N,V_meetingIsAllDayEvent
+TB,N,V_meetingIsCancelled
+TB,N,V_meetingIsOutOfDate
+TB,N,V_meetingIsResponseRequested
+Tc,N,V_isUpdateMeeting
+Tc,N,V_meetingIsAllDayEvent
+Tc,N,V_meetingIsCancelled
+Tc,N,V_meetingIsOutOfDate
+Tc,N,V_meetingIsResponseRequested
+ThreadInstanceOfMeetingDateFormatterDictionary
+Ti,N,V_meetingResponse
+Ti,N,V_meetingSequence
+Tq,N,V_meetingReminderMinutesBeforeStart
+Tq,N,V_meetingStatus
+Unknown meeting content type: 
+Unknown meeting response type: 
+[Calendar] onMeetingFloatWindowViewMail, event is nil.
+[Calendar]Daily RecurrenceType meeting ?! Ignore!!! meeting:
+[Calendar]Daily RecurrenceType meeting:
+[Calendar]Delete Meeting From Client,  subject:
+[Calendar]Delete Meeting From Server,  subject:
+[Calendar]Delete Meeting Start,  subject:
+[Calendar]handleMeetingOperationWithMails, opMail is nil. event subject:
+[Calendar]handleMeetingOperationWithMails, type:
+[Calendar]handleMeetingOperationWithMeeting, type:
+[Calendar]onMeetingFloatWindowResponseMeetingViaActiveSync, responseEvent failed
+[Calendar]onMeetingFloatWindowResponseMeetingViaMail. eventuid:
+[Calendar]onMeetingFloatWindowResponseMeetingViaMail. updateEvent. ret:
+[Calendar]responseToMeeting, getFolder failed! eventuid:
+[Calendar]responseToMeeting, modifyMySelfState, failed
+_cancelMeetingButton
+_deletedMeetingArray
+_isFromCalMeeting
+_isUpdateMeeting
+_meetingAssociateCalendarId
+_meetingAttendees
+_meetingCalendarUID
+_meetingDuration
+_meetingEndTime
+_meetingEvent
+_meetingFloatWindowController
+_meetingIsAllDayEvent
+_meetingIsCancelled
+_meetingIsChineseLunar
+_meetingIsOutOfDate
+_meetingIsResponseRequested
+_meetingLocation
+_meetingRecurrence
+_meetingRecurrenceCode
+_meetingRecurrenceTips
+_meetingReminderMinutesBeforeStart
+_meetingResponse
+_meetingResponseInfo
+_meetingResponseResult
+_meetingSequence
+_meetingStartTime
+_meetingStatus
+_meetingTimeZone
+_meetingUID
+_newMeetingButton
+calendar:AdjacentMeetingCount
+calendar:AdjacentMeetings
+calendar:ConflictingMeetingCount
+calendar:ConflictingMeetings
+calendar:IsMeeting
+calendar:IsOnlineMeeting
+calendar:MeetingRequestWasSent
+calendar:MeetingTimeZone
+calendar:MeetingWorkspaceUrl
+calendar_event_new_meeting
+calendar_meeting_float_accept
+calendar_meeting_float_accpted
+calendar_meeting_float_cancel_meeting
+calendar_meeting_float_editor_mail
+calendar_meeting_float_later_message
+calendar_meeting_float_note_title
+calendar_meeting_float_organizer_title
+calendar_meeting_float_participant_title
+calendar_meeting_float_refuse
+calendar_meeting_float_refused
+calendar_meeting_float_tentative
+calendar_meeting_float_tentatived
+calendar_meeting_float_view_mail
+calendar_month_view_new_meeting
+checkAndCancelMeeting
+clickCancelMeeting:
+clickNewMeeting:
+debugSendMeetingMail:
+fox_filterCanceledMeeting:
+foxmail.meeting.drawCalendar()
+getFilterNoTencentMeetingTime
+getMeeting:withAccountId:
+handleMeetingOperationWithMails:withProfile:withEvent:withOperationType:
+handleMeetingOperationWithMeeting:withOperationType:
+http://synce.org/formats/airsync_wm5/meetingresponse
+icon_add_meeting
+isDeletedMeeting:
+isMeeting
+isMeetingCanceled
+isMeetingFieldVisible
+isMeetingOrganizer
+isTimeOutMeeting
+isUpdateMeeting
+mailForCancelMeeting:
+mailForResponseMeeting:
+mail_meeting_info
+meeting:AssociatedCalendarItemId
+meeting:HasBeenProcessed
+meeting:IsDelegated
+meeting:IsOutOfDate
+meeting:ResponseType
+meetingAssociateCalendarId
+meetingAttendees
+meetingCalendarUID
+meetingDuration
+meetingEndTime
+meetingIsAllDayEvent
+meetingIsCancelled
+meetingIsChineseLunar
+meetingIsOutOfDate
+meetingIsResponseRequested
+meetingLocation
+meetingRecurrence
+meetingReminderMinutesBeforeStart
+meetingRequest:IntendedFreeBusyStatus
+meetingRequest:MeetingRequestType
+meetingResponse
+meetingResponseInfo
+meetingResponseResult
+meetingSequence
+meetingStartTime
+meetingStatus
+meetingTimeZone
+meetingUID
+meetingUid
+meeting_alarm_entries
+meeting_date
+meeting_end
+meeting_end_full_format
+meeting_end_today_format
+meeting_end_tomorrow_format
+meeting_end_week_format
+meeting_expired_state
+meeting_icon
+meeting_localized_response
+meeting_location
+meeting_location_none
+meeting_response
+meeting_response_state
+meeting_start
+meeting_start_full_format
+meeting_start_today_format
+meeting_start_tomorrow_format
+meeting_start_week_format
+meetingresponse
+menuSponsoreMeeting
+mf_cal_add_meeting
+mf_cal_add_meeting_via_cal
+mf_cal_add_meeting_via_compose
+newMeeting
+newMeetingAction:
+ns1:DeliverMeetingRequests
+ns3:AdjacentMeetingCount
+ns3:AdjacentMeetings
+ns3:ConflictingMeetingCount
+ns3:ConflictingMeetings
+ns3:CurrentMeetingTime
+ns3:DeliverMeetingRequestsType
+ns3:IsMeeting
+ns3:IsMeetingRequest
+ns3:IsMeetingResponse
+ns3:IsOnlineMeeting
+ns3:MeetingAttendeeType
+ns3:MeetingCancellation
+ns3:MeetingCancellationMessageType
+ns3:MeetingDurationInMinutes
+ns3:MeetingMessage
+ns3:MeetingMessageType
+ns3:MeetingRequest
+ns3:MeetingRequestMessageType
+ns3:MeetingRequestType
+ns3:MeetingRequestTypeType
+ns3:MeetingRequestWasSent
+ns3:MeetingResponse
+ns3:MeetingResponseMessageType
+ns3:MeetingTime
+ns3:MeetingTimeZone
+ns3:MeetingWorkspaceUrl
+ns3:ReceiveCopiesOfMeetingMessages
+onEditMeeting:
+onMeetingFloatWindowCancelMeeting:
+onMeetingFloatWindowEdit:
+onMeetingFloatWindowResponseMeeting:withResponseType:
+onMeetingFloatWindowResponseMeetingViaActiveSync:withResponseType:
+onMeetingFloatWindowResponseMeetingViaMail:withResponseType:
+onMeetingFloatWindowViewMail:
+onMeetingFloatWindowWillHide:
+onNewMeeting:
+openNewMeetingWindow:
+protocol_meeting_accept_content_format
+protocol_meeting_accept_subject_format
+protocol_meeting_refuse_content_format
+protocol_meeting_refuse_subject_format
+protocol_meeting_unsure_content_format
+protocol_meeting_unsure_subject_format
+queryMailWithMeetingUid:withBlock:
+regDeleteMeeting:
+removeNotTencentMeeting:
+respondMeeting
+respondMeeting:
+respondMeeting:forMail:
+responseMeeting:
+responseToMeeting:
+saveFilterNoTencentMeetingTime:
+setIsUpdateMeeting:
+setMeetingAssociateCalendarId:
+setMeetingAttendees:
+setMeetingCalendarUID:
+setMeetingDuration:
+setMeetingEndTime:
+setMeetingIsAllDayEvent:
+setMeetingIsCancelled:
+setMeetingIsChineseLunar:
+setMeetingIsOutOfDate:
+setMeetingIsResponseRequested:
+setMeetingLocation:
+setMeetingRecurrence:
+setMeetingReminderMinutesBeforeStart:
+setMeetingResponse:
+setMeetingResponseInfo:
+setMeetingResponseResult:
+setMeetingSequence:
+setMeetingStartTime:
+setMeetingStatus:
+setMeetingTimeZone:
+setMeetingUID:
+showMeetingWindow:
+soap_instantiate_ns3__MeetingCancellationMessageType(%d, %s, %s)
+soap_instantiate_ns3__MeetingMessageType(%d, %s, %s)
+soap_instantiate_ns3__MeetingRequestMessageType(%d, %s, %s)
+soap_instantiate_ns3__MeetingResponseMessageType(%d, %s, %s)
+sponsoreMeetingClicked:
+viewMeeting
