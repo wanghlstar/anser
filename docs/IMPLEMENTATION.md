@@ -1080,7 +1080,7 @@ GitHub CI 和两架构发布工作流已推送；首次 Checks 已成功，Relea
 - Apple 权限恢复：新增 `open_apple_calendar_settings` 命令，授权被拒时可打开“系统设置 → 隐私与安全性 → 日历”；窗口重新获得焦点或页面恢复可见时重查授权，权限恢复后自动重载日历列表。
 - 验证：前端全量 61 文件 / 501 例通过（新增 `conversation-reader.test.tsx` 1 例、`ics.test.ts` 8 例）；Rust 392 passed / 2 ignored；`tsc`、Prettier、`cargo fmt --check`、`check:ui` 通过。已构建预览并验证中国大陆/中国香港订阅重新同步（40 / 51 条）、Apple 类别与刷新正常；随 0.2.3 发布。
 
-## 会议邀请识别第一阶段（2026-10-22，feat/mail-import-export，未发版）
+## 会议邀请识别第一阶段（2026-10-22，随 0.2.4 发布）
 
 - 范围：识别企业微信会议 / 腾讯会议的纯文本通知，不自动创建、不做接受/拒绝；用户确认后才加入本地日历。
 - `src/lib/meeting.ts` 解析会议时间、GMT/UTC/中国标准时间、入会链接和 9 位会议号；缺少时间或链接/会议号时不误报。`src/lib/meeting.test.ts` 覆盖两类样例。
@@ -1091,7 +1091,7 @@ GitHub CI 和两架构发布工作流已推送；首次 Checks 已成功，Relea
 - 正文会议链接（2026-10-22 补充）：阅读正文里的企业微信/腾讯会议链接时，按 URL 识别服务商；若当前邮件能解析出同服务商会议号，先复制会议号，再调用 `open_meeting_app` 激活或启动会议 App；App 不可用才回退浏览器打开原链接。新增 `meetingProviderForUrl` 与对应测试。
 - 验证：会议解析 5 例、阅读器提示/回退 5 例、日历会议操作 1 例通过；前端全量 62 文件 / 511 例通过，`tsc`、Prettier、`check:ui` 通过。
 
-## 收件箱重复计数与本地归档归位（2026-10-22，feat/mail-import-export，未发版）
+## 收件箱重复计数与本地归档归位（2026-10-22，随 0.2.4 发布）
 
 - 触发：用户报告收件箱早上 10+，傍晚变成 130；磁盘账号目录 INBOX 仅 7 个 `.eml`，外置存档 INBOX 260 个。
 - 定位：规则 `serverMove` 在本地存档落盘前完成（或移动完成后服务器清掉目标来源），INBOX 的旧来源行残留；`folderTotals`/列表的本地存档兜底按来源行分组、没有跨目录去重，114 封邮件同时计入 INBOX 和目标目录，INBOX 130 = 11 活跃来源 + 119 本地兜底。不是新收邮件。
@@ -1111,5 +1111,6 @@ GitHub CI 和两架构发布工作流已推送；首次 Checks 已成功，Relea
 - 计数：INBOX 16、深港日检 1926、出账报表 104、日常稽核 70、上线申请 12、Sent 2；已进垃圾箱的 Deleted Messages 49、Junk 1 不计入侧栏。磁盘 2180 个 `.eml`（内置 568 + 外置 1612），`missing=0`、`orphan=0`，与 2180 封存档一一对应。
 - 验证：Rust 401 passed / 2 ignored；`cargo fmt --check` 通过；预览重启日志 `来源归位 910 封`，重启后实时收取与重扫未再出现重复来源行。
 - 测试：`move_completion_is_atomic...` 改为断言旧来源行已删除；新增 3 个来源归位测试；network 移动/清理测试改为断言完成后旧行不存在。
-- 状态：改动未提交；当前分支 `feat/mail-import-export`，领先 `origin/main` 12 个提交，未发版。
+- 发布：已随 0.2.4 发布，tag `v0.2.4`，Release 工作流 run `39889035045` 成功；GitHub Release 为 Latest，包含双架构 app.tar.gz/dmg、签名与 `latest.json`。
+- 复盘：首次 tag 推送时右键菜单测试依赖 300ms 时间窗，在 CI 慢机器上超时失败；已改为右键释放一律吞掉，不再按时间判断，并强制移动 tag 重新发布。
 

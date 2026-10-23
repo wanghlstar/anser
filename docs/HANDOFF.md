@@ -27,6 +27,7 @@ CSS 改动要在 `dist/assets/index-*.css` 里 grep；本机 browser.screenshot 
 
 - 基线 `main` = `v0.2.4` 发布提交；官方 tag `v0.2.4` 推送 origin。上一发布 `v0.2.3`。
 - 0.2.4 发布内容见 `docs/releases/v0.2.4.md`：会议邮件识别与日历联动、本地存档每天 10:00/17:00 自动校验、校验结果持久化、外置存档「打开存档」、MOVE 单来源与收件箱重复计数修复、界面细节。
+- 0.2.4 发布：Release 工作流 run `39889035045` 成功，GitHub Release 为 Latest（`https://github.com/wanghlstar/anser/releases/tag/v0.2.4`），包含双架构 app.tar.gz/dmg、签名与 `latest.json`。
 - 门禁基线（本轮）：前端 **62 文件 / 513 例**、Rust **401 passed / 2 ignored**；`npm run build`、`npm run format:check`、`npm run test:desktop`、`cargo fmt --check`、`cargo check` 通过。
 - 安装版：`/Applications/雁信.app` 仍是 0.2.3（ad-hoc 签名，升级时可能触发钥匙串授权）；正式 0.2.4 由 CI 构建，建议发布后重新安装一次以换成固定签名。
 - 本地数据：账号 `wanghlg@si-tech.com.cn`；启动时自动执行来源归位与存档路径整理。当前本地存档约 2181 封，单来源邮件校验通过；外置存档 `/Volumes/MacOS/Mailbox/yanxin`。
