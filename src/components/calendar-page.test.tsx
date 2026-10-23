@@ -66,19 +66,26 @@ describe("calendar page", () => {
   });
 
   it("switches to the agenda list and supports the new-event shortcut", async () => {
-    await act(async () =>
-      root.render(<CalendarPage seed={null} onSeedConsumed={() => {}} />),
-    );
-    await flush();
-    await act(async () => buttonByText("列表")!.click());
-    await flush();
-    expect(host.querySelector(".calendar-list")).not.toBeNull();
-    expect(host.textContent).toContain("专注时间");
+    // 演示日程按「本周」生成；固定到周一，避免周五之后「专注时间」落到过去。
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-19T09:00:00"));
+    try {
+      await act(async () =>
+        root.render(<CalendarPage seed={null} onSeedConsumed={() => {}} />),
+      );
+      await flush();
+      await act(async () => buttonByText("列表")!.click());
+      await flush();
+      expect(host.querySelector(".calendar-list")).not.toBeNull();
+      expect(host.textContent).toContain("专注时间");
 
-    await act(async () => {
-      window.dispatchEvent(new KeyboardEvent("keydown", { key: "n" }));
-    });
-    expect(document.querySelector("#calendar-title")).not.toBeNull();
+      await act(async () => {
+        window.dispatchEvent(new KeyboardEvent("keydown", { key: "n" }));
+      });
+      expect(document.querySelector("#calendar-title")).not.toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("edits only one occurrence of a repeating event", async () => {

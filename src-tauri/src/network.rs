@@ -5326,8 +5326,16 @@ mod copy_tests {
                 store.directory_operation(&job).unwrap().status,
                 if remaining { "confirmed" } else { "completed" }
             );
-            let active:bool=store.db().unwrap().query_row("SELECT active FROM sources WHERE account_id=?1 AND folder='INBOX' AND remote_id='7:12'",[&a.id],|r|r.get(0)).unwrap();
-            assert_eq!(active, remaining);
+            let active: i64 = store
+                .db()
+                .unwrap()
+                .query_row(
+                    "SELECT COALESCE((SELECT active FROM sources WHERE account_id=?1 AND folder='INBOX' AND remote_id='7:12'),0)",
+                    [&a.id],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(active, if remaining { 1 } else { 0 });
             let commands = String::from_utf8(written.lock().unwrap().clone()).unwrap();
             assert_eq!(commands.matches("UID MOVE").count(), 1);
             assert!(
@@ -5497,16 +5505,7 @@ mod copy_tests {
             "completed"
         );
         assert!(store.has_source(&a.id, "Archive", "9:34").unwrap());
-        let active: bool = store
-            .db()
-            .unwrap()
-            .query_row(
-                "SELECT active FROM sources WHERE folder='INBOX' AND remote_id='7:12'",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert!(!active);
+        assert!(!store.has_source(&a.id, "INBOX", "7:12").unwrap());
         assert!(store.has_source(&a.id, "INBOX", "7:99").unwrap());
         assert_eq!(
             store.message_raw(&store.mail(&id).unwrap()).unwrap(),

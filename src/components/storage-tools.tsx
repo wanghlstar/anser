@@ -401,30 +401,6 @@ export function StorageTools() {
                 onCheckedChange={(enabled) => void autoStart(enabled)}
               />
             </div>
-            <div className="settings-tool-row justify-between">
-              <span className="text-sm">恢复窗口快捷键</span>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                ref={shortcutButtonRef}
-                className="min-w-24 font-mono"
-                aria-label="恢复窗口快捷键"
-                disabled={!ready || shortcutBusy}
-                title={
-                  recordingShortcut
-                    ? "请按包含 ⌘、⌃ 或 ⌥ 的组合键；Esc 取消"
-                    : `当前：${shortcutLabel(shortcut)}`
-                }
-                onClick={() => void beginRecording()}
-              >
-                {shortcutBusy
-                  ? "保存中…"
-                  : recordingShortcut
-                    ? "请按组合键…"
-                    : shortcutLabel(shortcut)}
-              </Button>
-            </div>
           </div>
           <p>
             新邮件和发送结果使用系统通知；首次导入旧邮件不通知，横幅由 macOS
@@ -438,10 +414,6 @@ export function StorageTools() {
             {desktop?.autoStartAvailable === false
               ? "开发预览依赖前端服务，请在正式应用中开启开机自启。"
               : "登录 Mac 后自动在后台启动，继续收信和处理定时发送。"}
-          </p>
-          <p>
-            恢复窗口快捷键：窗口隐藏或最小化后，按此组合键恢复并聚焦；点击后直接按新组合键，Esc
-            取消。被 macOS 占用的组合键无法录制，请换一个。
           </p>
           {isDemo() && <p>演示模式不修改系统启动项。</p>}
         </Card>
@@ -509,16 +481,72 @@ export function StorageTools() {
               {saving ? "保存中…" : "保存"}
             </Button>
           </div>
+          <div className="settings-tool-row">
+            <span className="text-sm">恢复窗口快捷键</span>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              ref={shortcutButtonRef}
+              className="min-w-24 font-mono"
+              aria-label="恢复窗口快捷键"
+              disabled={!ready || shortcutBusy}
+              title={
+                recordingShortcut
+                  ? "请按包含 ⌘、⌃ 或 ⌥ 的组合键；Esc 取消"
+                  : `当前：${shortcutLabel(shortcut)}`
+              }
+              onClick={() => void beginRecording()}
+            >
+              {shortcutBusy
+                ? "保存中…"
+                : recordingShortcut
+                  ? "请按组合键…"
+                  : shortcutLabel(shortcut)}
+            </Button>
+          </div>
           <p>IMAP 优先实时收取；此间隔用于定时补查和 POP3。</p>
           <p>
             延时发送：点「发送邮件」后先收起写信窗口，倒计时结束再发送；
             期间可继续操作其他功能，也能撤回或立即发送。
           </p>
           <p>侧栏字号：调整左侧栏文字大小，立即生效，无需重启。</p>
+          <p>
+            恢复窗口快捷键：窗口隐藏或最小化后，按此组合键恢复并聚焦；点击后直接按新组合键，Esc
+            取消。被 macOS 占用的组合键无法录制，请换一个。
+          </p>
         </Card>
       </div>
     </div>
   );
+}
+
+const ARCHIVE_HEALTH_KEY = "yanxin.archiveHealth";
+function loadStoredHealth(): ArchiveHealth | null {
+  try {
+    const raw = localStorage.getItem(ARCHIVE_HEALTH_KEY);
+    if (!raw) return null;
+    const value = JSON.parse(raw) as ArchiveHealth;
+    if (
+      !value ||
+      typeof value.checked !== "number" ||
+      typeof value.healthy !== "number" ||
+      typeof value.checkedAt !== "string" ||
+      !Array.isArray(value.problems)
+    ) {
+      return null;
+    }
+    return value;
+  } catch {
+    return null;
+  }
+}
+function storeHealth(value: ArchiveHealth) {
+  try {
+    localStorage.setItem(ARCHIVE_HEALTH_KEY, JSON.stringify(value));
+  } catch {
+    // 存储失败时仍显示当前窗口的校验结果
+  }
 }
 
 export function ArchiveTools() {
@@ -526,7 +554,7 @@ export function ArchiveTools() {
     [tierLog, setTierLog] = useState<TierLog | null>(null),
     [tierBusy, setTierBusy] = useState(false),
     [checking, setChecking] = useState(false),
-    [health, setHealth] = useState<ArchiveHealth | null>(null);
+    [health, setHealth] = useState<ArchiveHealth | null>(loadStoredHealth);
   useEffect(() => {
     void call<TierInfo>("archive_tier_info")
       .then(setTier)
@@ -629,13 +657,21 @@ export function ArchiveTools() {
   }
   async function check() {
     setChecking(true);
-    setHealth(null);
     try {
-      setHealth(await call<ArchiveHealth>("archive_health"));
+      const result = await call<ArchiveHealth>("archive_health");
+      setHealth(result);
+      storeHealth(result);
     } catch (e) {
       toast.error(String(e));
     } finally {
       setChecking(false);
+    }
+  }
+  async function openArchive() {
+    try {
+      await call("open_external_archive");
+    } catch (e) {
+      toast.error(String(e));
     }
   }
   return (
@@ -680,6 +716,15 @@ export function ArchiveTools() {
           </span>
         </div>
         <div className="settings-tool-actions">
+          {tier?.externalDir && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void openArchive()}
+            >
+              打开存档
+            </Button>
+          )}
           <Button
             variant="outline"
             size="sm"
@@ -699,19 +744,19 @@ export function ArchiveTools() {
           <Button
             variant="outline"
             size="sm"
-            disabled={tierBusy}
-            onClick={() => void normalizeNames()}
-          >
-            规范目录
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
             disabled={checking}
             onClick={() => void check()}
           >
             {checking && <LoaderCircle className="animate-spin" size={14} />}
             校验存档
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={tierBusy}
+            onClick={() => void normalizeNames()}
+          >
+            规范目录
           </Button>
         </div>
       </div>
@@ -730,15 +775,15 @@ export function ArchiveTools() {
       <Separator className="settings-tool-divider" />
       <div className="settings-tool-row">
         <span className="text-sm">
-          {checking
-            ? "正在校验原始邮件与附件…"
-            : health
-              ? `校验 ${health.healthy} / ${health.checked} 封通过`
+          {health
+            ? `校验 ${health.healthy} / ${health.checked} 封通过`
+            : checking
+              ? "正在校验原始邮件与附件…"
               : "尚未校验"}
         </span>
         {health && (
           <small className="settings-tool-note">
-            最近校验：
+            {checking ? "正在重新校验；上次校验：" : "最近校验："}
             {new Date(health.checkedAt).toLocaleString("zh-CN", {
               hour12: false,
             })}

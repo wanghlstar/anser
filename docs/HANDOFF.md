@@ -1,4 +1,4 @@
-# 会话交接（2026-10-21：0.2.2 正式发布 / 同步上游 0.1.24）
+# 会话交接（2026-10-23：0.2.4 正式发布）
 
 > 本文件供新会话/新助手快速接手，**每次交接时整体重写**，只保留当前有效信息。
 > 长期约定在 `AGENTS.md`，进度记录在 `docs/IMPLEMENTATION.md`，踩过的坑在 `docs/RULES_PORT_UPSTREAM.md`。
@@ -7,16 +7,17 @@
 
 ```text
 项目：雁信 / Anser（Tauri 2 + React/TypeScript + shadcn/ui + Rust + SQLite）。
-仓库 /Users/wanghlstar/Mytools/anser，基线分支 main。后续从 main 拉短分支开发，推送并发 PR。
-v0.2.2（Alpha）已触发重发：修复钥匙串读取回归，Release 已删除，tag `v0.2.2` 强推到 `892ac90`；流水线 run `39575383349`，以 GitHub Release 实际状态为准。
-本地检查点：v0.20.1 / v0.20.2 / v0.20.3 / 0.2.2.0 / 0.2.2.1，均不推送、不发布。
+仓库 /Users/wanghlstar/Mytools/anser，基线分支 main。后续从 main 拉短分支开发，验收后合并并推送。
+当前发布：v0.2.4（Alpha），tag 推送 origin 后由 .github/workflows/release.yml 构建双架构资产。
+上一发布：v0.2.3；更早 v0.2.2（含重发）、v0.2.1、v0.2.0、v0.1.9。
 上游 upstream/main = 490a432（上游 0.1.24）。
 
-当前状态：0.2.2 已包含 0.1.24 的实时单连接、Gmail 钥匙串待写容错、
-整行自适应的收件人行、Tiptap 表格与字体颜色，以及发布许可校验。
+当前状态：0.2.4 包含会议邮件识别与日历联动、本地存档自动校验与结果持久化、
+外置存档「打开存档」、MOVE 单来源与收件箱重复计数修复。
 
 先读 AGENTS.md、本文件、docs/IMPLEMENTATION.md 最后几节、docs/RULES_PORT_UPSTREAM.md 关键发现 50–68。
-需要看效果时 `npm run desktop`；安装版 `/Applications/雁信.app` 已是 **0.2.2**；`0.2.2.1` 是本地检查点 tag。
+需要看效果时 `npm run desktop`；安装版 `/Applications/雁信.app` 仍是 0.2.3（ad-hoc 签名）；
+本地预览包 `src-tauri/target/release/bundle/macos/雁信.app` 用 `Yanxin Local Code Signing` 签名。
 铁律：中文界面；业务 UI 只用 shadcn/ui；改 UI 跑 `npm run check:ui`；改动先验收再提交；
 上游与本地无共同祖先，不能 cherry-pick，只能 `git show <sha>:<path>` / `git diff` 逐块搬；
 CSS 改动要在 `dist/assets/index-*.css` 里 grep；本机 browser.screenshot 不可用，布局只量 getBoundingClientRect。
@@ -24,26 +25,32 @@ CSS 改动要在 `dist/assets/index-*.css` 里 grep；本机 browser.screenshot 
 
 ## 二、当前基线
 
-- 基线 `main` = `v0.2.2` 发布提交；官方 tag `v0.2.2` 已推送。本地检查点 `0.2.2.1` = `7fd5382`、`0.2.2.0` = `fe1878a`，均未推送。上一发布 tag `v0.2.1` = `ab97b9f`；后续从 `main` 拉 `feat/...` / `fix/...` 短分支，推送并发 PR，验收后合并。
-- 发布：`v0.2.2` 重发 tag = `892ac90`；流水线 run `39575383349`，成功时 `releases/latest` 指向它并支持应用内更新。
-- 历史发布：`v0.2.1`、`v0.2.0` 为 0.2 主线 Alpha；`v0.1.9` 及更早为上一稳定线。
-- 本地检查点：`v0.20.1`、`v0.20.2`、`v0.20.3`、`0.2.2.0`、`0.2.2.1`，**未推送、未发布**；版本号按用户当时原话使用 0.20.x / 0.2.2.x，不是公开的 0.2.x 线。
-- 重发流水线：run `39575383349`；新会话先核验 GitHub Release 与 `latest.json`。
-- 安装版：`/Applications/雁信.app` 已是 **0.2.2**（本地签名校验通过）。
-- 上游：`upstream/main = 490a432`（0.1.24）；上游 tag 在同名命名空间 `refs/upstream/tags/*`。看 tag 先认作者：`v0.1.19–v0.1.24` 是上游，`v0.1.5–v0.1.9`、`v0.2.0`、`v0.2.1`、`v0.2.2`、`0.2.2.0`、`0.2.2.1`、`v0.20.1/v0.20.2/v0.20.3` 是我们的。
-- 更新中心：当前 0.2.2 已是 latest，显示「没有可用更新」是正常结果；首次检查遇到过 GitHub 代理瞬断，重试即可。
-- 门禁基线（本轮）：前端 **55 文件 / 466 例**、Rust **375 passed / 2 ignored**；`npx tsc --noEmit`、`npm run format:check`、`npm run check:ui`、`cargo fmt --check`、生产构建通过。
-- 装机命令（本地签名；末尾 updater 私钥报错是预期的）：
+- 基线 `main` = `v0.2.4` 发布提交；官方 tag `v0.2.4` 推送 origin。上一发布 `v0.2.3`。
+- 0.2.4 发布内容见 `docs/releases/v0.2.4.md`：会议邮件识别与日历联动、本地存档每天 10:00/17:00 自动校验、校验结果持久化、外置存档「打开存档」、MOVE 单来源与收件箱重复计数修复、界面细节。
+- 门禁基线（本轮）：前端 **62 文件 / 513 例**、Rust **401 passed / 2 ignored**；`npm run build`、`npm run format:check`、`npm run test:desktop`、`cargo fmt --check`、`cargo check` 通过。
+- 安装版：`/Applications/雁信.app` 仍是 0.2.3（ad-hoc 签名，升级时可能触发钥匙串授权）；正式 0.2.4 由 CI 构建，建议发布后重新安装一次以换成固定签名。
+- 本地数据：账号 `wanghlg@si-tech.com.cn`；启动时自动执行来源归位与存档路径整理。当前本地存档约 2181 封，单来源邮件校验通过；外置存档 `/Volumes/MacOS/Mailbox/yanxin`。
+- 上游：`upstream/main = 490a432`（0.1.24）；上游 tag 在 `refs/upstream/tags/*`。0.1.22/0.1.23 中英文界面仍暂缓，0.1.20/0.1.21 评估见 `docs/UPSTREAM_REVIEW_0_1_20_0_1_21.md`。
+- 历史发布：`v0.2.3`、`v0.2.2`（含重发）、`v0.2.1`、`v0.2.0`、`v0.1.9` 及更早；本地检查点 `v0.20.1/v0.20.2/v0.20.3/0.2.2.0/0.2.2.1` 未推送、未发布。
+- 装机命令（本地签名）：
   ```bash
   cd ~/Mytools/anser
-  set -a && . ./.env.local && set +a
-  APPLE_SIGNING_IDENTITY="Yanxin Local Code Signing" \
-    npx tauri build --config '{"bundle":{"createUpdaterArtifacts":false}}' --bundles app
-  # pkill -f "/Applications/雁信.app/Contents/MacOS/yanxin" → rm -rf /Applications/雁信.app
-  # cp -R src-tauri/target/release/bundle/macos/雁信.app /Applications/雁信.app → open
+  npm run desktop:build
+  # 退出旧版 → rm -rf /Applications/雁信.app
+  # ditto src-tauri/target/release/bundle/macos/雁信.app /Applications/雁信.app → open
   ```
 
-### 0.2.2 发布内容（当前）
+### 0.2.4 发布内容（当前）
+
+- 会议邮件：识别纯文本企业微信/腾讯会议，提取会议时间、会议号、入会链接；阅读页会议卡片支持加入会议、复制会议号、添加到日历、忽略/恢复提醒。
+- 会议 App：已安装时优先激活已运行实例，未安装时回退浏览器打开链接；日历会议日程支持加入会议与复制会议号。
+- 本地存档：每天 10:00/17:00 自动校验；页面保留上次校验结果（localStorage，重启仍在）；重新校验时保留旧结果并提示上次时间。
+- 外置存档：新增「打开存档」按钮（仅设置外置目录时显示）；按钮顺序 打开存档 / 立即归档 / 取回本地 / 校验存档 / 规范目录。
+- 计数修复：MOVE 确认后删除旧来源行；启动/同步后归位历史来源；服务器已删除、仅本地存档的邮件按归档目录计一次，避免收件箱虚高。
+- 界面：侧栏「邮件导航」标题、间距与底部导航微调、Apple 日历默认折叠、右键不误触首项、恢复窗口快捷键移到「间隔与外观」。
+- 验证：Rust 401 passed / 2 ignored；前端 62 文件 / 513 例；构建、格式、桌面脚本测试通过。
+
+### 0.2.2 发布内容（历史）
 
 - 版本号统一为 `0.2.2`，新增 `docs/releases/v0.2.2.md`；正式 tag `v0.2.2` 推送 origin，触发正常 Alpha Release。
 - 上游 0.1.24：实时单连接监听、Gmail 钥匙串待写容错、Tiptap 表格、字体颜色/十六进制归一化、空正文首行光标。
@@ -150,11 +157,9 @@ CSS 改动要在 `dist/assets/index-*.css` 里 grep；本机 browser.screenshot 
 - 文档索引：`docs/IMPLEMENTATION.md`（进度）、`docs/RULES_PORT_UPSTREAM.md`（关键发现 1–61）、`docs/UPSTREAM_REVIEW_0_1_20_0_1_21.md`（逐项评估）、`docs/UPSTREAM_VERSION_MATRIX.md`（全量比较）、`docs/UPDATES.md`（发布/更新器）。
 
 
-## 七、日历（本地增强已实现，feat/calendar 待验收）
+## 七、日历（已发布，历史规划）
 
-目标：在雁信内增加日历/日程，交互参考 Foxmail。范围已确认：纯本地 SQLite、月/周/日 + 拖拽、简单重复 + 分段提醒、仅邮件转日程；设计与实施计划见 `docs/plans/2026-10-21-calendar*.md`。
-
-2026-10-22 补充：列表视图、右键菜单、键盘快捷键、重复单次例外、ICS 导入导出已实现；仍为本地 SQLite，不做 CalDAV / Exchange。验收与门禁结果见 `docs/IMPLEMENTATION.md` 的「本地日历增强」。
+本地日历、ICS 订阅、农历/Apple 日历只读叠加已在 0.2.3 发布；0.2.4 增加会议邮件识别与会议日程联动。仍为本地 SQLite，不做 CalDAV / Exchange。以下规划仅作历史参考。
 
 ### 需要先定
 

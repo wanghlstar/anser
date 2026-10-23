@@ -547,7 +547,10 @@ impl Store {
             return Err("原本地邮件记录已不存在；服务器确认保留，请核对目标目录".into());
         }
         if op.kind == "move" {
-            tx.execute("UPDATE sources SET active=0 WHERE account_id=?1 AND folder=?2 AND remote_id=?3 AND mail_id=?4",params![op.account_id,op.folder,op.remote_id,op.mail_id]).map_err(err)?;
+            // 移动不是复制：目标来源已经写入后，旧目录来源行直接删除，
+            // 本地只保留目标这一条；否则服务器清理目标后，旧行会让邮件
+            // 重新落回收件箱并被重复统计。
+            tx.execute("DELETE FROM sources WHERE account_id=?1 AND folder=?2 AND remote_id=?3 AND mail_id=?4",params![op.account_id,op.folder,op.remote_id,op.mail_id]).map_err(err)?;
         }
         tx.execute(
             "UPDATE directory_operations SET status='completed',error='',updated_at=?2 WHERE id=?1",
@@ -1110,7 +1113,7 @@ pub(crate) mod tests {
             )
             .unwrap();
         let confirmed = store.directory_operation(&job).unwrap();
-        store.db().unwrap().execute_batch("CREATE TRIGGER fail_retire BEFORE UPDATE ON sources WHEN NEW.active=0 BEGIN SELECT RAISE(ABORT,'fixture'); END;").unwrap();
+        store.db().unwrap().execute_batch("CREATE TRIGGER fail_retire BEFORE DELETE ON sources BEGIN SELECT RAISE(ABORT,'fixture'); END;").unwrap();
         assert!(store.complete_copy(&confirmed).is_err());
         assert!(!store.has_source(&a.id, "Archive", "9:34").unwrap());
         assert_eq!(store.directory_operation(&job).unwrap().status, "confirmed");
@@ -1120,11 +1123,8 @@ pub(crate) mod tests {
             .execute_batch("DROP TRIGGER fail_retire;")
             .unwrap();
         store.complete_copy(&confirmed).unwrap();
-        let source_active = |uid: &str| -> bool {
-            store.db().unwrap().query_row("SELECT active FROM sources WHERE account_id=?1 AND folder='INBOX' AND remote_id=?2",params![a.id,uid],|r|r.get(0)).unwrap()
-        };
-        assert!(!source_active("7:12"));
-        assert!(source_active("7:99"));
+        assert!(!store.has_source(&a.id, "INBOX", "7:12").unwrap());
+        assert!(store.has_source(&a.id, "INBOX", "7:99").unwrap());
         assert!(store.has_source(&a.id, "Archive", "9:34").unwrap());
         assert_eq!(store.message_raw(&store.mail(&id).unwrap()).unwrap(), raw);
         assert!(store.mail(&id).unwrap().saved_locally);

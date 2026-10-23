@@ -84,6 +84,7 @@ it("groups every on/off switch in the notifications and startup card", async () 
   );
   expect(toggles?.querySelector("#auto-start")).not.toBeNull();
   expect(toggles?.querySelector('[aria-label="后台检查间隔"]')).toBeNull();
+  expect(toggles?.querySelector('[aria-label="恢复窗口快捷键"]')).toBeNull();
   expect(
     [...host.querySelectorAll("button")].some(
       (b) => b.textContent === "测试系统通知",
@@ -249,6 +250,56 @@ it("groups archive integrity under the archive tiering card", async () => {
   ).toEqual(["存档校验"]);
   expect(host.querySelector("h4")).toBeNull();
 });
+it("keeps the last archive check and orders the external archive actions", async () => {
+  const original = api.call;
+  const calls = vi
+    .spyOn(api, "call")
+    .mockImplementation(
+      async <T,>(command: string, args: Record<string, unknown> = {}) =>
+        command === "archive_tier_info"
+          ? ({
+              externalDir: "/Volumes/Archive",
+              retentionDays: 30,
+              indexEnabled: true,
+              pending: 0,
+              pendingBytes: 0,
+              externalReachable: true,
+            } as T)
+          : original<T>(command, args),
+    );
+  await act(async () => root.render(<ArchiveTools />));
+  const actions = () =>
+    [...host.querySelectorAll(".settings-tool-actions button")].map((button) =>
+      button.textContent?.trim(),
+    );
+  expect(actions()).toEqual([
+    "打开存档",
+    "立即归档",
+    "取回本地",
+    "校验存档",
+    "规范目录",
+  ]);
+  await act(async () =>
+    [...host.querySelectorAll("button")]
+      .find((button) => button.textContent === "校验存档")!
+      .click(),
+  );
+  expect(host.textContent).toContain("封通过");
+  expect(host.textContent).toContain("最近校验：");
+  await act(async () =>
+    [...host.querySelectorAll("button")]
+      .find((button) => button.textContent === "打开存档")!
+      .click(),
+  );
+  expect(
+    calls.mock.calls.some(([command]) => command === "open_external_archive"),
+  ).toBe(true);
+  await act(async () => root.unmount());
+  root = createRoot(host);
+  await act(async () => root.render(<ArchiveTools />));
+  expect(host.textContent).toContain("封通过");
+  expect(host.textContent).toContain("最近校验：");
+});
 it("offers the send countdown options in the interval card and saves them", async () => {
   const calls = vi.spyOn(api, "call");
   await act(async () => root.render(<StorageTools />));
@@ -306,7 +357,13 @@ it("keeps the scale dropdown with the two interval dropdowns in one card", async
       intervalCard?.querySelector(`[aria-label="${label}"]`),
     ).not.toBeNull();
   expect(intervalCard?.querySelector("#dock-visible")).toBeNull();
+  expect(
+    intervalCard?.querySelector('[aria-label="恢复窗口快捷键"]'),
+  ).not.toBeNull();
   expect(card("通知与启动")?.querySelector("#dock-visible")).not.toBeNull();
+  expect(
+    card("通知与启动")?.querySelector('[aria-label="恢复窗口快捷键"]'),
+  ).toBeNull();
 });
 it("saves the Dock icon switch immediately without touching the scale selection", async () => {
   await call("save_preferences", {

@@ -514,6 +514,208 @@ fn rule_order_stop_and_idempotence() {
     assert!(!snap.messages[0].trashed);
 }
 #[test]
+fn run_rules_rehomes_server_deleted_move_to_target_folder() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = Store::new(dir.path().into()).unwrap();
+    let a = account();
+    s.save_account(&a).unwrap();
+    s.ingest(&a, "INBOX", "1", &raw(), false).unwrap();
+    // 模拟邮件曾被规则移动到 Work，随后服务器把两边来源都清掉。
+    s.ingest(&a, "Work", "9", &raw(), false).unwrap();
+    let id = s.snapshot(&query()).unwrap().messages[0].id.clone();
+    s.db()
+        .unwrap()
+        .execute("UPDATE sources SET active=0", [])
+        .unwrap();
+    let mut r = rule("move", "serverMove", true);
+    r.account_id = a.id.clone();
+    r.destination = "Work".into();
+    s.save_rules(&[r]).unwrap();
+    assert_eq!(s.run_rules().unwrap(), 1);
+    let snap = s.snapshot(&query()).unwrap();
+    let totals: std::collections::HashMap<_, _> = snap
+        .folder_totals
+        .iter()
+        .map(|f| (f.folder.as_str(), f.count))
+        .collect();
+    assert_eq!(totals.get("Work"), Some(&1));
+    assert_eq!(totals.get("INBOX"), None, "不应再回算收件箱");
+    let m = s.mail(&id).unwrap();
+    let rel = m.rel_path.as_deref().unwrap();
+    assert!(rel.contains("Work"), "应归位到目标目录: {rel}");
+    let inbox_rel = archive::rel_path(&a.email, "INBOX", &m.hash).unwrap();
+    assert!(!s.root.join(inbox_rel).exists(), "旧收件箱存档应已移走");
+    // 再跑一次不应重复计数。
+    assert_eq!(s.run_rules().unwrap(), 0);
+}
+fn source_folders(s: &Store, id: &str) -> Vec<String> {
+    let db = s.db().unwrap();
+    let mut stmt = db
+        .prepare("SELECT folder FROM sources WHERE mail_id=?1 ORDER BY folder")
+        .unwrap();
+    stmt.query_map([id], |r| r.get::<_, String>(0))
+        .unwrap()
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .unwrap()
+}
+fn record_completed_move(s: &Store, account: &str, mail_id: &str, from: &str, to: &str) {
+    s.db()
+        .unwrap()
+        .execute(
+            "INSERT INTO directory_operations
+             (id,account_id,folder,remote_id,target,kind,data,status,error,updated_at)
+             VALUES(?1,?2,?3,'1',?4,'move',?5,'completed','',0)",
+            rusqlite::params![
+                format!("op-{mail_id}"),
+                account,
+                from,
+                to,
+                format!("{{\"mailId\":\"{mail_id}\"}}")
+            ],
+        )
+        .unwrap();
+}
+#[test]
+fn normalize_sources_keeps_only_the_active_move_target() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = Store::new(dir.path().into()).unwrap();
+    let a = account();
+    s.save_account(&a).unwrap();
+    s.ingest(&a, "INBOX", "1", &raw(), false).unwrap();
+    s.ingest(&a, "Work", "9", &raw(), false).unwrap();
+    let id = s.snapshot(&query()).unwrap().messages[0].id.clone();
+    record_completed_move(&s, &a.id, &id, "INBOX", "Work");
+    s.db()
+        .unwrap()
+        .execute("UPDATE sources SET active=0 WHERE folder='INBOX'", [])
+        .unwrap();
+    drop(s);
+    let s = Store::new(dir.path().into()).unwrap();
+    assert_eq!(source_folders(&s, &id), vec!["Work".to_string()]);
+    assert!(s
+        .mail(&id)
+        .unwrap()
+        .rel_path
+        .as_deref()
+        .unwrap()
+        .contains("Work"));
+}
+#[test]
+fn normalize_sources_keeps_the_archive_home_when_server_deleted() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = Store::new(dir.path().into()).unwrap();
+    let a = account();
+    s.save_account(&a).unwrap();
+    s.ingest(&a, "INBOX", "1", &raw(), false).unwrap();
+    s.ingest(&a, "Work", "9", &raw(), false).unwrap();
+    let id = s.snapshot(&query()).unwrap().messages[0].id.clone();
+    record_completed_move(&s, &a.id, &id, "INBOX", "Work");
+    s.relocate_archive_after_move("Work", &id);
+    s.db()
+        .unwrap()
+        .execute("UPDATE sources SET active=0", [])
+        .unwrap();
+    drop(s);
+    let s = Store::new(dir.path().into()).unwrap();
+    assert_eq!(source_folders(&s, &id), vec!["Work".to_string()]);
+}
+#[test]
+fn normalize_sources_keeps_active_copy_rows() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = Store::new(dir.path().into()).unwrap();
+    let a = account();
+    s.save_account(&a).unwrap();
+    s.ingest(&a, "INBOX", "1", &raw(), false).unwrap();
+    s.ingest(&a, "Work", "9", &raw(), false).unwrap();
+    let id = s.snapshot(&query()).unwrap().messages[0].id.clone();
+    drop(s);
+    let s = Store::new(dir.path().into()).unwrap();
+    assert_eq!(
+        source_folders(&s, &id),
+        vec!["INBOX".to_string(), "Work".to_string()]
+    );
+}
+#[test]
+fn run_rules_rehome_keeps_path_when_chain_marks_read() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = Store::new(dir.path().into()).unwrap();
+    let a = account();
+    s.save_account(&a).unwrap();
+    s.ingest(&a, "INBOX", "1", &raw(), false).unwrap();
+    s.ingest(&a, "Work", "9", &raw(), false).unwrap();
+    let id = s.snapshot(&query()).unwrap().messages[0].id.clone();
+    s.db()
+        .unwrap()
+        .execute("UPDATE sources SET active=0", [])
+        .unwrap();
+    let mut r = rule("move", "serverMove+read", true);
+    r.account_id = a.id.clone();
+    r.destination = "Work".into();
+    s.save_rules(&[r]).unwrap();
+    assert_eq!(s.run_rules().unwrap(), 2);
+    let m = s.mail(&id).unwrap();
+    assert!(m.is_read);
+    let rel = m.rel_path.as_deref().unwrap();
+    assert!(
+        rel.contains("Work"),
+        "后续 read 步骤不能把旧 relPath 写回去: {rel}"
+    );
+    assert!(s.read_archive(m.rel_path.as_deref(), &m.hash).is_ok());
+}
+#[test]
+fn run_rules_repairs_moved_archive_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = Store::new(dir.path().into()).unwrap();
+    let a = account();
+    s.save_account(&a).unwrap();
+    s.ingest(&a, "INBOX", "1", &raw(), false).unwrap();
+    s.ingest(&a, "Work", "9", &raw(), false).unwrap();
+    let id = s.snapshot(&query()).unwrap().messages[0].id.clone();
+    // 模拟文件已搬到 Work，但记录仍指向 INBOX（INBOX 原件已不存在）。
+    let m = s.mail(&id).unwrap();
+    let old = archive::rel_path(&a.email, "INBOX", &m.hash).unwrap();
+    std::fs::remove_file(s.root.join(&old)).unwrap();
+    let mut r = rule("noop", "star", false);
+    r.conditions[0].value = "unrelated subject".into();
+    s.save_rules(&[r]).unwrap();
+    assert_eq!(s.run_rules().unwrap(), 0);
+    let fixed = s.mail(&id).unwrap();
+    let rel = fixed.rel_path.as_deref().unwrap();
+    assert!(rel.contains("Work"), "应修复到实际存档目录: {rel}");
+    assert!(s
+        .read_archive(fixed.rel_path.as_deref(), &fixed.hash)
+        .is_ok());
+}
+#[test]
+fn run_rules_normalizes_file_to_unique_counted_folder() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = Store::new(dir.path().into()).unwrap();
+    let a = account();
+    s.save_account(&a).unwrap();
+    s.ingest(&a, "INBOX", "1", &raw(), false).unwrap();
+    s.ingest(&a, "Work", "9", &raw(), false).unwrap();
+    let id = s.snapshot(&query()).unwrap().messages[0].id.clone();
+    // 服务器已把邮件移到 Work：INBOX 来源失效，Work 仍是唯一活跃来源。
+    s.db()
+        .unwrap()
+        .execute("UPDATE sources SET active=0 WHERE folder='INBOX'", [])
+        .unwrap();
+    let m = s.mail(&id).unwrap();
+    let inbox = archive::rel_path(&a.email, "INBOX", &m.hash).unwrap();
+    assert!(s.root.join(&inbox).exists());
+    let mut r = rule("noop", "star", false);
+    r.conditions[0].value = "unrelated subject".into();
+    s.save_rules(&[r]).unwrap();
+    assert_eq!(s.run_rules().unwrap(), 0);
+    let after = s.mail(&id).unwrap();
+    let rel = after.rel_path.as_deref().unwrap();
+    assert!(rel.contains("Work"), "应整理到唯一归属目录: {rel}");
+    assert!(!s.root.join(&inbox).exists(), "旧 INBOX 文件应已移走");
+    assert!(s
+        .read_archive(after.rel_path.as_deref(), &after.hash)
+        .is_ok());
+}
+#[test]
 fn failed_save_cannot_run_rules_or_publish_success() {
     let dir = tempfile::tempdir().unwrap();
     let s = Store::new(dir.path().into()).unwrap();

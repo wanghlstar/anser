@@ -1844,8 +1844,8 @@ button.nav-collapse .collapse-chevron {
   gap: 12px;
   margin: 12px 0;
 }
-/* 应用偏好两张全宽横卡上下排列：通知与启动的控件横向铺开，
-   间隔与外观的三个下拉跟随卡片宽度分摊 */
+/* 应用偏好两张全宽横卡上下排列：通知与启动的四个开关横向铺开，
+   间隔与外观的下拉和恢复窗口快捷键跟随卡片宽度 */
 .storage-tools-top {
   display: flex;
   flex-direction: column;
@@ -2015,7 +2015,7 @@ button.nav-collapse .collapse-chevron {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* 通知与启动的四个开关 + 快捷键录入横向铺开；宽度不足时自然换行 */
+/* 通知与启动的四个开关横向铺开；宽度不足时自然换行 */
 .settings-tool-switches {
   display: flex;
   flex-wrap: wrap;

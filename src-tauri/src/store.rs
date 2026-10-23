@@ -139,6 +139,12 @@ impl Store {
         s.recover_archive_deletion()?;
         s.refresh_archive_roots()?; // 必须先于元数据刷新：读取存档依赖根列表
         s.refresh_archive_metadata()?;
+        if let Err(error) = s.normalize_source_rows() {
+            s.log(&format!("来源归位待处理：{error}"))?;
+        }
+        if let Err(error) = s.repair_archive_paths() {
+            s.log(&format!("存档路径修复待处理：{error}"))?;
+        }
         if let Err(error) = s.cleanup_old_compose_files() {
             s.log(&format!("写信附件清理待处理：{error}"))?;
         }
@@ -798,6 +804,318 @@ impl Store {
         if let Err(e) = self.update_mail(&mail) {
             let _ = self.log(&format!("存档路径更新失败：{e}"));
         }
+    }
+    /// 服务器来源已删除时，按规则把本地存档归位到目标目录。
+    ///
+    /// 规则移动过的邮件在服务器上被清理后，旧的收件箱来源行会让它在
+    /// `folderTotals`/列表的本地存档兜底里重新计入收件箱。这里把存档文件
+    /// 搬到规则目标目录，并只保留目标来源行，保证同一封邮件只归属一个目录。
+    /// 返回是否实际发生了变更。
+    fn rehome_local_mail(&self, destination: &str, mail_id: &str) -> Result<bool> {
+        if destination.is_empty() {
+            return Ok(false);
+        }
+        let db = self.db()?;
+        // 只在整封邮件已无任何活跃服务器来源时归位；否则删除来源行会丢掉
+        // 仍然有效的服务器映射。
+        let has_active: bool = db
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sources WHERE mail_id=?1 AND active=1)",
+                [mail_id],
+                |r| r.get(0),
+            )
+            .map_err(err)?;
+        if has_active {
+            return Ok(false);
+        }
+        // 目标目录必须已有来源行，避免为服务器上从未存在的目录凭空建索引。
+        let has_target: bool = db
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sources WHERE mail_id=?1 AND folder=?2 COLLATE NOCASE)",
+                params![mail_id, destination],
+                |r| r.get(0),
+            )
+            .map_err(err)?;
+        if !has_target {
+            return Ok(false);
+        }
+        let before = self.mail(mail_id)?.rel_path;
+        self.relocate_archive_after_move(destination, mail_id);
+        let after = self.mail(mail_id)?;
+        let expected = archive::rel_path(&after.account_email, destination, &after.hash);
+        if after.rel_path != expected {
+            return Ok(false); // 本地没有可搬迁的存档，保持原状
+        }
+        let removed = db
+            .execute(
+                "DELETE FROM sources WHERE mail_id=?1 AND folder<>?2 COLLATE NOCASE",
+                params![mail_id, destination],
+            )
+            .map_err(err)?;
+        let changed = removed > 0 || before != after.rel_path;
+        if changed {
+            self.log(&format!(
+                "本地规则归档 · {} → {}",
+                after.subject, destination
+            ))?;
+        }
+        Ok(changed)
+    }
+    /// 补存完成后把文件整理到唯一归属目录，避免服务器已移动的邮件在
+    /// 本地仍按旧目录计数。
+    pub(crate) fn normalize_mail_location(&self, mail_id: &str) -> Result<bool> {
+        let db = self.db()?;
+        let mut stmt = db
+            .prepare(
+                "SELECT s.folder FROM trusted_sources s JOIN messages m ON m.id=s.mail_id
+                 WHERE s.mail_id=?1
+                   AND (s.active=1 OR (COALESCE(json_extract(m.data,'$.savedLocally'),1)=1
+                     AND NOT EXISTS(SELECT 1 FROM trusted_sources x
+                                    WHERE x.mail_id=s.mail_id AND x.active=1)))
+                   AND COALESCE(json_extract(m.data,'$.trashed'),0)=0
+                 GROUP BY s.folder",
+            )
+            .map_err(err)?;
+        let counted = stmt
+            .query_map([mail_id], |r| r.get::<_, String>(0))
+            .map_err(err)?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(err)?;
+        if counted.len() != 1 {
+            return Ok(false);
+        }
+        let mail = self.mail(mail_id)?;
+        let Some(target) = archive::rel_path(&mail.account_email, &counted[0], &mail.hash) else {
+            return Ok(false);
+        };
+        if mail.rel_path.as_deref() == Some(target.as_str()) {
+            return Ok(false);
+        }
+        let current = mail
+            .rel_path
+            .clone()
+            .unwrap_or_else(|| format!("archive/{}.eml", mail.hash));
+        let roots = self
+            .archive_roots
+            .read()
+            .map_err(|e| e.to_string())?
+            .clone();
+        if !roots.iter().any(|root| root.join(&current).exists()) {
+            return Ok(false);
+        }
+        self.relocate_archive_after_move(&counted[0], mail_id);
+        Ok(self.mail(mail_id)?.rel_path.as_deref() == Some(target.as_str()))
+    }
+    /// 修复规则移动后遗留的归档路径，并把唯一归属目录的邮件整理到该目录：
+    /// 文件已经搬走但 relPath 仍指向旧目录时修复；服务器仍有活跃来源、但文件
+    /// 留在旧目录时也搬回统计归属的目录，保证磁盘布局与数量一致。
+    /// 只采用能通过 SHA-256 校验、且属于该邮件来源目录的现存文件。
+    fn repair_archive_paths(&self) -> Result<u64> {
+        let db = self.db()?;
+        let roots = self
+            .archive_roots
+            .read()
+            .map_err(|e| e.to_string())?
+            .clone();
+        let rows = db
+            .prepare(
+                "SELECT id, data FROM messages
+                 WHERE COALESCE(json_extract(data,'$.savedLocally'),1)=1",
+            )
+            .map_err(err)?
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+            .map_err(err)?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(err)?;
+        let mut source_folders = db
+            .prepare("SELECT DISTINCT folder FROM sources WHERE mail_id=?1")
+            .map_err(err)?;
+        let mut counted_folders = db
+            .prepare(
+                "SELECT s.folder FROM trusted_sources s JOIN messages m ON m.id=s.mail_id
+                 WHERE s.mail_id=?1
+                   AND (s.active=1 OR (COALESCE(json_extract(m.data,'$.savedLocally'),1)=1
+                     AND NOT EXISTS(SELECT 1 FROM trusted_sources x
+                                    WHERE x.mail_id=s.mail_id AND x.active=1)))
+                   AND COALESCE(json_extract(m.data,'$.trashed'),0)=0
+                 GROUP BY s.folder",
+            )
+            .map_err(err)?;
+        let mut fixed = 0u64;
+        for (id, data) in rows {
+            let mut mail: Mail = serde_json::from_str(&data).map_err(err)?;
+            let current = mail
+                .rel_path
+                .clone()
+                .unwrap_or_else(|| format!("archive/{}.eml", mail.hash));
+            let current_exists = roots.iter().any(|root| root.join(&current).exists());
+            // 唯一统计归属目录：把文件整理过去，磁盘布局与数量保持一致。
+            let counted = counted_folders
+                .query_map([&id], |r| r.get::<_, String>(0))
+                .map_err(err)?
+                .collect::<std::result::Result<Vec<_>, _>>()
+                .map_err(err)?;
+            if counted.len() == 1 {
+                if let Some(target) =
+                    archive::rel_path(&mail.account_email, &counted[0], &mail.hash)
+                {
+                    if target != current && current_exists {
+                        self.relocate_archive_after_move(&counted[0], &id);
+                        let moved = self
+                            .mail(&id)
+                            .ok()
+                            .and_then(|updated| updated.rel_path)
+                            .is_some_and(|rel| rel == target);
+                        if moved {
+                            fixed += 1;
+                        }
+                        continue;
+                    }
+                }
+            }
+            if current_exists {
+                continue;
+            }
+            let mut folders = source_folders
+                .query_map([&id], |r| r.get::<_, String>(0))
+                .map_err(err)?
+                .collect::<std::result::Result<Vec<_>, _>>()
+                .map_err(err)?;
+            if !mail.source_folder.is_empty() {
+                folders.push(mail.source_folder.clone());
+            }
+            folders.sort();
+            folders.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
+            for folder in folders {
+                let Some(candidate) = archive::rel_path(&mail.account_email, &folder, &mail.hash)
+                else {
+                    continue;
+                };
+                if candidate == current {
+                    continue;
+                }
+                let Some(root) = roots.iter().find(|root| root.join(&candidate).exists()) else {
+                    continue;
+                };
+                let Ok(bytes) = std::fs::read(root.join(&candidate)) else {
+                    continue;
+                };
+                if archive::digest(&bytes) != mail.hash {
+                    continue;
+                }
+                mail.rel_path = Some(candidate);
+                self.update_mail(&mail)?;
+                fixed += 1;
+                break;
+            }
+        }
+        if fixed > 0 {
+            self.log(&format!("存档路径已修复/整理 {fixed} 封"))?;
+        }
+        Ok(fixed)
+    }
+    /// 已确认的 MOVE 只保留目标来源：删除目标目录之外的失效旧来源行，
+    /// 并在目标目录内只保留一条（优先活跃行）。复制/标签产生的活跃来源
+    /// 不动，避免把真正的多目录副本删掉。
+    fn normalize_source_row(&self, mail_id: &str) -> Result<bool> {
+        let db = self.db()?;
+        let target: Option<String> = db
+            .query_row(
+                "SELECT target FROM directory_operations
+                 WHERE json_extract(data,'$.mailId')=?1
+                   AND kind='move' AND status='completed'
+                 ORDER BY updated_at DESC, rowid DESC LIMIT 1",
+                [mail_id],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(err)?;
+        let Some(target) = target else {
+            return Ok(false);
+        };
+        let has_target: bool = db
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sources WHERE mail_id=?1 AND folder=?2 COLLATE NOCASE)",
+                params![mail_id, target],
+                |r| r.get(0),
+            )
+            .map_err(err)?;
+        if !has_target {
+            return Ok(false);
+        }
+        let mut changed = db
+            .execute(
+                "DELETE FROM sources WHERE mail_id=?1 AND active=0 AND folder<>?2 COLLATE NOCASE",
+                params![mail_id, target],
+            )
+            .map_err(err)?
+            > 0;
+        let kept: Option<String> = db
+            .query_row(
+                "SELECT remote_id FROM sources WHERE mail_id=?1 AND folder=?2 COLLATE NOCASE
+                 ORDER BY active DESC, rowid DESC LIMIT 1",
+                params![mail_id, target],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(err)?;
+        if let Some(remote) = kept {
+            changed |= db
+                .execute(
+                    "DELETE FROM sources WHERE mail_id=?1 AND folder=?2 COLLATE NOCASE
+                     AND remote_id<>?3",
+                    params![mail_id, target, remote],
+                )
+                .map_err(err)?
+                > 0;
+        }
+        if changed {
+            let _ = self.normalize_mail_location(mail_id);
+        }
+        Ok(changed)
+    }
+    fn normalize_source_rows(&self) -> Result<u64> {
+        let db = self.db()?;
+        let ids = db
+            .prepare("SELECT mail_id FROM sources GROUP BY mail_id HAVING COUNT(*) > 1")
+            .map_err(err)?
+            .query_map([], |r| r.get::<_, String>(0))
+            .map_err(err)?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(err)?;
+        let mut normalized = 0u64;
+        for id in ids {
+            if self.normalize_source_row(&id)? {
+                normalized += 1;
+            }
+        }
+        if normalized > 0 {
+            self.log(&format!("来源归位 {normalized} 封"))?;
+        }
+        Ok(normalized)
+    }
+    fn normalize_folder_sources(&self, account: &str, folder: &str) -> Result<u64> {
+        let db = self.db()?;
+        let ids = db
+            .prepare(
+                "SELECT DISTINCT mail_id FROM sources
+                 WHERE account_id=?1 AND folder=?2",
+            )
+            .map_err(err)?
+            .query_map(params![account, folder], |r| r.get::<_, String>(0))
+            .map_err(err)?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(err)?;
+        let mut normalized = 0u64;
+        for id in ids {
+            if self.normalize_source_row(&id)? {
+                normalized += 1;
+            }
+        }
+        if normalized > 0 {
+            self.log(&format!("来源归位 {normalized} 封"))?;
+        }
+        Ok(normalized)
     }
     /// 本地存档树：按账号与来源文件夹聚合已完整存档的邮件数。
     /// 分组口径与列表过滤一致：以 sources 行为准，只算活跃来源行，外加整封
@@ -1611,6 +1929,23 @@ impl Store {
                 continue;
             }
             if rules::remote(r) && !self.rule_has_source(r, &m)? {
+                // 服务器来源已被删除：serverMove 无法再提交，但本地存档仍应
+                // 按规则归位，否则旧收件箱来源行会让它重新计入收件箱。
+                if !remote_only
+                    && r.action == "serverMove"
+                    && m.saved_locally
+                    && self.rehome_local_mail(&r.destination, &m.id)?
+                {
+                    // 后续动作（read/star 等）会用内存里的 m 重新写整条记录，
+                    // 必须带上刚更新过的 relPath，否则会把旧路径写回去。
+                    if let Ok(updated) = self.mail(&m.id) {
+                        m = updated;
+                    }
+                    count += 1;
+                    if r.stop {
+                        break;
+                    }
+                }
                 continue;
             }
             let state =
@@ -1736,7 +2071,9 @@ impl Store {
             .map_err(err)?;
         }
         tx.execute("DELETE FROM messages WHERE account_id=?1 AND json_extract(data,'$.savedLocally')=0 AND NOT EXISTS(SELECT 1 FROM sources WHERE mail_id=messages.id AND active=1) AND NOT EXISTS(SELECT 1 FROM rule_runs r WHERE r.mail_id=messages.id AND r.status NOT IN ('completed','cancelled')) AND NOT EXISTS(SELECT 1 FROM directory_operations d WHERE d.account_id=messages.account_id AND json_extract(d.data,'$.mailId')=messages.id AND d.status NOT IN ('completed','cancelled'))", [account]).map_err(err)?;
-        tx.commit().map_err(err)
+        tx.commit().map_err(err)?;
+        self.normalize_folder_sources(account, folder)?;
+        Ok(())
     }
     pub fn preview_rule(&self, rule: &Rule) -> Result<Vec<String>> {
         rules::validate(rule)?;
@@ -1779,6 +2116,7 @@ impl Store {
         if !configured.iter().any(|r| r.enabled) {
             return Ok(0);
         }
+        self.repair_archive_paths()?;
         let db = self.db()?;
         let mut q = db
             .prepare("SELECT data FROM message_listing ORDER BY rowid")
@@ -1801,6 +2139,7 @@ impl Store {
                 n += self.apply_configured_rules(self.mail(&mail.id)?, &configured, false)?;
             }
         }
+        self.normalize_source_rows()?;
         Ok(n)
     }
     pub fn log(&self, msg: &str) -> Result<()> {

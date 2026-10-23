@@ -253,13 +253,20 @@ impl Store {
         proof(&self.db()?, job)
     }
     pub(crate) fn complete_archive(&self, job: &ArchiveJob, raw: &[u8]) -> Result<()> {
-        let _archive = self.archive_gate.read().map_err(err)?;
-        let mut db = self.db()?;
-        let tx = db
-            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
-            .map_err(err)?;
-        Self::complete_archive_in(self, &tx, job, raw)?;
-        tx.commit().map_err(err)
+        {
+            let _archive = self.archive_gate.read().map_err(err)?;
+            let mut db = self.db()?;
+            let tx = db
+                .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+                .map_err(err)?;
+            Self::complete_archive_in(self, &tx, job, raw)?;
+            tx.commit().map_err(err)?;
+        }
+        // 锁外归位：complete_archive 持有存档读锁，搬迁需要写锁。
+        if let Err(e) = self.normalize_mail_location(&job.mail_id) {
+            let _ = self.log(&format!("存档归位待处理：{e}"));
+        }
+        Ok(())
     }
     pub(crate) fn archive_job_for_mail_in(
         tx: &rusqlite::Connection,
@@ -429,6 +436,34 @@ mod tests {
         assert_eq!(store.queue_archives(&[id.into()], false).unwrap().queued, 1);
         let view = store.archive_jobs().unwrap().remove(0);
         store.archive_job(&view.id).unwrap()
+    }
+    #[test]
+    fn completed_archive_moves_to_the_only_counted_folder() {
+        let (_dir, store, a, id) = fixture();
+        // 服务器已把邮件移到 Work：INBOX 来源失效，Work 是唯一活跃来源。
+        store
+            .db()
+            .unwrap()
+            .execute(
+                "INSERT INTO sources VALUES(?1,'Work','9',?2,1)",
+                params![a.id, id],
+            )
+            .unwrap();
+        store
+            .db()
+            .unwrap()
+            .execute("UPDATE sources SET active=0 WHERE folder='INBOX'", [])
+            .unwrap();
+        let job = queued(&store, &id);
+        assert_eq!(job.folder, "Work");
+        assert!(store.claim_archive(&job).unwrap());
+        store.complete_archive(&job, &raw()).unwrap();
+        let mail = store.mail(&id).unwrap();
+        assert!(mail.saved_locally);
+        let rel = mail.rel_path.as_deref().unwrap();
+        assert!(rel.contains("Work"), "补存后应归位到唯一归属目录: {rel}");
+        let inbox = archive::rel_path(&mail.account_email, "INBOX", &mail.hash).unwrap();
+        assert!(!store.root.join(inbox).exists(), "旧 INBOX 文件应已移走");
     }
     #[test]
     fn explicit_archive_preserves_identity_actions_sources_and_online_default() {

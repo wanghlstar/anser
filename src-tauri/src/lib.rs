@@ -1929,6 +1929,16 @@ async fn restore_archive(state: tauri::State<'_, AppState>, path: String) -> Res
 fn open_data_folder(state: tauri::State<AppState>) -> Result<()> {
     open::that(&state.store.root).map_err(err)
 }
+#[tauri::command]
+fn open_external_archive(state: tauri::State<AppState>) -> Result<()> {
+    let dir = state
+        .store
+        .preferences()?
+        .external_archive_dir
+        .filter(|dir| !dir.trim().is_empty())
+        .ok_or_else(|| "尚未设置外置存档目录".to_string())?;
+    open::that(dir).map_err(err)
+}
 
 #[derive(Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -3656,6 +3666,7 @@ pub fn run() {
             delete_local_archives,
             restore_archive,
             open_data_folder,
+            open_external_archive,
             data_dir_info,
             archive_tier_info,
             save_archive_tier_settings,
