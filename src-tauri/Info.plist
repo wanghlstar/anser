@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleDisplayName</key>
+  <string>雁信</string>
+  <key>CFBundleName</key>
+  <string>雁信</string>
+  <key>CFBundleDevelopmentRegion</key>
+  <string>zh-Hans</string>
+  <key>CFBundleLocalizations</key>
+  <array>
+    <string>zh-Hans</string>
+  </array>
+  <key>NSCalendarsUsageDescription</key>
+  <string>用于在雁信日历中只读显示 macOS 日历事件。</string>
+  <key>NSCalendarsFullAccessUsageDescription</key>
+  <string>用于在雁信日历中只读显示 macOS 日历事件。</string>
+  <key>UTImportedTypeDeclarations</key>
+  <array><dict>
+    <key>UTTypeIdentifier</key><string>org.ansermail.outlook-message</string>
+    <key>UTTypeDescription</key><string>Outlook mail message</string>
+    <key>UTTypeConformsTo</key><array><string>public.data</string><string>public.content</string></array>
+    <key>UTTypeTagSpecification</key><dict>
+      <key>public.filename-extension</key><array><string>msg</string></array>
+      <key>public.mime-type</key><string>application/vnd.ms-outlook</string>
+    </dict>
+  </dict></array>
+</dict>
+</plist>

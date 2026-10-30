@@ -1,0 +1,751 @@
+//! Rules schedule existing durable directory operations. A match and its task
+//! are committed together; repeats cannot replay COPY/MOVE, including failures.
+use crate::{archive, models::*, rules, store::Store};
+use rusqlite::{params, OptionalExtension};
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuleExecution {
+    pub id: String,
+    pub rule_name: String,
+    pub account_email: String,
+    pub subject: String,
+    pub action: String,
+    pub source: String,
+    pub target: String,
+    pub status: String,
+    pub error: String,
+    pub operation_id: Option<String>,
+    pub updated_at: String,
+}
+
+pub fn initialize(db: &rusqlite::Connection) -> Result<()> {
+    db.execute_batch(
+        "CREATE TABLE IF NOT EXISTS rule_executions(
+        id TEXT PRIMARY KEY,rule_id TEXT NOT NULL,mail_id TEXT NOT NULL,
+        fingerprint TEXT NOT NULL,rule_data TEXT NOT NULL,data TEXT NOT NULL,
+        operation_id TEXT,status TEXT NOT NULL,error TEXT NOT NULL DEFAULT '',
+        updated_at TEXT NOT NULL,UNIQUE(rule_id,mail_id,fingerprint));
+        CREATE INDEX IF NOT EXISTS rule_execution_recent ON rule_executions(updated_at);",
+    )
+    .map_err(err)
+}
+fn fingerprint(rule: &Rule) -> Result<String> {
+    // Renaming/enabling a rule doesn't create a new remote action.
+    let mut frozen = rule.clone();
+    frozen.name.clear();
+    frozen.enabled = true;
+    Ok(archive::digest(&serde_json::to_vec(&frozen).map_err(err)?))
+}
+/// 账号的收信入口范围：配置了 inboxFolders 就用它，否则默认 INBOX。
+fn inbox_scope(account: &Account) -> Vec<String> {
+    account
+        .inbox_folders
+        .clone()
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| vec!["INBOX".into()])
+}
+/// 解析规则的服务器来源目录。收信规则只作用于账号的收件箱（唯一入口）：
+/// 显式配置来源时校验该活跃来源行存在；留空时取邮件在收件箱范围内的活跃来源。
+pub(crate) fn resolve_source(
+    tx: &rusqlite::Connection,
+    rule: &Rule,
+    mail: &Mail,
+    account: &Account,
+) -> Result<Option<String>> {
+    if !rule.source_folder.is_empty() {
+        let active: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM sources WHERE account_id=?1 AND mail_id=?2 AND folder=?3 AND active=1)",params![mail.account_id,mail.id,rule.source_folder],|r|r.get(0)).map_err(err)?;
+        return Ok(active.then(|| rule.source_folder.clone()));
+    }
+    let scope = serde_json::to_string(&inbox_scope(account)).map_err(err)?;
+    tx.query_row("SELECT folder FROM trusted_sources WHERE account_id=?1 AND mail_id=?2 AND active=1 AND EXISTS(SELECT 1 FROM json_each(?3) WHERE value=folder) ORDER BY folder='INBOX' COLLATE NOCASE DESC,folder LIMIT 1",params![mail.account_id,mail.id,scope],|r|r.get(0)).optional().map_err(err)
+}
+impl Store {
+    pub fn rule_has_source(&self, rule: &Rule, mail: &Mail) -> Result<bool> {
+        if rule.source_folder.is_empty() {
+            // 收信规则只命中收件箱范围内、且不在目标目录的邮件。
+            let scope = match self.account(&mail.account_id) {
+                Ok(account) => inbox_scope(&account),
+                Err(_) => vec!["INBOX".into()],
+            };
+            if !scope
+                .iter()
+                .any(|folder| folder.eq_ignore_ascii_case(&mail.source_folder))
+            {
+                return Ok(false);
+            }
+            let scope = serde_json::to_string(&scope).map_err(err)?;
+            return self.db()?.query_row("SELECT EXISTS(SELECT 1 FROM sources WHERE account_id=?1 AND mail_id=?2 AND active=1 AND folder<>?3 COLLATE NOCASE AND EXISTS(SELECT 1 FROM json_each(?4) WHERE value=folder))",params![mail.account_id,mail.id,rule.destination,scope],|r|r.get(0)).map_err(err);
+        }
+        self.db()?.query_row("SELECT EXISTS(SELECT 1 FROM sources WHERE account_id=?1 AND mail_id=?2 AND folder=?3 AND active=1)",params![mail.account_id,mail.id,rule.source_folder],|r|r.get(0)).map_err(err)
+    }
+    pub fn apply_remote_rule_with_flags(
+        &self,
+        rule: &Rule,
+        mail: &Mail,
+        retry: bool,
+        observed: Option<rules::ObservedStatus>,
+        flags: &[FlagChange],
+    ) -> Result<bool> {
+        rules::validate(rule)?;
+        if !rules::remote(rule)
+            || rules::match_state_observed(rule, mail, observed, rules::body_available(mail))
+                != rules::MatchState::Match
+        {
+            return Err("邮件不匹配此服务器规则".into());
+        }
+        let mut db = self.db()?;
+        let tx = db
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(err)?;
+        let result = Self::apply_remote_rule_in(&tx, rule, mail, retry, flags)?;
+        tx.commit().map_err(err)?;
+        Ok(result)
+    }
+    pub(crate) fn apply_remote_rule_in(
+        tx: &rusqlite::Connection,
+        rule: &Rule,
+        mail: &Mail,
+        retry: bool,
+        flags: &[FlagChange],
+    ) -> Result<bool> {
+        rules::validate(rule)?;
+        let frozen = fingerprint(rule)?;
+        let data: String = tx
+            .query_row(
+                "SELECT data FROM accounts WHERE id=?1",
+                [&mail.account_id],
+                |r| r.get(0),
+            )
+            .map_err(err)?;
+        let account: Account = serde_json::from_str(&data).map_err(err)?;
+        let source = match resolve_source(tx, rule, mail, &account)? {
+            Some(source) => source,
+            None => {
+                if retry {
+                    return Err("邮件已不在规则的来源文件夹，请重新收取后核对".into());
+                }
+                return Ok(false);
+            }
+        };
+        // 已经在目标文件夹：无需再移动，避免出现 X→X 的无效任务，
+        // 也避免预览把已归位的邮件重复算作命中。
+        if source.eq_ignore_ascii_case(&rule.destination) {
+            return Ok(false);
+        }
+        let existing: Option<(String, Option<String>, String)> = tx.query_row("SELECT id,operation_id,status FROM rule_executions WHERE rule_id=?1 AND mail_id=?2 AND fingerprint=?3",params![rule.id,mail.id,frozen],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional().map_err(err)?;
+        if let Some((_, task, status)) = &existing {
+            if !retry {
+                return Ok(true);
+            } // Still counts as a match for stop ordering.
+            if task.is_some() || status != "blocked" {
+                return Err("已有服务器任务，请在设置的文件夹操作中处理，不会重复执行规则".into());
+            }
+        }
+        // A savepoint leaves a rejected enqueue with no partial journal writes.
+        tx.execute_batch("SAVEPOINT rule_enqueue").map_err(err)?;
+        // 显式来源目录必须唯一；动态来源（留空）已在收件箱范围内取定一条。
+        let source_count: u32 = tx.query_row("SELECT COUNT(*) FROM sources WHERE account_id=?1 AND mail_id=?2 AND folder=?3 AND active=1",params![mail.account_id,mail.id,source],|r|r.get(0)).map_err(err)?;
+        let queued = if !rule.source_folder.is_empty() && source_count != 1 {
+            Err("来源目录包含多个邮件来源，无法确定规则操作对象，请先核对".into())
+        } else if account.provider == "gmail" {
+            Err("Gmail 标签规则尚未支持，请使用本地归类动作".into())
+        } else {
+            Self::queue_directory_in(
+                tx,
+                mail,
+                &source,
+                &rule.destination,
+                if rule.effective_actions().iter().any(|a| a == "serverCopy") {
+                    "copy"
+                } else {
+                    "move"
+                },
+                flags,
+            )
+        };
+        let (operation_id, status, error) = match queued {
+            Ok(id) => {
+                tx.execute_batch("RELEASE rule_enqueue").map_err(err)?;
+                (Some(id), "queued", String::new())
+            }
+            Err(error) => {
+                tx.execute_batch("ROLLBACK TO rule_enqueue; RELEASE rule_enqueue;")
+                    .map_err(err)?;
+                (None, "blocked", error)
+            }
+        };
+        let execution = RuleExecution {
+            id: existing
+                .map(|v| v.0)
+                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+            rule_name: rule.name.clone(),
+            account_email: account.email,
+            subject: mail.subject.clone(),
+            action: rule.action.clone(),
+            source: source.clone(),
+            target: rule.destination.clone(),
+            status: status.into(),
+            error: error.clone(),
+            operation_id: operation_id.clone(),
+            updated_at: chrono::Utc::now().to_rfc3339(),
+        };
+        tx.execute("INSERT INTO rule_executions(id,rule_id,mail_id,fingerprint,rule_data,data,operation_id,status,error,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10) ON CONFLICT(rule_id,mail_id,fingerprint) DO UPDATE SET operation_id=excluded.operation_id,status=excluded.status,error=excluded.error,updated_at=excluded.updated_at",params![execution.id,rule.id,mail.id,frozen,serde_json::to_string(rule).map_err(err)?,serde_json::to_string(&execution).map_err(err)?,operation_id,status,error,execution.updated_at]).map_err(err)?;
+        Ok(true)
+    }
+    pub(crate) fn unqueued_rule_failure_in(
+        db: &rusqlite::Connection,
+        rule: &Rule,
+        mail_id: &str,
+    ) -> Result<bool> {
+        db.query_row("SELECT EXISTS(SELECT 1 FROM rule_executions WHERE rule_id=?1 AND mail_id=?2 AND fingerprint=?3 AND status='blocked' AND operation_id IS NULL)",params![rule.id,mail_id,fingerprint(rule)?],|row|row.get(0)).map_err(err)
+    }
+    pub fn retry_rule_execution(&self, id: &str) -> Result<()> {
+        let (rule_id, mail_id, frozen): (String,String,String) = self.db()?.query_row("SELECT rule_id,mail_id,fingerprint FROM rule_executions WHERE id=?1 AND operation_id IS NULL AND status='blocked'",[id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).map_err(|_| "此规则记录不能重试，请查看关联服务器任务")?;
+        let expanded = rules::expand(&self.rules()?);
+        let position = expanded
+            .iter()
+            .position(|r| r.id == rule_id && r.enabled)
+            .ok_or("规则已删除或停用，不能重试")?;
+        let rule = expanded[position].clone();
+        if fingerprint(&rule)? != frozen {
+            return Err("规则配置已变化，请预览新规则后执行，旧记录保留".into());
+        }
+        let flags = rules::chain_flags(&expanded, position);
+        if Self::rule_blocks_move(&self.db()?, &mail_id)? {
+            return Err(
+                "关联规则链尚未完成，请在规则处理任务中重新核对，不会提前入队服务器动作".into(),
+            );
+        }
+        let mail = self.mail(&mail_id)?;
+        if !rules::matches(&rule, &mail) {
+            return Err("邮件已不再匹配规则".into());
+        }
+        self.apply_remote_rule_with_flags(&rule, &mail, true, None, &flags)?;
+        Ok(())
+    }
+    pub fn rule_executions(&self) -> Result<Vec<RuleExecution>> {
+        let db = self.db()?;
+        let mut st = db.prepare("SELECT e.data,CASE WHEN e.operation_id IS NOT NULL AND d.id IS NULL THEN 'blocked' ELSE COALESCE(d.status,e.status) END,CASE WHEN e.operation_id IS NOT NULL AND d.id IS NULL THEN '关联服务器任务已移除，请核对目录状态；不会自动重发' ELSE COALESCE(d.error,e.error) END,e.operation_id,e.updated_at FROM rule_executions e LEFT JOIN directory_operations d ON d.id=e.operation_id ORDER BY e.updated_at DESC,e.rowid DESC LIMIT 50").map_err(err)?;
+        let rows = st
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, Option<String>>(3)?,
+                    r.get::<_, String>(4)?,
+                ))
+            })
+            .map_err(err)?;
+        rows.map(|row| {
+            let (data, status, error, task, time) = row.map_err(err)?;
+            let mut execution: RuleExecution = serde_json::from_str(&data).map_err(err)?;
+            execution.status = status;
+            execution.error = error;
+            execution.operation_id = task;
+            execution.updated_at = time;
+            for name in [&mut execution.source, &mut execution.target] {
+                *name = crate::remote::display_name(name);
+            }
+            Ok(execution)
+        })
+        .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn remote_rule(account: &Account, kind: &str) -> Rule {
+        Rule {
+            id: "remote-rule".into(),
+            name: "复制发票".into(),
+            account_id: account.id.clone(),
+            enabled: true,
+            mode: "all".into(),
+            conditions: vec![Condition {
+                field: "subject".into(),
+                operator: "contains".into(),
+                value: "invoice".into(),
+            }],
+            actions: Vec::new(),
+            action: kind.into(),
+            destination: "Archive".into(),
+            source_folder: "INBOX".into(),
+            stop: true,
+        }
+    }
+    #[test]
+    fn new_mail_and_repeated_scans_schedule_only_one_task_and_preserve_mime() {
+        let (temp, store, a, id) = crate::directory_operations::tests::fixture();
+        let r = remote_rule(&a, "serverCopy");
+        store.save_rules(&[r]).unwrap();
+        let before = store.mail(&id).unwrap();
+        store
+            .ingest(&a, "INBOX", "7:12", &crate::tests::raw(), false)
+            .unwrap();
+        store.run_rules().unwrap();
+        store.run_rules().unwrap();
+        assert_eq!(store.directory_operations().unwrap().len(), 1);
+        let hit = store.rule_executions().unwrap().remove(0);
+        assert_eq!(hit.status, "queued");
+        assert!(hit.operation_id.is_some());
+        assert_eq!(store.mail(&id).unwrap().local_folder, before.local_folder);
+        assert_eq!(
+            store.message_raw(&store.mail(&id).unwrap()).unwrap(),
+            crate::tests::raw()
+        );
+        drop(store);
+        let store = Store::new(temp.path().into()).unwrap();
+        store.run_rules().unwrap();
+        assert_eq!(store.rule_executions().unwrap().len(), 1);
+        assert_eq!(store.directory_operations().unwrap().len(), 1);
+    }
+    #[test]
+    fn journal_and_task_are_atomic_even_if_record_write_fails() {
+        let (_temp, store, a, _id) = crate::directory_operations::tests::fixture();
+        store.save_rules(&[remote_rule(&a, "serverMove")]).unwrap();
+        store.db().unwrap().execute_batch("CREATE TRIGGER reject_rule BEFORE INSERT ON rule_executions BEGIN SELECT RAISE(ABORT,'fixture'); END;").unwrap();
+        assert!(store.run_rules().is_err());
+        assert!(store.directory_operations().unwrap().is_empty());
+        store
+            .db()
+            .unwrap()
+            .execute_batch("DROP TRIGGER reject_rule")
+            .unwrap();
+        store.run_rules().unwrap();
+        assert_eq!(store.directory_operations().unwrap().len(), 1);
+    }
+    #[test]
+    fn isolated_source_reports_blocked_hit_stops_later_rules_and_requires_explicit_retry() {
+        let (_temp, store, a, id) = crate::directory_operations::tests::fixture();
+        let r = remote_rule(&a, "serverCopy");
+        let mut later = r.clone();
+        later.id = "later".into();
+        later.action = "trash".into();
+        store.save_rules(&[r, later]).unwrap();
+        store
+            .isolate_folder(&a, "INBOX", "bad", &Default::default())
+            .unwrap();
+        store.run_rules().unwrap();
+        let hit = store.rule_executions().unwrap().remove(0);
+        assert_eq!(hit.status, "blocked");
+        assert!(hit.error.contains("来源"));
+        assert!(hit.operation_id.is_none());
+        assert!(!store.mail(&id).unwrap().trashed);
+        store.restore_folder_trust(&a, "INBOX").unwrap();
+        store.run_rules().unwrap();
+        assert!(store.directory_operations().unwrap().is_empty());
+        store.retry_rule_execution(&hit.id).unwrap();
+        assert_eq!(store.rule_executions().unwrap()[0].status, "queued");
+    }
+    #[test]
+    fn submitted_move_never_replays_and_feedback_follows_the_directory_task() {
+        let (_temp, store, a, _id) = crate::directory_operations::tests::fixture();
+        store.save_rules(&[remote_rule(&a, "serverMove")]).unwrap();
+        store.run_rules().unwrap();
+        let hit = store.rule_executions().unwrap().remove(0);
+        let op = store
+            .directory_operation(hit.operation_id.as_ref().unwrap())
+            .unwrap();
+        store.claim_copy(&op).unwrap();
+        store.submit_copy(&op, "hash").unwrap();
+        store.fail_copy(&op.id, "Disconnected", false).unwrap();
+        store.run_rules().unwrap();
+        assert_eq!(store.rule_executions().unwrap()[0].status, "uncertain");
+        assert_eq!(store.rule_executions().unwrap()[0].error, "Disconnected");
+        assert!(store.retry_rule_execution(&hit.id).is_err());
+        assert!(store.due_copies(&a.id).unwrap().is_empty());
+        assert_eq!(store.directory_operations().unwrap().len(), 1);
+    }
+    #[test]
+    fn later_discovered_source_triggers_remote_rules_but_respects_local_stop_rules() {
+        let (_temp, store, a, _id) = crate::directory_operations::tests::fixture();
+        let mut r = remote_rule(&a, "serverCopy");
+        r.source_folder = "Later".into();
+        store.save_rules(&[r.clone()]).unwrap();
+        store.run_rules().unwrap();
+        assert!(store.rule_executions().unwrap().is_empty());
+        assert_eq!(store.preview_rule(&r).unwrap().len(), 0);
+        store
+            .ingest(&a, "Later", "8:2", &crate::tests::raw(), false)
+            .unwrap();
+        assert_eq!(store.directory_operations().unwrap().len(), 1);
+        assert_eq!(store.preview_rule(&r).unwrap().len(), 1);
+        let (_temp, store, a, id) = crate::directory_operations::tests::fixture();
+        let before = store.mail(&id).unwrap().local_folder;
+        let mut first = r.clone();
+        first.id = "first".into();
+        first.action = "folder".into();
+        first.destination = "local".into();
+        store.save_rules(&[first, r]).unwrap();
+        store
+            .ingest(&a, "Later", "8:2", &crate::tests::raw(), false)
+            .unwrap();
+        assert!(store.rule_executions().unwrap().is_empty());
+        // Deduplicated scans don't reapply local actions.
+        assert_eq!(store.mail(&id).unwrap().local_folder, before);
+    }
+    #[test]
+    fn changed_or_disabled_rules_cannot_retry_old_failures() {
+        let (_temp, store, a, _) = crate::directory_operations::tests::fixture();
+        let mut r = remote_rule(&a, "serverCopy");
+        r.destination = "Missing".into();
+        store.save_rules(&[r.clone()]).unwrap();
+        store.run_rules().unwrap();
+        let hit = store.rule_executions().unwrap().remove(0);
+        r.destination = "Archive".into();
+        store.save_rules(&[r.clone()]).unwrap();
+        assert!(store
+            .retry_rule_execution(&hit.id)
+            .unwrap_err()
+            .contains("配置已变化"));
+        r.enabled = false;
+        store.save_rules(&[r]).unwrap();
+        assert!(store
+            .retry_rule_execution(&hit.id)
+            .unwrap_err()
+            .contains("停用"));
+    }
+    #[test]
+    fn ambiguous_sources_and_gmail_labels_never_enqueue() {
+        let (_temp, store, mut a, id) = crate::directory_operations::tests::fixture();
+        let r = remote_rule(&a, "serverCopy");
+        store.save_rules(&[r]).unwrap();
+        store
+            .db()
+            .unwrap()
+            .execute(
+                "INSERT INTO sources VALUES(?1,'INBOX','7:99',?2,1)",
+                params![a.id, id],
+            )
+            .unwrap();
+        store.run_rules().unwrap();
+        assert!(store.rule_executions().unwrap()[0].error.contains("多个"));
+        assert!(store.directory_operations().unwrap().is_empty());
+        store
+            .db()
+            .unwrap()
+            .execute("DELETE FROM sources WHERE remote_id='7:99'", [])
+            .unwrap();
+        a.provider = "gmail".into();
+        store.save_account(&a).unwrap();
+        store
+            .retry_rule_execution(&store.rule_executions().unwrap()[0].id)
+            .unwrap();
+        assert!(store.rule_executions().unwrap()[0].error.contains("Gmail"));
+        assert!(store.directory_operations().unwrap().is_empty());
+    }
+    #[test]
+    fn remote_rule_validation_allows_an_empty_source_but_requires_a_target() {
+        let a = crate::tests::account();
+        let mut r = remote_rule(&a, "serverCopy");
+        r.account_id.clear();
+        assert!(rules::validate(&r).is_err());
+        r.account_id = a.id;
+        // 来源可空：留空表示收信规则的来源固定为该账号的收件箱范围
+        r.source_folder.clear();
+        assert!(rules::validate(&r).is_ok());
+        // 显式来源不能与目标相同
+        r.source_folder = r.destination.clone();
+        assert!(rules::validate(&r).is_err());
+        r.source_folder = "INBOX".into();
+        r.destination.clear();
+        assert!(rules::validate(&r).is_err());
+        r.destination = "Archive\r\nCOPY".into();
+        assert!(rules::validate(&r).is_err());
+    }
+    #[test]
+    fn empty_source_moves_from_the_account_inbox_scope() {
+        let (_temp, store, a, id) = crate::directory_operations::tests::fixture();
+        // 非收件箱范围的活跃来源（Archive）不参与解析，来源仍取收件箱 INBOX
+        store
+            .db()
+            .unwrap()
+            .execute(
+                "INSERT INTO sources(account_id,folder,remote_id,mail_id,active) VALUES(?1,'Archive','9:99',?2,1)",
+                params![a.id, id],
+            )
+            .unwrap();
+        let mut r = remote_rule(&a, "serverMove");
+        r.source_folder.clear();
+        store.save_rules(&[r]).unwrap();
+        store.run_rules().unwrap();
+        let hit = store.rule_executions().unwrap().remove(0);
+        assert_eq!(hit.status, "queued");
+        let op = store
+            .directory_operation(hit.operation_id.as_ref().unwrap())
+            .unwrap();
+        assert_eq!(op.kind, "move");
+        assert_eq!(op.folder, "INBOX");
+        assert_eq!(op.target, "Archive");
+    }
+    #[test]
+    fn dynamic_source_without_any_active_row_is_not_a_match() {
+        let (_temp, store, a, id) = crate::directory_operations::tests::fixture();
+        let mut r = remote_rule(&a, "serverMove");
+        r.source_folder.clear();
+        store.save_rules(&[r]).unwrap();
+        store
+            .db()
+            .unwrap()
+            .execute("UPDATE sources SET active=0 WHERE mail_id=?1", params![id])
+            .unwrap();
+        store.run_rules().unwrap();
+        assert!(store.rule_executions().unwrap().is_empty());
+        assert!(store.directory_operations().unwrap().is_empty());
+    }
+    #[test]
+    fn dynamic_source_outside_the_inbox_scope_is_not_a_match() {
+        let (_temp, store, a, id) = crate::directory_operations::tests::fixture();
+        // 邮件已不在收件箱范围（只存在于目标目录 Archive）：收信规则不应命中
+        store
+            .db()
+            .unwrap()
+            .execute(
+                "UPDATE sources SET folder='Archive' WHERE mail_id=?1",
+                params![id],
+            )
+            .unwrap();
+        let mut r = remote_rule(&a, "serverMove");
+        r.source_folder.clear();
+        store.save_rules(&[r.clone()]).unwrap();
+        assert_eq!(store.preview_rule(&r).unwrap().len(), 0);
+        store.run_rules().unwrap();
+        assert!(store.rule_executions().unwrap().is_empty());
+        assert!(store.directory_operations().unwrap().is_empty());
+    }
+    #[test]
+    fn concurrent_matches_share_one_task_and_rule_record() {
+        let (_temp, store, a, _) = crate::directory_operations::tests::fixture();
+        store.save_rules(&[remote_rule(&a, "serverCopy")]).unwrap();
+        std::thread::scope(|scope| {
+            let one = scope.spawn(|| store.run_rules().unwrap());
+            let two = scope.spawn(|| store.run_rules().unwrap());
+            one.join().unwrap();
+            two.join().unwrap();
+        });
+        assert_eq!(store.rule_executions().unwrap().len(), 1);
+        assert_eq!(store.directory_operations().unwrap().len(), 1);
+    }
+    #[test]
+    fn first_ingest_can_schedule_and_backup_does_not_restore_pending_rule_tasks() {
+        let (_temp, store, a, _) = crate::directory_operations::tests::fixture();
+        store.save_rules(&[remote_rule(&a, "serverCopy")]).unwrap();
+        let raw = crate::tests::raw();
+        let mut unique = b"X-Rule-Fixture: new-mail\r\n".to_vec();
+        unique.extend(raw);
+        assert!(store.ingest(&a, "INBOX", "7:15", &unique, false).unwrap());
+        assert_eq!(store.rule_executions().unwrap().len(), 1);
+        let dest = tempfile::tempdir().unwrap();
+        let path = store.backup(dest.path()).unwrap();
+        let snap = rusqlite::Connection::open(std::path::Path::new(&path).join("snapshot.sqlite3"))
+            .unwrap();
+        assert_eq!(
+            snap.query_row("SELECT COUNT(*) FROM rule_executions", [], |r| r
+                .get::<_, u32>(0))
+                .unwrap(),
+            0
+        );
+        assert_eq!(store.rule_executions().unwrap().len(), 1);
+    }
+}
+
+#[cfg(test)]
+mod multi_action_tests {
+    use super::*;
+
+    /// 本地动作可以用分隔符写多个，一次命中全部生效。
+    fn local_rule(action: &str, destination: &str) -> Rule {
+        Rule {
+            id: "multi".into(),
+            name: "本地组合".into(),
+            account_id: String::new(),
+            enabled: true,
+            mode: "all".into(),
+            conditions: vec![Condition {
+                field: "subject".into(),
+                operator: "contains".into(),
+                value: "invoice".into(),
+            }],
+            actions: Vec::new(),
+            action: action.into(),
+            destination: destination.into(),
+            source_folder: String::new(),
+            stop: true,
+        }
+    }
+
+    fn fixture() -> (tempfile::TempDir, Store, crate::models::Account, String) {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::new(temp.path().into()).unwrap();
+        let a = crate::tests::account();
+        store.save_account(&a).unwrap();
+        store
+            .ingest(&a, "INBOX", "7:12", &crate::tests::raw(), false)
+            .unwrap();
+        let id = store.snapshot(&crate::tests::query()).unwrap().messages[0]
+            .id
+            .clone();
+        (temp, store, a, id)
+    }
+
+    #[test]
+    fn splits_actions_written_with_separators() {
+        for action in [
+            "folder+read",
+            "folder,read",
+            "folder，read",
+            "folder;read",
+            "folder；read",
+        ] {
+            assert_eq!(
+                local_rule(action, "").effective_actions(),
+                vec!["folder".to_string(), "read".to_string()],
+                "action = {action}"
+            );
+        }
+        assert_eq!(local_rule("folder", "").effective_actions(), vec!["folder"]);
+        assert_eq!(local_rule("", "").effective_actions(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn dedupes_conflicting_flags_and_repeats() {
+        // read 与 unread 互相矛盾：保留最后一个
+        assert_eq!(
+            local_rule("unread+read", "").effective_actions_deduped(),
+            vec!["read".to_string()]
+        );
+        assert_eq!(
+            local_rule("read+unread", "").effective_actions_deduped(),
+            vec!["unread".to_string()]
+        );
+        // 完全重复的动作只留一个
+        assert_eq!(
+            local_rule("star+star", "").effective_actions_deduped(),
+            vec!["star".to_string()]
+        );
+        // 不冲突的组合保持顺序
+        assert_eq!(
+            local_rule("folder+read+star", "").effective_actions_deduped(),
+            vec!["folder", "read", "star"]
+        );
+    }
+
+    #[test]
+    fn local_actions_apply_in_order() {
+        let (_temp, store, _a, id) = fixture();
+        store
+            .save_rules(&[local_rule("folder+read+star", "项目")])
+            .unwrap();
+        store.run_rules().unwrap();
+        let mail = store.mail(&id).unwrap();
+        assert_eq!(mail.local_folder, "项目");
+        assert!(mail.is_read);
+        assert!(mail.starred);
+        // 每个有序动作各记一条执行日志。
+        assert_eq!(
+            store.snapshot(&crate::tests::query()).unwrap().logs.len(),
+            3
+        );
+    }
+
+    #[test]
+    fn single_action_rules_behave_exactly_as_before() {
+        let (_temp, store, _a, id) = fixture();
+        store.save_rules(&[local_rule("folder", "项目")]).unwrap();
+        store.run_rules().unwrap();
+        assert_eq!(store.mail(&id).unwrap().local_folder, "项目");
+        assert!(!store.mail(&id).unwrap().is_read);
+    }
+
+    #[test]
+    fn trash_combined_with_read_marks_both() {
+        let (_temp, store, _a, id) = fixture();
+        store.save_rules(&[local_rule("read+trash", "")]).unwrap();
+        store.run_rules().unwrap();
+        let mail = store.mail(&id).unwrap();
+        assert!(mail.is_read);
+        assert!(mail.trashed);
+    }
+
+    #[test]
+    fn ordered_actions_may_combine_server_and_local_steps() {
+        let remote = |action: &str| {
+            let mut r = local_rule(action, "Archive");
+            r.account_id = "test-account".into();
+            r.source_folder = "INBOX".into();
+            r
+        };
+        assert!(crate::rules::validate(&remote("serverCopy")).is_ok());
+        assert!(crate::rules::validate(&remote("serverCopy+read")).is_ok());
+        assert!(crate::rules::validate(&remote("serverMove+star")).is_ok());
+        assert!(crate::rules::validate(&remote("serverMove+read+star")).is_ok());
+        assert!(crate::rules::validate(&remote("serverCopy+folder")).is_ok());
+        assert!(crate::rules::validate(&remote("serverMove+trash")).is_ok());
+        assert!(crate::rules::validate(&remote("serverCopy+serverMove")).is_ok());
+    }
+
+    #[test]
+    fn server_move_combined_with_read_marks_locally_and_queues_once() {
+        let (_temp, store, a, id) = crate::directory_operations::tests::fixture();
+        let mut r = local_rule("serverMove+read", "Archive");
+        r.id = "combo".into();
+        r.account_id = a.id.clone();
+        r.source_folder = "INBOX".into();
+        store.save_rules(&[r]).unwrap();
+        store.run_rules().unwrap();
+        // 本机标记立即生效
+        assert!(store.mail(&id).unwrap().is_read);
+        // 服务器移动只入队一次
+        assert_eq!(store.directory_operations().unwrap().len(), 1);
+        let hit = store.rule_executions().unwrap().remove(0);
+        assert_eq!(hit.status, "queued");
+        assert!(hit.operation_id.is_some());
+        let op = store
+            .directory_operation(hit.operation_id.as_ref().unwrap())
+            .unwrap();
+        assert_eq!(
+            op.flags,
+            vec![FlagChange {
+                action: "read".into(),
+                value: true,
+            }]
+        );
+    }
+
+    #[test]
+    fn unknown_actions_are_rejected() {
+        assert!(crate::rules::validate(&local_rule("folder", "项目")).is_ok());
+        assert!(crate::rules::validate(&local_rule("folder+explode", "项目")).is_err());
+        assert!(crate::rules::validate(&local_rule("explode", "项目")).is_err());
+        // folder 仍要求目标文件夹
+        assert!(crate::rules::validate(&local_rule("folder+read", "")).is_err());
+        assert!(crate::rules::validate(&local_rule("read+star", "")).is_ok());
+    }
+
+    #[test]
+    fn merged_move_on_a_pop3_account_stays_local() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::new(temp.path().into()).unwrap();
+        let mut a = crate::tests::account();
+        a.protocol = "pop3".into();
+        store.save_account(&a).unwrap();
+        store
+            .ingest(&a, "INBOX", "7:12", &crate::tests::raw(), false)
+            .unwrap();
+        let id = store.snapshot(&crate::tests::query()).unwrap().messages[0]
+            .id
+            .clone();
+        let mut rule = local_rule("folder", "项目");
+        rule.account_id = a.id.clone();
+        store.save_rules(&[rule]).unwrap();
+        store.run_rules().unwrap();
+        // POP3 没有服务器目录：合并动作退化为纯本地归类
+        assert_eq!(store.mail(&id).unwrap().local_folder, "项目");
+        assert!(store.directory_operations().unwrap().is_empty());
+        assert!(store.rule_executions().unwrap().is_empty());
+    }
+}

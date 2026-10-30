@@ -1,0 +1,143 @@
+// @vitest-environment jsdom
+import { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { AccountDialog } from "./account-dialog";
+import { enterDemo, leaveDemo, snapshot } from "@/lib/api";
+import { makeAccount } from "@/lib/providers";
+import type { Account } from "@/lib/types";
+
+let root: Root, host: HTMLDivElement, account: Account;
+const query = {
+  view: "all",
+  accountId: "",
+  folder: "",
+  search: "",
+  limit: 10,
+  unreadOnly: false,
+};
+beforeEach(async () => {
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+  vi.stubGlobal(
+    "matchMedia",
+    vi.fn(() => ({
+      matches: false,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    })),
+  );
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+  localStorage.clear();
+  enterDemo();
+  account = (await snapshot(query)).accounts[0];
+  host = document.createElement("div");
+  document.body.append(host);
+  root = createRoot(host);
+});
+afterEach(async () => {
+  await act(async () => root.unmount());
+  host.remove();
+  leaveDemo();
+  vi.unstubAllGlobals();
+});
+
+describe("per-account local retention", () => {
+  it("defaults new accounts to full local retention", () => {
+    expect(makeAccount("qq").saveLocally).toBe(true);
+  });
+  it("keeps server and advanced settings collapsed when editing", async () => {
+    await act(async () =>
+      root.render(
+        <AccountDialog
+          open
+          editing={account}
+          onOpenChange={() => {}}
+          onDone={() => {}}
+        />,
+      ),
+    );
+    const toggle = [...document.querySelectorAll("button")].find((b) =>
+      b.textContent?.includes("服务器与高级配置"),
+    )!;
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(document.querySelector(".advanced-fields")).toBeNull();
+    await act(async () => toggle.click());
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(document.querySelector(".advanced-fields")).not.toBeNull();
+  });
+  it("keeps advanced settings collapsed for a new account and auto-fills servers", async () => {
+    await act(async () =>
+      root.render(
+        <AccountDialog open onOpenChange={() => {}} onDone={() => {}} />,
+      ),
+    );
+    const custom = [...document.querySelectorAll("button")].find((b) =>
+      b.textContent?.includes("自定义邮箱"),
+    )!;
+    await act(async () => custom.click());
+    expect(document.querySelector(".advanced-fields")).toBeNull();
+    const email = document.querySelector<HTMLInputElement>("#email")!;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value",
+      )!.set!;
+      setter.call(email, "me@si-tech.com.cn");
+      email.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(document.querySelector(".advanced-fields")).toBeNull();
+    const toggle = [...document.querySelectorAll("button")].find((b) =>
+      b.textContent?.includes("服务器与高级配置"),
+    )!;
+    await act(async () => toggle.click());
+    const values = [
+      ...document.querySelectorAll<HTMLInputElement>(".advanced-fields input"),
+    ].map((input) => input.value);
+    expect(values).toContain("imap.si-tech.com.cn");
+    expect(values).toContain("smtp.si-tech.com.cn");
+  });
+  it("persists online reading on edit and restores the switch when reopened", async () => {
+    const done = vi.fn();
+    const render = async (editing: Account) => {
+      await act(async () =>
+        root.render(
+          <AccountDialog
+            open
+            editing={editing}
+            onOpenChange={() => {}}
+            onDone={done}
+          />,
+        ),
+      );
+    };
+    await render(account);
+    const toggle = () =>
+      document.querySelector("#save-locally") as HTMLButtonElement;
+    expect(toggle().getAttribute("aria-checked")).toBe("true");
+    expect(document.body.textContent).toContain("保存设置");
+    await act(async () => toggle().click());
+    expect(document.body.textContent).toContain("已有存档保留");
+    await act(async () =>
+      document
+        .querySelector("form")!
+        .dispatchEvent(
+          new Event("submit", { bubbles: true, cancelable: true }),
+        ),
+    );
+    expect(done).toHaveBeenCalledOnce();
+    const updated = (await snapshot(query)).accounts.find(
+      (a) => a.id === account.id,
+    )!;
+    expect(updated.saveLocally).toBe(false);
+    expect(updated.email).toBe(account.email);
+    await render(updated);
+    expect(toggle().getAttribute("aria-checked")).toBe("false");
+  });
+});

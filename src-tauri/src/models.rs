@@ -1,0 +1,627 @@
+fn default_true() -> bool {
+    true
+}
+use serde::{Deserialize, Serialize};
+pub type Result<T> = std::result::Result<T, String>;
+pub fn err(e: impl std::fmt::Display) -> String {
+    e.to_string()
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Account {
+    pub id: String,
+    pub name: String,
+    pub email: String,
+    pub provider: String,
+    pub protocol: String,
+    pub incoming_host: String,
+    pub incoming_port: u16,
+    pub incoming_tls: String,
+    pub smtp_host: String,
+    pub smtp_port: u16,
+    pub smtp_tls: String,
+    pub username: String,
+    pub smtp_username: String,
+    pub auth: String,
+    #[serde(default)]
+    pub oauth_client_id: String,
+    pub enabled: bool,
+    #[serde(default = "default_true")]
+    pub save_locally: bool,
+    #[serde(default)]
+    pub server_retention_days: Option<u32>,
+    /// 计入「全部/未读」聚合视图的服务器文件夹；None = 未配置 = 只算 INBOX
+    #[serde(default)]
+    pub inbox_folders: Option<Vec<String>>,
+    #[serde(default)]
+    pub last_sync: Option<String>,
+    #[serde(default)]
+    pub error: Option<String>,
+    /// 冻结的只读分段：不再收信，也不提交会改变服务器状态的操作。
+    #[serde(default)]
+    pub read_only: bool,
+    /// 冻结时间（RFC3339），仅用于展示和审计。
+    #[serde(default)]
+    pub frozen_at: Option<String>,
+    /// 收信起点（RFC3339）；早于该时间的邮件不写入本地。
+    #[serde(default)]
+    pub sync_since: Option<String>,
+}
+impl Account {
+    pub fn same_connection(&self, other: &Self) -> bool {
+        self.id == other.id
+            && self.email == other.email
+            && self.provider == other.provider
+            && self.protocol == other.protocol
+            && self.incoming_host == other.incoming_host
+            && self.incoming_port == other.incoming_port
+            && self.incoming_tls == other.incoming_tls
+            && self.smtp_host == other.smtp_host
+            && self.smtp_port == other.smtp_port
+            && self.smtp_tls == other.smtp_tls
+            && self.username == other.username
+            && self.smtp_username == other.smtp_username
+            && self.auth == other.auth
+            && self.oauth_client_id == other.oauth_client_id
+    }
+    pub fn validate(&self) -> Result<()> {
+        if self
+            .server_retention_days
+            .is_some_and(|days| days == 0 || days > 3650)
+        {
+            return Err("服务器保留期请填写 1–3650 天，未知时留空".into());
+        }
+        if self.email.parse::<lettre::Address>().is_err() {
+            return Err("请输入有效的邮箱地址".into());
+        }
+        if !["imap", "pop3"].contains(&self.protocol.as_str()) {
+            return Err("收件协议无效".into());
+        }
+        if !["password", "oauth"].contains(&self.auth.as_str()) {
+            return Err("认证方式无效".into());
+        }
+        for (host, port, tls) in [
+            (&self.incoming_host, self.incoming_port, &self.incoming_tls),
+            (&self.smtp_host, self.smtp_port, &self.smtp_tls),
+        ] {
+            if host.is_empty() || host.contains(['\r', '\n', '/', ' ', '\t']) || port == 0 {
+                return Err("请检查服务器地址与端口".into());
+            }
+            if !["tls", "starttls"].contains(&tls.as_str()) {
+                return Err("请选择 TLS 或 STARTTLS 加密".into());
+            }
+        }
+        if self.username.is_empty()
+            || self.username.contains(['\r', '\n'])
+            || self.smtp_username.contains(['\r', '\n'])
+        {
+            return Err("请检查登录用户名".into());
+        }
+        Ok(())
+    }
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Mail {
+    #[serde(default)]
+    pub parse_warnings: Vec<String>,
+    pub id: String,
+    pub account_id: String,
+    pub account_email: String,
+    pub sender: String,
+    /// RFC 5322 `Sender` when it names a different mailbox than `From`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub sender_on_behalf_of: String,
+    pub recipients: String,
+    #[serde(default)]
+    pub cc: String,
+    /// 归一化的重要性：high / normal / low（读 X-Priority / Priority / Importance）。
+    #[serde(default)]
+    pub priority: String,
+    pub subject: String,
+    pub preview: String,
+    pub body: String,
+    pub date: String,
+    pub is_read: bool,
+    pub starred: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_read_override: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_star_override: Option<bool>,
+    pub local_folder: String,
+    pub trashed: bool,
+    pub has_attachments: bool,
+    /// 附件文件名（只用于搜索；旧记录在启动时补齐）。
+    #[serde(default)]
+    pub attachment_names: Vec<String>,
+    /// 是否已从原始邮件确认过附件元数据；旧记录为 false 时附件条件等待完整保存。
+    #[serde(default)]
+    pub attachment_metadata_known: bool,
+    /// 旧记录可能没有归档原始头信息；为 false 时抄送/优先级条件等待完整邮件，
+    /// 不把缺失的头误判成空值。
+    #[serde(default)]
+    pub header_metadata_known: bool,
+    pub hash: String,
+    /// 本地存档相对路径（archive/<账号>/<文件夹>/<hash>.eml）；升级前数据为空，按旧平面布局寻址
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rel_path: Option<String>,
+    pub size: u64,
+    pub saved_at: String,
+    #[serde(default = "default_true")]
+    pub saved_locally: bool,
+    #[serde(default)]
+    pub server_date: String,
+    pub source_folder: String,
+    #[serde(default)]
+    pub message_id: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub server_message_id: String,
+    #[serde(default)]
+    pub in_reply_to: Vec<String>,
+    #[serde(default)]
+    pub references: Vec<String>,
+    #[serde(default)]
+    pub conversation_id: String,
+    #[serde(default)]
+    pub conversation_count: usize,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Condition {
+    pub field: String,
+    pub operator: String,
+    pub value: String,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Rule {
+    pub id: String,
+    pub name: String,
+    pub account_id: String,
+    pub enabled: bool,
+    pub mode: String,
+    pub conditions: Vec<Condition>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub actions: Vec<RuleAction>,
+    pub action: String,
+    pub destination: String,
+    #[serde(default)]
+    pub source_folder: String,
+    pub stop: bool,
+}
+/// A server flag change implied by rule actions. `action` is `read` or `star`;
+/// `unread` is represented as `read=false`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FlagChange {
+    pub action: String,
+    pub value: bool,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuleAction {
+    pub action: String,
+    #[serde(default)]
+    pub destination: String,
+    #[serde(default)]
+    pub source_folder: String,
+}
+impl Rule {
+    /// 本地动作可以叠加：`action` 里用 `+` `,` `，` `;` `；` 分隔写多个，
+    /// 例如 `folder+read`。单个动作（旧数据）天然兼容。
+    /// 服务器 COPY/MOVE 走独立任务队列，见 `rules::remote`。
+    pub fn effective_actions(&self) -> Vec<String> {
+        if !self.actions.is_empty() {
+            return self
+                .actions
+                .iter()
+                .map(|a| a.action.clone())
+                .filter(|a| !a.is_empty())
+                .collect();
+        }
+        self.action
+            .split(['+', ',', '，', ';', '；'])
+            .map(|a| a.trim().to_string())
+            .filter(|a| !a.is_empty())
+            .collect()
+    }
+    /// read/unread 互相矛盾，重复动作也没有意义——同一封邮件只保留
+    /// 各自最后一次，否则会出现自相矛盾的执行结果。
+    pub fn effective_actions_deduped(&self) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        for action in self.effective_actions() {
+            let flag = matches!(action.as_str(), "read" | "unread")
+                .then(|| {
+                    out.iter()
+                        .position(|a| matches!(a.as_str(), "read" | "unread"))
+                })
+                .flatten();
+            match flag {
+                Some(index) => out[index] = action,
+                None if out.contains(&action) => {}
+                None => out.push(action),
+            }
+        }
+        out
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Query {
+    pub view: String,
+    pub account_id: String,
+    pub search: String,
+    pub folder: String,
+    pub limit: u32,
+    #[serde(default)]
+    pub remote_folder: String,
+    #[serde(default)]
+    pub unread_only: bool,
+    #[serde(default)]
+    pub starred_only: bool,
+    #[serde(default)]
+    pub attachments_only: bool,
+    #[serde(default)]
+    pub search_field: String,
+    #[serde(default)]
+    pub list_mode: ListMode,
+}
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ListMode {
+    #[default]
+    Conversations,
+    Messages,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Stats {
+    pub total: u64,
+    pub unread: u64,
+    pub saved: u64,
+    pub bytes: u64,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Snapshot {
+    pub accounts: Vec<Account>,
+    pub messages: Vec<Mail>,
+    pub rules: Vec<Rule>,
+    pub folders: Vec<String>,
+    pub stats: Stats,
+    pub logs: Vec<String>,
+    pub data_dir: String,
+    pub matched: u64,
+    pub remote_folders: Vec<RemoteFolder>,
+    /// 各账号/服务器文件夹的未读数（账号树徽标用）
+    pub folder_unread: Vec<FolderUnread>,
+    /// 各账号/服务器文件夹的总数（全部/未读标签数量用）
+    pub folder_totals: Vec<FolderUnread>,
+}
+/// 账号内某个服务器文件夹的未读邮件数
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FolderUnread {
+    pub account_id: String,
+    pub folder: String,
+    pub count: u64,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AttachmentInfo {
+    #[serde(default)]
+    pub error: String,
+    pub index: usize,
+    pub name: String,
+    pub size: usize,
+    pub mime: String,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Detail {
+    #[serde(default)]
+    pub original_hash: String,
+    pub mail: Mail,
+    pub html: String,
+    pub attachments: Vec<AttachmentInfo>,
+    pub reply_to: Vec<Address>,
+    pub to: Vec<Address>,
+    pub cc: Vec<Address>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QuotedMail {
+    pub kind: String,
+    pub included: bool,
+    pub sender: String,
+    pub recipients: String,
+    pub date: String,
+    pub subject: String,
+    pub body: String,
+    pub html: String,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Compose {
+    #[serde(default)]
+    pub forward_source: Option<ForwardSource>,
+    #[serde(default)]
+    pub forward_files: Vec<ForwardFile>,
+    #[serde(default)]
+    pub signature: Option<crate::signatures::ComposeSignature>,
+    pub id: String,
+    pub account_id: String,
+    pub to: String,
+    pub cc: String,
+    pub bcc: String,
+    pub subject: String,
+    pub body: String,
+    #[serde(default)]
+    pub html: String,
+    #[serde(default)]
+    pub format: String,
+    #[serde(default)]
+    pub source: String,
+    pub attachments: Vec<String>,
+    #[serde(default)]
+    pub in_reply_to: String,
+    #[serde(default)]
+    pub reply_anchor_id: String,
+    #[serde(default)]
+    pub references: Vec<String>,
+    #[serde(default)]
+    pub quote: Option<QuotedMail>,
+    #[serde(default)]
+    pub delivery_body: Option<String>,
+    #[serde(default)]
+    pub delivery_html: Option<String>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ForwardSource {
+    pub id: String,
+    pub hash: String,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ForwardFile {
+    pub id: String,
+    pub name: String,
+    pub mime: String,
+    pub size: usize,
+    pub included: bool,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Address {
+    pub name: String,
+    pub email: String,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Contact {
+    pub id: String,
+    pub name: String,
+    pub email: String,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContactCandidate {
+    pub name: String,
+    pub email: String,
+    pub count: u32,
+    pub last_seen: String,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContactImportResult {
+    pub imported: usize,
+    pub skipped: usize,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OutboxRecord {
+    pub id: String,
+    pub status: String,
+    pub draft: Compose,
+    pub error: String,
+    pub updated_at: String,
+    pub archived: bool,
+    pub scheduled_at: String,
+    pub server_copy: Option<crate::sent_uploads::SentUpload>,
+    #[serde(default)]
+    pub server_copy_available: bool,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Preferences {
+    #[serde(default = "default_true")]
+    pub new_mail_notifications: bool,
+    #[serde(default = "default_true")]
+    pub send_result_notifications: bool,
+    /// 每次启动应用后自动校验一次本地存档。
+    #[serde(default = "default_true")]
+    pub startup_archive_check: bool,
+    pub sync_interval_minutes: u32,
+    #[serde(default = "default_sidebar_scale")]
+    pub sidebar_scale: f64,
+    /// 外置存档根目录（冷库）；为空表示不分层
+    #[serde(default)]
+    pub external_archive_dir: Option<String>,
+    /// 新导入邮件写入内置或外置存档根：internal / external
+    #[serde(default = "default_import_location")]
+    pub import_location: String,
+    /// 本地保留天数；0 = 永久（不分层）
+    #[serde(default = "default_retention_days")]
+    pub archive_retention_days: u32,
+    /// 分层时是否随盘生成 index.html 索引
+    #[serde(default = "default_true")]
+    pub archive_index_enabled: bool,
+    /// 是否在 Dock 显示图标；false 时仅保留菜单栏图标
+    #[serde(default = "default_true")]
+    pub dock_visible: bool,
+    /// 写信「发送邮件」的撤销倒计时秒数；0 = 立即发送，无倒计时
+    #[serde(default = "default_send_countdown_seconds")]
+    pub send_countdown_seconds: u32,
+    /// 全局恢复窗口快捷键；空字符串表示不注册
+    #[serde(default = "default_restore_shortcut")]
+    pub restore_shortcut: String,
+    /// 上次关窗时主窗口是否铺满屏幕（内部状态，不在设置页展示）。macOS 拖到顶部
+    /// 的「填充」不置 zoom 位，插件记的 maximized 一直是 false，所以铺满的意图
+    /// 得自己记；下次启动按当前屏幕可用区域重新铺满。
+    #[serde(default)]
+    pub window_fill: bool,
+    /// 本地存档布局版本：1 = archive/<邮箱>/…，2 = archive/<账号 id>/…，
+    /// 3 = archive/<邮箱>__<账号 id 前 8 位>/…
+    #[serde(default = "default_archive_layout_version")]
+    pub archive_layout_version: u32,
+}
+fn default_import_location() -> String {
+    "internal".into()
+}
+fn default_archive_layout_version() -> u32 {
+    1
+}
+fn default_send_countdown_seconds() -> u32 {
+    5
+}
+pub fn default_restore_shortcut() -> String {
+    "CommandOrControl+Alt+Backquote".into()
+}
+fn default_retention_days() -> u32 {
+    30
+}
+fn default_sidebar_scale() -> f64 {
+    1.0
+}
+/// 分层归档结果
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TierReport {
+    pub moved: u64,
+    pub moved_bytes: u64,
+    pub pending: u64,
+    pub pending_bytes: u64,
+    pub index_written: bool,
+    pub skipped: bool,
+    pub errors: Vec<String>,
+}
+/// 分层归档日志：外置盘存档总数 + 最近归档记录
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TierLog {
+    /// 外置盘上实际存档数；外置目录未配置或未连接时为 None
+    pub total: Option<u64>,
+    /// 外置盘上实际存档字节数；外置目录未配置或未连接时为 None
+    pub total_bytes: Option<u64>,
+    pub entries: Vec<TierLogEntry>,
+}
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TierLogEntry {
+    pub subject: String,
+    pub sender: String,
+    pub date: String,
+    pub archived_at: String,
+}
+/// 本地存档树的账号分组（按服务器文件夹聚合已存档邮件）
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalArchiveFolder {
+    pub name: String,
+    #[serde(default)]
+    pub display_name: String,
+    #[serde(default)]
+    pub local_only: bool,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalArchiveGroup {
+    pub account_id: String,
+    #[serde(default)]
+    pub account_email: String,
+    #[serde(default)]
+    pub name: String,
+    pub folders: Vec<LocalArchiveFolder>,
+}
+impl Default for Preferences {
+    fn default() -> Self {
+        Self {
+            sync_interval_minutes: 5,
+            new_mail_notifications: true,
+            send_result_notifications: true,
+            startup_archive_check: true,
+            sidebar_scale: 1.0,
+            external_archive_dir: None,
+            import_location: default_import_location(),
+            archive_retention_days: 30,
+            archive_index_enabled: true,
+            dock_visible: true,
+            send_countdown_seconds: 5,
+            restore_shortcut: default_restore_shortcut(),
+            window_fill: false,
+            archive_layout_version: 1,
+        }
+    }
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArchiveProblem {
+    pub mail_id: String,
+    pub subject: String,
+    pub error: String,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArchiveHealth {
+    pub checked: usize,
+    pub healthy: usize,
+    /// 外置存档根未连接时，仅校验内置副本；这些外置副本暂未检查。
+    #[serde(default)]
+    pub external_archive_unavailable: bool,
+    #[serde(default)]
+    pub unavailable: usize,
+    pub problems: Vec<ArchiveProblem>,
+    pub checked_at: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteFolder {
+    pub account_id: String,
+    pub name: String,
+    pub display_name: String,
+    pub delimiter: Option<String>,
+    pub selectable: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sync_error: Option<String>,
+    #[serde(default)]
+    pub roles: Vec<FolderRole>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detected_roles: Option<Vec<FolderRole>>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FolderMapping {
+    pub role: FolderRole,
+    // None explicitly disables a role; an absent mapping uses discovery.
+    pub folder: Option<String>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FolderSettings {
+    pub folders: Vec<RemoteFolder>,
+    pub mappings: Vec<FolderMapping>,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum FolderRole {
+    Inbox,
+    Sent,
+    Drafts,
+    Trash,
+    Junk,
+    Archive,
+    All,
+    Flagged,
+}
