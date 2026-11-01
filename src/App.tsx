@@ -1176,7 +1176,7 @@ export default function App() {
               if (!d.mail.isRead)
                 void updateMail(d.mail.id, "read", "true")
                   .then(() => refresh())
-                  .catch((error) => toast.error(String(error)));
+                  .catch(() => {});
             }
           }
         })
@@ -1815,6 +1815,9 @@ export default function App() {
     }
   }
   async function updateMail(id: string, action: string, value: string) {
+    const previous =
+      dataRef.current.messages.find((m) => m.id === id) ??
+      (detail?.mail.id === id ? detail.mail : undefined);
     await call("update_mail", { id, action, value });
     const change: Partial<Mail> =
       action === "read"
@@ -1838,6 +1841,29 @@ export default function App() {
       ...dataRef.current,
       messages: patch(dataRef.current.messages),
     };
+    // 未读徽标也先本地调整；后台计数刷新会覆盖为准确值。
+    if (action === "read" && previous && previous.sourceFolder) {
+      const wasUnread = !previous.isRead;
+      const nowUnread = value !== "true";
+      if (wasUnread !== nowUnread) {
+        const delta = nowUnread ? 1 : -1;
+        const patchUnread = (list: NonNullable<typeof data.folderUnread>) =>
+          list.map((item) =>
+            item.accountId === previous.accountId &&
+            item.folder === previous.sourceFolder
+              ? { ...item, count: Math.max(0, item.count + delta) }
+              : item,
+          );
+        setData((current) => ({
+          ...current,
+          folderUnread: patchUnread(current.folderUnread ?? []),
+        }));
+        dataRef.current = {
+          ...dataRef.current,
+          folderUnread: patchUnread(dataRef.current.folderUnread ?? []),
+        };
+      }
+    }
     setDetail((current) =>
       current?.mail.id === id
         ? { ...current, mail: { ...current.mail, ...change } }
@@ -2126,7 +2152,7 @@ export default function App() {
         : [m];
       if (queryRef.current.listMode !== mode) return;
       for (const mail of conversation.filter((mail) => !mail.isRead))
-        await updateMail(mail.id, "read", "true");
+        await updateMail(mail.id, "read", "true").catch(() => {});
       void refresh();
     } catch (e) {
       toast.error(String(e));

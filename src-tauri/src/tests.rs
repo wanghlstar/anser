@@ -3294,6 +3294,36 @@ fn moving_to_deleted_routes_online_mail_to_server_trash_and_keeps_local_fallback
 }
 
 #[test]
+fn pending_move_blocks_read_only_while_an_active_server_source_remains() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = Store::new(temp.path().to_path_buf()).unwrap();
+    let a = account();
+    store.save_account(&a).unwrap();
+    store.ingest(&a, "INBOX", "1", &raw(), false).unwrap();
+    let id = store.snapshot(&query()).unwrap().messages[0].id.clone();
+    store
+        .db()
+        .unwrap()
+        .execute(
+            "INSERT INTO directory_operations
+             (id,account_id,folder,remote_id,target,kind,data,status,error,updated_at)
+             VALUES('move-1',?1,'INBOX','1','Keep','move',?2,'queued','',0)",
+            rusqlite::params![a.id, format!("{{\"mailId\":\"{id}\"}}")],
+        )
+        .unwrap();
+    let error = store.change_mail(&id, "read", "true").unwrap_err();
+    assert!(error.contains("服务器移动尚未确认"));
+    // 本地存档/离线邮件没有活动来源时，历史移动记录不应阻止本地标记。
+    store
+        .db()
+        .unwrap()
+        .execute("UPDATE sources SET active=0 WHERE mail_id=?1", [&id])
+        .unwrap();
+    store.change_mail(&id, "read", "true").unwrap();
+    assert!(store.mail(&id).unwrap().is_read);
+}
+
+#[test]
 fn deleted_view_includes_server_trash_sources_without_a_local_trash_flag() {
     let dir = tempfile::tempdir().unwrap();
     let s = Store::new(dir.path().into()).unwrap();

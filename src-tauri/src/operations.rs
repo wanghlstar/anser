@@ -127,7 +127,9 @@ pub fn enqueue(tx: &Transaction<'_>, mail: &Mail, action: &str, value: bool) -> 
     }
     // Preserve the intent transaction rather than enqueueing a UID that may
     // disappear during MOVE. The local flag update rolls back with this error.
-    let moving:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM directory_operations WHERE account_id=?1 AND json_extract(data,'$.mailId')=?2 AND kind='move' AND status IN ('queued','preparing','submitted','confirmed','verifying','uncertain','cleanup_pending','cleanup_running','cleanup_submitted','cleanup_uncertain','cleanup_blocked'))",params![a.id,mail.id],|r|r.get(0)).map_err(err)?;
+    // 只有仍有活动服务器来源的邮件才需要等 MOVE 完成；本地存档/离线邮件
+    // 即使历史上有移动记录，也应该允许本地已读/星标。
+    let moving:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM directory_operations d WHERE d.account_id=?1 AND json_extract(d.data,'$.mailId')=?2 AND d.kind='move' AND d.status IN ('queued','preparing','submitted','confirmed','verifying','uncertain','cleanup_pending','cleanup_running','cleanup_submitted','cleanup_uncertain','cleanup_blocked') AND EXISTS(SELECT 1 FROM trusted_sources s WHERE s.account_id=?1 AND s.mail_id=?2 AND s.active=1))",params![a.id,mail.id],|r|r.get(0)).map_err(err)?;
     if moving {
         return Err("该邮件的服务器移动尚未确认，请在文件夹操作完成后修改已读或星标".into());
     }
