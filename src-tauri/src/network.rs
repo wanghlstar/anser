@@ -6,6 +6,7 @@ use crate::{
     store::Store,
 };
 use base64::Engine;
+use rusqlite::OptionalExtension;
 use lettre::{
     message::{
         header::{ContentTransferEncoding, ContentType},
@@ -1636,6 +1637,42 @@ fn build_message_parts(
     }
     builder.multipart(parts).map_err(err)
 }
+/// 把 SMTP 服务器返回的常见拒绝原因翻译成更明确的中文，同时保留原文。
+pub(crate) fn friendly_smtp_error(error: &str) -> String {
+    let lower = error.to_lowercase();
+    let recipient = [
+        "user unknown",
+        "unknown user",
+        "no such user",
+        "recipient address rejected",
+        "mailbox unavailable",
+        "mailbox not found",
+        "invalid recipient",
+        "does not exist",
+        "5.1.1",
+        "550 5.1.1",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle));
+    let sender = [
+        "sender address rejected",
+        "sender verify",
+        "from address",
+        "5.7.1",
+        "not authorized",
+        "authentication",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle));
+    if recipient {
+        format!("收件人邮箱不存在或被服务器拒绝（{error}）")
+    } else if sender {
+        format!("发件邮箱不可用或服务器拒绝发件（{error}）")
+    } else {
+        error.to_string()
+    }
+}
+
 pub fn send(store: &Store, c: &Compose) -> Result<String> {
     send_with(
         store,
@@ -1662,15 +1699,18 @@ pub(crate) fn send_with<T>(
     deliver: impl FnOnce(T, &Message) -> std::result::Result<(), (&'static str, String)>,
 ) -> Result<String> {
     let db = store.db()?;
-    let exists: bool = db
-        .query_row(
-            "SELECT EXISTS(SELECT 1 FROM outbox WHERE id=?1)",
-            [&c.id],
-            |r| r.get(0),
-        )
+    let existing: Option<String> = db
+        .query_row("SELECT status FROM outbox WHERE id=?1", [&c.id], |r| {
+            r.get(0)
+        })
+        .optional()
         .map_err(err)?;
-    if exists {
-        return Err("这封邮件已有发送记录，请在发送记录中检查状态或准备重发".into());
+    if let Some(status) = existing {
+        // failed 是服务器明确拒绝/临时失败，允许直接修改后重发；
+        // uncertain 可能已在服务器提交，必须走发送记录里的核对流程。
+        if status != "failed" {
+            return Err("这封邮件已有发送记录，请在发送记录中检查状态或准备重发".into());
+        }
     }
     let a = store.account(&c.account_id)?;
     if a.read_only {
@@ -1684,7 +1724,8 @@ pub(crate) fn send_with<T>(
     let raw = message.formatted();
     store.save_draft(c)?;
     db.execute(
-        "INSERT INTO outbox(id,status,data,raw,updated_at) VALUES(?1,'sending',?2,?3,?4)",
+        "INSERT INTO outbox(id,status,data,raw,updated_at) VALUES(?1,'sending',?2,?3,?4)
+         ON CONFLICT(id) DO UPDATE SET status='sending',data=excluded.data,raw=excluded.raw,error='',updated_at=excluded.updated_at,scheduled_at=''",
         rusqlite::params![
             c.id,
             serde_json::to_string(c).map_err(err)?,
@@ -1694,13 +1735,21 @@ pub(crate) fn send_with<T>(
     )
     .map_err(err)?;
     if let Err((status, error)) = deliver(transport, &message) {
+        let error = friendly_smtp_error(&error);
+        if status == "failed" {
+            // 服务器明确拒绝/临时失败：保留草稿即可，不再留一条无用的发送记录，
+            // 否则同一封草稿会被“已有发送记录”挡住，必须手动删除后才能重发。
+            db.execute("DELETE FROM outbox WHERE id=?1", [&c.id])
+                .map_err(err)?;
+            return Err(format!("发送失败：{error}。草稿已保留。"));
+        }
         db.execute(
             "UPDATE outbox SET status=?2,error=?3,updated_at=?4 WHERE id=?1",
             rusqlite::params![c.id, status, error, chrono::Utc::now().to_rfc3339()],
         )
         .map_err(err)?;
         return Err(format!(
-            "发送未完成：{error}。草稿和发送记录已保留，请检查发送记录。"
+            "发送结果未确认：{error}。草稿和发送记录已保留，请检查发送记录。"
         ));
     }
     store.confirm_smtp(&a, &c.id)?;
@@ -1745,6 +1794,7 @@ pub(crate) fn deliver_scheduled(
     let envelope = lettre::address::Envelope::new(Some(a.email.parse().map_err(err)?), recipients)
         .map_err(err)?;
     if let Err((status, error)) = deliver(&envelope, &scheduled.raw) {
+        let error = friendly_smtp_error(&error);
         store.finish_send(&c.id, status, &error)?;
         return Err(error);
     }
@@ -1773,6 +1823,7 @@ pub fn send_scheduled(
     let transport = match transport {
         Ok(t) => t,
         Err(e) => {
+            let e = friendly_smtp_error(&e);
             store.finish_send(&id, "failed", &e)?;
             return Err(e);
         }

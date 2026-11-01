@@ -188,33 +188,80 @@ fn only_an_active_send_blocks_another_send_and_leaves_the_draft_intact() {
 }
 
 #[test]
-fn independent_sends_keep_failed_and_uncertain_results_protected() {
-    for status in ["failed", "uncertain"] {
-        let temp = tempfile::tempdir().unwrap();
-        let store = Store::new(temp.path().to_path_buf()).unwrap();
-        store.save_account(&account()).unwrap();
-        let draft = draft();
-        let sending = std::sync::Mutex::new(());
-        let result = crate::with_send_gate(&sending, || {
-            crate::network::send_with(
-                &store,
-                &draft,
-                |_| Ok(()),
-                |(), _| Err((status, "模拟 SMTP 故障".into())),
-            )
-        });
-        assert!(result.is_err());
-        assert_eq!(store.outbox().unwrap()[0].status, status);
-        assert_eq!(store.drafts().unwrap()[0].id, draft.id);
-        assert!(crate::network::send_with(
+fn failed_send_leaves_no_record_and_keeps_draft_for_retry() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = Store::new(temp.path().to_path_buf()).unwrap();
+    store.save_account(&account()).unwrap();
+    let draft = draft();
+    store.save_draft(&draft).unwrap();
+    let sending = std::sync::Mutex::new(());
+    let result = crate::with_send_gate(&sending, || {
+        crate::network::send_with(
             &store,
             &draft,
             |_| Ok(()),
-            |(), _| panic!("no automatic retry")
+            |(), _| {
+                Err((
+                    "failed",
+                    "550 5.1.1 <gone@example.com>: Recipient address rejected: User unknown".into(),
+                ))
+            },
         )
-        .is_err());
-        assert!(crate::notifications::receipt(&store, &draft, &result).status == status);
-    }
+    });
+    let error = result.unwrap_err();
+    assert!(error.contains("收件人邮箱不存在"));
+    // 失败不留发送记录，草稿仍在，直接改完即可重发。
+    assert!(store.outbox().unwrap().is_empty());
+    assert_eq!(store.drafts().unwrap()[0].id, draft.id);
+    crate::with_send_gate(&sending, || {
+        crate::network::send_with(&store, &draft, |_| Ok(()), |(), _| Ok(()))
+    })
+    .unwrap();
+    assert_eq!(store.outbox().unwrap()[0].status, "sent");
+    assert!(store.drafts().unwrap().is_empty());
+}
+
+#[test]
+fn uncertain_send_keeps_record_and_blocks_automatic_retry() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = Store::new(temp.path().to_path_buf()).unwrap();
+    store.save_account(&account()).unwrap();
+    let draft = draft();
+    let sending = std::sync::Mutex::new(());
+    let result = crate::with_send_gate(&sending, || {
+        crate::network::send_with(
+            &store,
+            &draft,
+            |_| Ok(()),
+            |(), _| Err(("uncertain", "连接在提交后中断".into())),
+        )
+    });
+    assert!(result.unwrap_err().contains("发送结果未确认"));
+    assert_eq!(store.outbox().unwrap()[0].status, "uncertain");
+    assert_eq!(store.drafts().unwrap()[0].id, draft.id);
+    assert!(crate::network::send_with(
+        &store,
+        &draft,
+        |_| Ok(()),
+        |(), _| panic!("uncertain send must not retry automatically")
+    )
+    .is_err());
+}
+
+#[test]
+fn smtp_rejections_name_the_missing_or_rejected_mailbox() {
+    assert!(crate::network::friendly_smtp_error(
+        "550 5.1.1 <gone@example.com>: Recipient address rejected: User unknown"
+    )
+    .contains("收件人邮箱不存在"));
+    assert!(crate::network::friendly_smtp_error(
+        "553 5.7.1 sender address rejected: not authorized"
+    )
+    .contains("发件邮箱不可用"));
+    assert_eq!(
+        crate::network::friendly_smtp_error("connection reset"),
+        "connection reset"
+    );
 }
 
 #[test]

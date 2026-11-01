@@ -73,7 +73,13 @@ pub fn initialize(db: &rusqlite::Connection) -> Result<()> {
         UPDATE directory_operations SET status='uncertain',error='文件夹操作已提交但确认未保存；请核对原目录和目标目录，不会自动重发' WHERE status='submitted';
         UPDATE directory_operations SET status='confirmed' WHERE status='verifying';
         UPDATE directory_operations SET status='cleanup_pending' WHERE status='cleanup_running';
-        UPDATE directory_operations SET status='cleanup_uncertain',error='原目录移除已提交但结果未确认；先只读核对，不会自动再次移除' WHERE status='cleanup_submitted';").map_err(err)
+        UPDATE directory_operations SET status='cleanup_uncertain',error='原目录移除已提交但结果未确认；先只读核对，不会自动再次移除' WHERE status='cleanup_submitted';
+        UPDATE directory_operations SET status='queued',next_attempt=0
+        WHERE status='blocked' AND (
+          lower(error) LIKE '%timed out%' OR lower(error) LIKE '%timeout%'
+          OR lower(error) LIKE '%connection%' OR lower(error) LIKE '%network%'
+          OR lower(error) LIKE '%unreachable%' OR lower(error) LIKE '%refused%'
+        );").map_err(err)
 }
 fn decode(row: &rusqlite::Row<'_>) -> rusqlite::Result<DirectoryOperation> {
     let data: String = row.get(0)?;
@@ -743,7 +749,24 @@ impl Store {
     pub(crate) fn fail_copy(&self, id: &str, reason: &str, definite_rejection: bool) -> Result<()> {
         // A saved receipt can be verified again with read-only commands. A
         // missing receipt after submission cannot be safely resent.
-        self.db()?.execute("UPDATE directory_operations SET status=CASE WHEN status='cleanup_submitted' THEN 'cleanup_uncertain' WHEN status='cleanup_running' THEN 'cleanup_blocked' WHEN status IN ('confirmed','verifying') THEN 'confirmed' WHEN status='submitted' AND (?3=0 OR kind='move') THEN 'uncertain' ELSE 'blocked' END,error=?2,next_attempt=?4,updated_at=?5 WHERE id=?1 AND status IN ('preparing','submitted','confirmed','verifying','cleanup_running','cleanup_submitted')",params![id,reason,definite_rejection,chrono::Utc::now().timestamp()+60,chrono::Utc::now().timestamp()]).map_err(err)?;
+        // preparing 阶段尚未向服务器提交任何命令：断网/超时这类临时错误自动排队重试。
+        let lower = reason.to_lowercase();
+        let transient = [
+            "timed out",
+            "timeout",
+            "connection",
+            "network",
+            "unreachable",
+            "refused",
+            "disconnect",
+            "broken pipe",
+            "reset by peer",
+            "temporarily",
+            "io error",
+        ]
+        .iter()
+        .any(|needle| lower.contains(needle));
+        self.db()?.execute("UPDATE directory_operations SET status=CASE WHEN status='preparing' AND ?6 THEN 'queued' WHEN status='cleanup_submitted' THEN 'cleanup_uncertain' WHEN status='cleanup_running' THEN 'cleanup_blocked' WHEN status IN ('confirmed','verifying') THEN 'confirmed' WHEN status='submitted' AND (?3=0 OR kind='move') THEN 'uncertain' ELSE 'blocked' END,error=?2,next_attempt=?4,updated_at=?5 WHERE id=?1 AND status IN ('preparing','submitted','confirmed','verifying','cleanup_running','cleanup_submitted')",params![id,reason,definite_rejection,chrono::Utc::now().timestamp()+60,chrono::Utc::now().timestamp(),transient]).map_err(err)?;
         Ok(())
     }
     pub(crate) fn due_copies(&self, account: &str) -> Result<Vec<DirectoryOperation>> {
@@ -1007,6 +1030,55 @@ pub(crate) mod tests {
             .clone();
         (temp, store, a, id)
     }
+    #[test]
+    fn transient_network_failure_before_submission_requeues_automatically() {
+        let (temp, store, _a, id) = fixture();
+        let job = store.queue_copy(&id, "INBOX", "Archive").unwrap();
+        let op = store.directory_operation(&job).unwrap();
+        assert!(store.claim_copy(&op).unwrap());
+        store
+            .fail_copy(&job, "connection timed out", false)
+            .unwrap();
+        let retry = store.directory_operation(&job).unwrap();
+        assert_eq!(retry.status, "queued");
+        let next: i64 = store
+            .db()
+            .unwrap()
+            .query_row(
+                "SELECT next_attempt FROM directory_operations WHERE id=?1",
+                [&job],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(next >= chrono::Utc::now().timestamp());
+        drop(store);
+        // 已存在的 blocked 临时错误在重启后也会重新排队。
+        let store = Store::new(temp.path().into()).unwrap();
+        store
+            .db()
+            .unwrap()
+            .execute(
+                "UPDATE directory_operations SET status='blocked',error='connection timed out' WHERE id=?1",
+                [&job],
+            )
+            .unwrap();
+        drop(store);
+        let reopened = Store::new(temp.path().into()).unwrap();
+        assert_eq!(reopened.directory_operation(&job).unwrap().status, "queued");
+
+        let (_temp2, store2, _a2, id2) = fixture();
+        let job2 = store2.queue_copy(&id2, "INBOX", "Archive").unwrap();
+        let op2 = store2.directory_operation(&job2).unwrap();
+        assert!(store2.claim_copy(&op2).unwrap());
+        store2
+            .fail_copy(&job2, "原服务器邮件已不存在；尚未提交", false)
+            .unwrap();
+        assert_eq!(
+            store2.directory_operation(&job2).unwrap().status,
+            "blocked"
+        );
+    }
+
     #[test]
     fn copy_is_deduplicated_and_cancel_is_only_allowed_before_submission() {
         let (_temp, store, _a, id) = fixture();
