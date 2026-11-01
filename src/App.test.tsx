@@ -1851,13 +1851,7 @@ it("expands the collapsed primary sidebar navigation group with the arrow", asyn
   expect(navGroup()).not.toBeNull();
   expect(navGroup()!.hidden).toBe(true);
   // 默认收起；导航项仍在 DOM 中，只是整组隐藏。
-  for (const label of [
-    "全部收件箱",
-    "星标邮件",
-    "已发送",
-    "草稿箱",
-    "发送记录",
-  ]) {
+  for (const label of ["全部收件箱", "星标邮件", "已发送", "草稿箱"]) {
     expect(nav(label)).not.toBeNull();
   }
   const toggle = () => host.querySelector("button.nav-collapse");

@@ -71,15 +71,7 @@ afterEach(async () => {
 });
 async function render() {
   await act(async () => root.render(<ServerOperations />));
-  await expand();
-}
-async function expand() {
-  // 列表默认折叠，测试需先展开
-  await act(async () => {
-    host
-      .querySelectorAll("button")
-      .forEach((b) => b.textContent?.includes("同步任务") && b.click());
-  });
+  // 任务列表不再做二级折叠，外层展开后直接可见。
 }
 describe("server operation feedback", () => {
   it("shows conflicts and local account pause without offering completed retries", async () => {
@@ -143,7 +135,6 @@ describe("server operation feedback", () => {
         .click(),
     );
     expect(host.textContent).not.toContain("storage unavailable");
-    await expand();
     expect(host.textContent).toContain("Fixture");
   });
 });

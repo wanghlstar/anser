@@ -42,8 +42,10 @@ const labels = {
 };
 export function OutboxPanel({
   onDraft,
+  embedded = false,
 }: {
   onDraft: (draft: Compose) => void;
+  embedded?: boolean;
 }) {
   const { askConfirmation, confirmationDialog } = useConfirmation();
   const [records, setRecords] = useState<OutboxRecord[]>([]),
@@ -202,31 +204,51 @@ export function OutboxPanel({
       setBusy("");
     }
   }
+  const actions = (
+    <div className="panel-heading-actions">
+      <Button
+        variant="outline"
+        size={embedded ? "sm" : "default"}
+        disabled={!!busy}
+        onClick={() => void clearSent()}
+      >
+        <Trash2 size={15} />
+        清空
+      </Button>
+      <Button
+        variant="outline"
+        size={embedded ? "sm" : "default"}
+        onClick={() => void refresh()}
+      >
+        <RefreshCw size={15} />
+        刷新
+      </Button>
+    </div>
+  );
   return (
-    <section className="workspace-panel">
-      <div className="panel-heading">
-        <div>
-          <div className="page-title-row">
-            <SidebarTrigger />
-            <h1>发送记录</h1>
+    <section className={embedded ? "outbox-embedded" : "workspace-panel"}>
+      {embedded ? (
+        <div className="mb-2 flex items-center justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-medium">发送记录</h3>
+            <p className="text-xs text-muted-foreground">
+              查看发送成功、结果未确认和待定时发送的回执
+            </p>
           </div>
-          <p>查看发送成功、失败和结果未确认的回执</p>
+          {actions}
         </div>
-        <div className="panel-heading-actions">
-          <Button
-            variant="outline"
-            disabled={!!busy}
-            onClick={() => void clearSent()}
-          >
-            <Trash2 size={15} />
-            清空
-          </Button>
-          <Button variant="outline" onClick={() => void refresh()}>
-            <RefreshCw size={15} />
-            刷新
-          </Button>
+      ) : (
+        <div className="panel-heading">
+          <div>
+            <div className="page-title-row">
+              <SidebarTrigger />
+              <h1>发送记录</h1>
+            </div>
+            <p>查看发送成功、失败和结果未确认的回执</p>
+          </div>
+          {actions}
         </div>
-      </div>
+      )}
       <div className="outbox-list">
         {records.map((r) => (
           <article key={r.id} className="outbox-card">

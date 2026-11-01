@@ -458,7 +458,7 @@ impl Store {
     }
     pub fn directory_operations(&self) -> Result<Vec<DirectoryOperation>> {
         let db = self.db()?;
-        let mut st=db.prepare(&format!("SELECT {COLUMNS} FROM directory_operations ORDER BY CASE status WHEN 'uncertain' THEN 0 WHEN 'cleanup_uncertain' THEN 0 WHEN 'blocked' THEN 1 WHEN 'cleanup_blocked' THEN 1 WHEN 'completed' THEN 3 ELSE 2 END,updated_at DESC LIMIT 50")).map_err(err)?;
+        let mut st=db.prepare(&format!("SELECT {COLUMNS} FROM directory_operations ORDER BY CASE status WHEN 'uncertain' THEN 0 WHEN 'cleanup_uncertain' THEN 0 WHEN 'blocked' THEN 1 WHEN 'cleanup_blocked' THEN 1 WHEN 'completed' THEN 3 ELSE 2 END,updated_at DESC LIMIT 20")).map_err(err)?;
         let mut result = st
             .query_map([], decode)
             .map_err(err)?

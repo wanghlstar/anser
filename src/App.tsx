@@ -109,7 +109,6 @@ import {
   ReplyAll,
   UsersRound,
   CalendarDays,
-  History,
   Search,
   Send,
   Settings,
@@ -3015,14 +3014,6 @@ export default function App() {
                     <FileText size={17} />
                     <span>草稿箱</span>
                   </Button>
-                  <Button
-                    variant="ghost"
-                    className={`nav-item ${page === "outbox" ? "active" : ""}`}
-                    onClick={() => setPage("outbox")}
-                  >
-                    <History size={17} />
-                    <span>发送记录</span>
-                  </Button>
                 </nav>
                 <div className="nav-section-heading">
                   <span>我的账号</span>
@@ -3652,8 +3643,6 @@ export default function App() {
                 });
               }}
             />
-          ) : page === "outbox" ? (
-            <OutboxPanel onDraft={openCompose} />
           ) : page === "settings" || page === "storage" ? (
             <section className="workspace-panel settings-workspace">
               <div className="panel-heading">
@@ -4088,6 +4077,11 @@ export default function App() {
                         </CollapsibleContent>
                       </Card>
                     </Collapsible>
+                    <Card>
+                      <CardContent className="pt-5">
+                        <OutboxPanel onDraft={openCompose} embedded />
+                      </CardContent>
+                    </Card>
                     <ServerOperations defaultCollapsed />
                     <DirectoryOperationsPanel defaultCollapsed />
                   </>

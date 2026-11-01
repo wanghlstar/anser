@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { AlertCircle, ChevronRight } from "lucide-react";
+import { AlertCircle } from "lucide-react";
 import { call, native, isDemo } from "@/lib/api";
 import { coalesceRefresh } from "@/lib/refresh-queue";
 import { TaskPanelHeader } from "./task-panel-header";
@@ -143,84 +143,69 @@ export function ServerOperations({
                   )}
                 </div>
                 {data.items.length ? (
-                  <Collapsible defaultOpen={false}>
-                    <CollapsibleTrigger asChild>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="w-full justify-between"
-                      >
-                        同步任务（{Math.min(data.items.length, 15)} /{" "}
-                        {data.items.length}）
-                        <ChevronRight size={14} className="collapse-chevron" />
-                      </Button>
-                    </CollapsibleTrigger>
-                    <CollapsibleContent>
-                      <ul
-                        className="flex flex-col gap-4"
-                        aria-label="服务器同步任务"
-                      >
-                        {data.items.slice(0, 15).map((item) => (
-                          <li
-                            key={item.id}
-                            className="flex items-start justify-between gap-4"
-                          >
-                            <div className="min-w-0 flex-1 space-y-1">
-                              <p className="truncate text-sm font-medium">
-                                {item.subject || "（无主题）"}
+                  <>
+                    <p className="text-xs text-muted-foreground">
+                      同步任务（{data.items.length}）
+                    </p>
+                    <ul
+                      className="flex flex-col gap-4"
+                      aria-label="服务器同步任务"
+                    >
+                      {data.items.map((item) => (
+                        <li
+                          key={item.id}
+                          className="flex items-start justify-between gap-4"
+                        >
+                          <div className="min-w-0 flex-1 space-y-1">
+                            <p className="truncate text-sm font-medium">
+                              {item.subject || "（无主题）"}
+                            </p>
+                            <p className="break-words text-xs text-muted-foreground">
+                              {item.accountEmail} · {item.folder} ·{" "}
+                              {item.action === "read"
+                                ? item.value
+                                  ? "标记已读"
+                                  : "标记未读"
+                                : item.value
+                                  ? "加星标"
+                                  : "取消星标"}
+                            </p>
+                            {item.error && (
+                              <p className="break-words text-sm text-destructive">
+                                {item.error}
                               </p>
-                              <p className="break-words text-xs text-muted-foreground">
-                                {item.accountEmail} · {item.folder} ·{" "}
-                                {item.action === "read"
-                                  ? item.value
-                                    ? "标记已读"
-                                    : "标记未读"
-                                  : item.value
-                                    ? "加星标"
-                                    : "取消星标"}
-                              </p>
-                              {item.error && (
-                                <p className="break-words text-sm text-destructive">
-                                  {item.error}
-                                </p>
-                              )}
-                            </div>
-                            <div className="flex shrink-0 items-center gap-2">
-                              <Badge
-                                variant={
-                                  item.status === "blocked"
-                                    ? "destructive"
-                                    : "outline"
-                                }
+                            )}
+                          </div>
+                          <div className="flex shrink-0 items-center gap-2">
+                            <Badge
+                              variant={
+                                item.status === "blocked"
+                                  ? "destructive"
+                                  : "outline"
+                              }
+                            >
+                              {item.status === "queued" && item.error
+                                ? "等待重试"
+                                : states[item.status]}
+                            </Badge>
+                            {(item.status === "blocked" ||
+                              (item.status === "queued" && item.error)) && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                disabled={busy !== null}
+                                onClick={() => void retry(item.id)}
                               >
-                                {item.status === "queued" && item.error
-                                  ? "等待重试"
-                                  : states[item.status]}
-                              </Badge>
-                              {(item.status === "blocked" ||
-                                (item.status === "queued" && item.error)) && (
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  disabled={busy !== null}
-                                  onClick={() => void retry(item.id)}
-                                >
-                                  {busy === item.id ? "正在重试…" : "重试"}
-                                </Button>
-                              )}
-                            </div>
-                          </li>
-                        ))}
-                      </ul>
-                    </CollapsibleContent>
-                  </Collapsible>
+                                {busy === item.id ? "正在重试…" : "重试"}
+                              </Button>
+                            )}
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  </>
                 ) : (
                   <p className="text-sm text-muted-foreground">暂无同步任务</p>
-                )}
-                {data.items.length >= 50 && (
-                  <p className="text-xs text-muted-foreground">
-                    最多显示 50 条，优先展示待处理任务。
-                  </p>
                 )}
               </>
             )}

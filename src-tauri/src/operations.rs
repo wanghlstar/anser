@@ -212,7 +212,7 @@ impl Store {
     pub fn server_operations(&self) -> Result<OperationSnapshot> {
         let db = self.db()?;
         let (pending, blocked, completed, session_completed, isolated) = db.query_row("SELECT COALESCE(SUM(status IN ('queued','running')),0),COALESCE(SUM(status='blocked'),0),COALESCE(SUM(status='completed'),0),COALESCE(SUM(status='completed' AND updated_at>=?1),0),COALESCE(SUM(status='isolated'),0) FROM server_operations", [process_start()], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).map_err(err)?;
-        let mut stmt = db.prepare(&format!("SELECT {COLUMNS} FROM server_operations ORDER BY CASE status WHEN 'blocked' THEN 0 WHEN 'running' THEN 1 WHEN 'queued' THEN 2 WHEN 'isolated' THEN 3 ELSE 4 END,updated_at DESC LIMIT 50")).map_err(err)?;
+        let mut stmt = db.prepare(&format!("SELECT {COLUMNS} FROM server_operations ORDER BY CASE status WHEN 'blocked' THEN 0 WHEN 'running' THEN 1 WHEN 'queued' THEN 2 WHEN 'isolated' THEN 3 ELSE 4 END,updated_at DESC LIMIT 20")).map_err(err)?;
         let mut items = stmt
             .query_map([], decode)
             .map_err(err)?
