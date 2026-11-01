@@ -2550,6 +2550,22 @@ struct TierInfo {
     external_reachable: bool,
 }
 
+/// 内置存档大小；未配置外置存档时返回 None（此时总大小就是内置大小）。
+#[tauri::command]
+async fn archive_internal_size(state: tauri::State<'_, AppState>) -> Result<Option<u64>> {
+    let store = state.store.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let configured = store
+            .preferences()?
+            .external_archive_dir
+            .as_deref()
+            .is_some_and(|path| !path.trim().is_empty());
+        Ok(configured.then(|| store.internal_archive_bytes()))
+    })
+    .await
+    .map_err(err)?
+}
+
 #[tauri::command]
 async fn archive_tier_info(state: tauri::State<'_, AppState>) -> Result<TierInfo> {
     // tier_pending 要逐个 stat 本地存档；同步命令会堵 Tauri 主线程，设置页会卡。
@@ -4500,6 +4516,7 @@ pub fn run() {
             open_external_archive,
             data_dir_info,
             archive_tier_info,
+            archive_internal_size,
             save_archive_tier_settings,
             tier_archives_now,
             normalize_archive_paths,

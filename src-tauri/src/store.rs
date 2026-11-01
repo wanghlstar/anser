@@ -33,6 +33,26 @@ impl Drop for TierGuard<'_> {
         self.0.store(false, Ordering::SeqCst);
     }
 }
+fn directory_bytes(path: &Path) -> u64 {
+    let Ok(entries) = fs::read_dir(path) else {
+        return 0;
+    };
+    let mut total = 0;
+    for entry in entries.flatten() {
+        let Ok(kind) = entry.file_type() else {
+            continue;
+        };
+        if kind.is_dir() {
+            total += directory_bytes(&entry.path());
+        } else if kind.is_file() {
+            if let Ok(meta) = entry.metadata() {
+                total += meta.len();
+            }
+        }
+    }
+    total
+}
+
 impl Store {
     pub fn new(root: PathBuf) -> Result<Self> {
         fs::create_dir_all(&root).map_err(err)?;
@@ -239,6 +259,10 @@ impl Store {
         }
     }
     /// 按当前偏好重算存档读取根：内部根优先，其后是外置存档根。
+    /// 内置存档目录的实际文件总大小（仅统计 archive/ 下的原始邮件）。
+    pub fn internal_archive_bytes(&self) -> u64 {
+        directory_bytes(&self.root.join("archive"))
+    }
     pub fn refresh_archive_roots(&self) -> Result<()> {
         let mut roots = vec![self.root.clone()];
         if let Some(ext) = self

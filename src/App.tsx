@@ -691,6 +691,9 @@ export default function App() {
   const [dataDir, setDataDir] = useState<DataDirInfo | null>(null);
   const [archiveTree, setArchiveTree] = useState<LocalArchiveGroup[]>([]);
   const [archiveTreeLoaded, setArchiveTreeLoaded] = useState(false);
+  const [internalArchiveBytes, setInternalArchiveBytes] = useState<
+    number | null
+  >(null);
   const archiveHealth = useArchiveHealth();
   // Shift 范围选择锚点
   const lastRowIndex = useRef(-1);
@@ -754,6 +757,23 @@ export default function App() {
       })
       .catch(() => {});
   }, []);
+  // 内置存档大小只在「本地存档」设置打开时计算；未配置外置存档时后端返回 null。
+  useEffect(() => {
+    if (settingsSection !== "archive") return;
+    let live = true;
+    const load = () => {
+      void call<number | null>("archive_internal_size")
+        .then((value) => live && setInternalArchiveBytes(value))
+        .catch(() => live && setInternalArchiveBytes(null));
+    };
+    load();
+    window.addEventListener("archive-tier-changed", load);
+    return () => {
+      live = false;
+      window.removeEventListener("archive-tier-changed", load);
+    };
+  }, [settingsSection]);
+
   // 本地存档树（按账号/服务器文件夹聚合）——跟随 refresh 同源刷新：
   // 服务器删信不改变 stats.saved/folderTotals，按它们触发会留下陈旧计数。
   const loadArchiveTree = useCallback(() => {
@@ -3772,6 +3792,14 @@ export default function App() {
                             <strong>{formatSize(data.stats.bytes)}</strong>
                             <span>原始邮件大小</span>
                           </div>
+                          {internalArchiveBytes != null && (
+                            <div>
+                              <strong>
+                                {formatSize(internalArchiveBytes)}
+                              </strong>
+                              <span>内置存档大小</span>
+                            </div>
+                          )}
                         </div>
                         <div className="storage-actions">
                           <Button

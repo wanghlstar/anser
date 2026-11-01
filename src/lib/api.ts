@@ -1259,6 +1259,9 @@ export async function call<T = void>(
         break;
       case "test_notification":
         break;
+      case "archive_internal_size":
+        result = null;
+        break;
       case "archive_tier_info":
         result = {
           externalDir: "",

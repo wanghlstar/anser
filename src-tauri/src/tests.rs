@@ -2,6 +2,17 @@ use crate::{archive, models::*, rules, store::Store};
 use chrono::Utc;
 
 #[test]
+fn internal_archive_bytes_sums_archive_files() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = Store::new(temp.path().to_path_buf()).unwrap();
+    let dir = temp.path().join("archive").join("account");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.eml"), b"abc").unwrap();
+    std::fs::write(dir.join("b.eml"), b"12345").unwrap();
+    assert_eq!(store.internal_archive_bytes(), 8);
+}
+
+#[test]
 fn activity_displays_decoded_folders_in_existing_and_new_logs_without_changing_wire_names() {
     let temp = tempfile::tempdir().unwrap();
     let store = Store::new(temp.path().to_path_buf()).unwrap();
