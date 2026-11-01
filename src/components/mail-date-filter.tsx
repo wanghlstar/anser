@@ -33,6 +33,7 @@ export function MailDateFilter({
   onChange: (range: { dateFrom?: string; dateBefore?: string }) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [picks, setPicks] = useState(0);
   const [range, setRange] = useState<DateRange | undefined>(() =>
     selectedRange(dateFrom, dateBefore),
   );
@@ -51,7 +52,10 @@ export function MailDateFilter({
       open={open}
       onOpenChange={(next) => {
         setOpen(next);
-        if (next) setRange(selectedRange(dateFrom, dateBefore));
+        if (next) {
+          setRange(selectedRange(dateFrom, dateBefore));
+          setPicks(0);
+        }
       }}
     >
       <PopoverTrigger asChild>
@@ -76,7 +80,10 @@ export function MailDateFilter({
               variant="ghost"
               size="sm"
               className="self-start"
-              onClick={() => setRange(undefined)}
+              onClick={() => {
+                setRange(undefined);
+                setPicks(0);
+              }}
             >
               重新选择
             </Button>
@@ -84,10 +91,19 @@ export function MailDateFilter({
               mode="range"
               selected={range}
               onSelect={(next) => {
+                if (!next?.from) {
+                  setRange(undefined);
+                  setPicks(0);
+                  return;
+                }
+                const count = picks + 1;
+                setPicks(count);
                 setRange(next);
-                if (next?.from && next?.to) {
+                // 第一次点只定开始日期；第二次点结束日期后才应用。
+                if (count >= 2) {
                   onChange(mailDateBounds(next));
                   setOpen(false);
+                  setPicks(0);
                 }
               }}
               locale={zhCN}
@@ -104,6 +120,7 @@ export function MailDateFilter({
               onClick={() => {
                 onChange({ dateFrom: undefined, dateBefore: undefined });
                 setOpen(false);
+                setPicks(0);
               }}
             >
               不限时间

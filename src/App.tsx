@@ -1065,6 +1065,7 @@ export default function App() {
       limit: listPageSize,
     }));
     setSearchSuggestOpen(false);
+    setAdvancedOpen(false);
   }
   function applySearch() {
     submitSearch(searchFields);
@@ -1083,6 +1084,7 @@ export default function App() {
   function clearSearch() {
     setSearch("");
     setSearchSuggestOpen(false);
+    setAdvancedOpen(false);
     setSearchFields([]);
     setSearchConditions([]);
     setSearchMode("all");
@@ -4589,14 +4591,24 @@ export default function App() {
                       </DialogContent>
                     </Dialog>
                   </div>
-                  <div className="flex flex-wrap items-center justify-end gap-2 px-4 pb-3">
+                  <div className="flex flex-wrap items-center gap-2 px-4 pb-3">
+                    <MailDateFilter
+                      dateFrom={query.dateFrom}
+                      dateBefore={query.dateBefore}
+                      onChange={(range) =>
+                        setQuery((q) => ({
+                          ...q,
+                          ...range,
+                          limit: listPageSize,
+                        }))
+                      }
+                    />
                     {query.search && searchHitsField("body") && (
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <Button
                             variant="ghost"
                             size="sm"
-                            className="mr-auto"
                             aria-label="正文搜索范围"
                           >
                             <Info data-icon="inline-start" />
@@ -4617,34 +4629,25 @@ export default function App() {
                         </TooltipContent>
                       </Tooltip>
                     )}
-                    <SearchBookmarks
-                      query={query}
-                      onApply={(next) => {
-                        setSearch(next.search);
-                        setSearchFields(
-                          next.searchFields ??
-                            (next.searchField ? [next.searchField] : []),
-                        );
-                        setSearchConditions(next.searchConditions ?? []);
-                        setSearchMode(next.searchMode ?? "all");
-                        setSearchStarred(!!next.starredOnly);
-                        setSearchAttachments(!!next.attachmentsOnly);
-                        setSearchDateFrom(next.dateFrom);
-                        setSearchDateBefore(next.dateBefore);
-                        setQuery({ ...next, limit: listPageSize });
-                      }}
-                    />
-                    <MailDateFilter
-                      dateFrom={query.dateFrom}
-                      dateBefore={query.dateBefore}
-                      onChange={(range) =>
-                        setQuery((q) => ({
-                          ...q,
-                          ...range,
-                          limit: listPageSize,
-                        }))
-                      }
-                    />
+                    <div className="ml-auto">
+                      <SearchBookmarks
+                        query={query}
+                        onApply={(next) => {
+                          setSearch(next.search);
+                          setSearchFields(
+                            next.searchFields ??
+                              (next.searchField ? [next.searchField] : []),
+                          );
+                          setSearchConditions(next.searchConditions ?? []);
+                          setSearchMode(next.searchMode ?? "all");
+                          setSearchStarred(!!next.starredOnly);
+                          setSearchAttachments(!!next.attachmentsOnly);
+                          setSearchDateFrom(next.dateFrom);
+                          setSearchDateBefore(next.dateBefore);
+                          setQuery({ ...next, limit: listPageSize });
+                        }}
+                      />
+                    </div>
                   </div>
                   <div className="list-filters">
                     <Tabs

@@ -58,6 +58,40 @@ describe("mail calendar range", () => {
       host.remove();
     }
   });
+  it("applies a single day after the same date is clicked twice", async () => {
+    Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host),
+      change = vi.fn();
+    try {
+      await act(async () =>
+        root.render(
+          <MailDateFilter
+            {...mailDateBounds({ from: new Date(2026, 9, 1) })}
+            onChange={change}
+          />,
+        ),
+      );
+      await act(async () => host.querySelector("button")!.click());
+      const day = () =>
+        [...document.querySelectorAll("button[data-day]")].find(
+          (button) =>
+            button.getAttribute("data-day") ===
+            new Date(2026, 9, 10).toLocaleDateString(),
+        ) as HTMLButtonElement;
+      await act(async () => day().click());
+      expect(change).not.toHaveBeenCalled();
+      await act(async () => day().click());
+      const [value] = change.mock.calls[0];
+      expect(new Date(value.dateFrom).getDate()).toBe(10);
+      expect(new Date(value.dateBefore).getDate()).toBe(11);
+    } finally {
+      await act(async () => root.unmount());
+      host.remove();
+    }
+  });
+
   it("applies selected calendar days as a local inclusive range", async () => {
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
     const host = document.createElement("div");
@@ -79,19 +113,17 @@ describe("mail calendar range", () => {
       )!;
       await act(async () => restart.click());
       expect(change).not.toHaveBeenCalled();
-      for (const day of [12, 14]) {
-        const target = [...document.querySelectorAll("button[data-day]")].find(
+      const dayButton = (day: number) =>
+        [...document.querySelectorAll("button[data-day]")].find(
           (button) =>
             button.getAttribute("data-day") ===
             new Date(2026, 9, day).toLocaleDateString(),
         ) as HTMLButtonElement;
-        expect(target).toBeDefined();
-        await act(async () => target.click());
-      }
-      const apply = [...document.querySelectorAll("button")].find(
-        (button) => button.textContent === "应用筛选",
-      )!;
-      await act(async () => apply.click());
+      // 第一次点击只定开始日期，不应用。
+      await act(async () => dayButton(12).click());
+      expect(change).not.toHaveBeenCalled();
+      // 第二次点击结束日期后立即应用。
+      await act(async () => dayButton(14).click());
       const [value] = change.mock.calls[0];
       expect(new Date(value.dateFrom).getDate()).toBe(12);
       expect(new Date(value.dateFrom).getHours()).toBe(0);
