@@ -174,6 +174,28 @@ beforeEach(async () => {
     root.render(<App />);
   });
 });
+it("opens multi-condition search from the suggestion list", async () => {
+  await click(nav("全部收件箱"));
+  const input = host.querySelector(
+    'input[aria-label="搜索邮件"]',
+  ) as HTMLInputElement;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(
+      HTMLInputElement.prototype,
+      "value",
+    )!.set!.call(input, "invoice");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  const advanced = [...document.querySelectorAll('[role="option"]')].find(
+    (item) => item.textContent?.includes("多重搜索"),
+  );
+  await click(advanced ?? null);
+  await vi.waitFor(() =>
+    expect(document.body.textContent).toContain("搜索范围"),
+  );
+  expect(document.body.textContent).toContain("附加条件");
+});
+
 it("exposes search fields and only applies the search on Enter", async () => {
   await click(nav("全部收件箱"));
   await vi.waitFor(() =>
@@ -181,10 +203,6 @@ it("exposes search fields and only applies the search on Enter", async () => {
       host.querySelectorAll("button.mail-row-main").length,
     ).toBeGreaterThan(0),
   );
-  await click(host.querySelector('button[aria-label="多重搜索"]'));
-  expect(document.body.textContent).toContain("搜索范围");
-  expect(document.body.textContent).toContain("附加条件");
-  expect(document.body.textContent).toContain("时间范围");
   const before = host.querySelectorAll("button.mail-row-main").length;
   const input = host.querySelector(
     'input[aria-label="搜索邮件"]',

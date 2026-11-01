@@ -419,6 +419,7 @@ export default function App() {
     [searchDateBefore, setSearchDateBefore] = useState<string | undefined>(),
     [searchSuggestOpen, setSearchSuggestOpen] = useState(false),
     [searchSuggestActive, setSearchSuggestActive] = useState(0),
+    [advancedOpen, setAdvancedOpen] = useState(false),
     [accountDialog, setAccountDialog] = useState(false),
     [editingAccount, setEditingAccount] = useState<Account | null>(null),
     [segmentAccount, setSegmentAccount] = useState<Account | null>(null),
@@ -4372,49 +4373,29 @@ export default function App() {
                                 </span>
                               </CommandItem>
                             ))}
+                            <CommandItem
+                              value="advanced"
+                              onMouseDown={(e) => e.preventDefault()}
+                              onSelect={() => {
+                                setSearchSuggestOpen(false);
+                                setAdvancedOpen(true);
+                              }}
+                            >
+                              <SlidersHorizontal size={14} />
+                              多重搜索…
+                            </CommandItem>
                           </CommandList>
                         </Command>
                       </PopoverContent>
                     </Popover>
-                    <Popover>
-                      <PopoverTrigger asChild>
-                        <Button
-                          variant={
-                            searchFields.length ||
-                            searchConditions.length ||
-                            searchStarred ||
-                            searchAttachments ||
-                            searchDateFrom ||
-                            searchDateBefore
-                              ? "secondary"
-                              : "ghost"
-                          }
-                          size="icon"
-                          className="relative"
-                          aria-label="多重搜索"
-                          title="多重搜索：字段、条件、时间范围"
-                        >
-                          <ChevronDown />
-                          {(searchFields.length > 0 ||
-                            searchConditions.length > 0 ||
-                            searchStarred ||
-                            searchAttachments ||
-                            searchDateFrom ||
-                            searchDateBefore) && (
-                            <Badge
-                              variant="secondary"
-                              className="absolute -top-1 -right-1 px-1 text-[10px]"
-                            >
-                              {searchConditions.length +
-                                (searchFields.length > 0 ? 1 : 0) +
-                                (searchStarred ? 1 : 0) +
-                                (searchAttachments ? 1 : 0) +
-                                (searchDateFrom || searchDateBefore ? 1 : 0)}
-                            </Badge>
-                          )}
-                        </Button>
-                      </PopoverTrigger>
-                      <PopoverContent align="end" className="w-[340px] p-3">
+                    <Dialog open={advancedOpen} onOpenChange={setAdvancedOpen}>
+                      <DialogContent className="max-w-md">
+                        <DialogHeader>
+                          <DialogTitle>多重搜索</DialogTitle>
+                          <DialogDescription>
+                            选择字段、添加条件和组合方式，然后开始搜索。
+                          </DialogDescription>
+                        </DialogHeader>
                         <div className="space-y-3">
                           <div>
                             <Label className="text-xs">搜索范围</Label>
@@ -4571,19 +4552,6 @@ export default function App() {
                               有附件
                             </Label>
                           </div>
-                          <div>
-                            <Label className="text-xs">时间范围</Label>
-                            <div className="mt-1">
-                              <MailDateFilter
-                                dateFrom={searchDateFrom}
-                                dateBefore={searchDateBefore}
-                                onChange={(range) => {
-                                  setSearchDateFrom(range.dateFrom);
-                                  setSearchDateBefore(range.dateBefore);
-                                }}
-                              />
-                            </div>
-                          </div>
                           <div className="flex items-center gap-1.5">
                             <Label className="text-xs">组合</Label>
                             <Button
@@ -4618,33 +4586,17 @@ export default function App() {
                             </Button>
                           </div>
                         </div>
-                      </PopoverContent>
-                    </Popover>
-                    <SearchBookmarks
-                      query={query}
-                      onApply={(next) => {
-                        setSearch(next.search);
-                        setSearchFields(
-                          next.searchFields ??
-                            (next.searchField ? [next.searchField] : []),
-                        );
-                        setSearchConditions(next.searchConditions ?? []);
-                        setSearchMode(next.searchMode ?? "all");
-                        setSearchStarred(!!next.starredOnly);
-                        setSearchAttachments(!!next.attachmentsOnly);
-                        setSearchDateFrom(next.dateFrom);
-                        setSearchDateBefore(next.dateBefore);
-                        setQuery({ ...next, limit: listPageSize });
-                      }}
-                    />
+                      </DialogContent>
+                    </Dialog>
                   </div>
-                  <div className="flex flex-wrap items-center gap-2 px-4 pb-3">
+                  <div className="flex flex-wrap items-center justify-end gap-2 px-4 pb-3">
                     {query.search && searchHitsField("body") && (
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <Button
                             variant="ghost"
                             size="sm"
+                            className="mr-auto"
                             aria-label="正文搜索范围"
                           >
                             <Info data-icon="inline-start" />
@@ -4665,6 +4617,34 @@ export default function App() {
                         </TooltipContent>
                       </Tooltip>
                     )}
+                    <SearchBookmarks
+                      query={query}
+                      onApply={(next) => {
+                        setSearch(next.search);
+                        setSearchFields(
+                          next.searchFields ??
+                            (next.searchField ? [next.searchField] : []),
+                        );
+                        setSearchConditions(next.searchConditions ?? []);
+                        setSearchMode(next.searchMode ?? "all");
+                        setSearchStarred(!!next.starredOnly);
+                        setSearchAttachments(!!next.attachmentsOnly);
+                        setSearchDateFrom(next.dateFrom);
+                        setSearchDateBefore(next.dateBefore);
+                        setQuery({ ...next, limit: listPageSize });
+                      }}
+                    />
+                    <MailDateFilter
+                      dateFrom={query.dateFrom}
+                      dateBefore={query.dateBefore}
+                      onChange={(range) =>
+                        setQuery((q) => ({
+                          ...q,
+                          ...range,
+                          limit: listPageSize,
+                        }))
+                      }
+                    />
                   </div>
                   <div className="list-filters">
                     <Tabs

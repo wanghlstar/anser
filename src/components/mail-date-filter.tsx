@@ -45,7 +45,7 @@ export function MailDateFilter({
     ? fromLabel === toLabel
       ? fromLabel
       : `${fromLabel} — ${toLabel}`
-    : "时间范围";
+    : "时间";
   return (
     <Popover
       open={open}
@@ -68,9 +68,9 @@ export function MailDateFilter({
       <PopoverContent align="start" className="w-80">
         <FieldGroup>
           <Field>
-            <FieldLabel>邮件时间范围</FieldLabel>
+            <FieldLabel>时间</FieldLabel>
             <FieldDescription>
-              包含起止日期，使用本机时区；时间未知的邮件不参与时间筛选。
+              先点开始日期，再点结束日期；使用本机时区，时间未知的邮件不参与筛选。
             </FieldDescription>
             <Button
               variant="ghost"
@@ -83,7 +83,13 @@ export function MailDateFilter({
             <Calendar
               mode="range"
               selected={range}
-              onSelect={setRange}
+              onSelect={(next) => {
+                setRange(next);
+                if (next?.from && next?.to) {
+                  onChange(mailDateBounds(next));
+                  setOpen(false);
+                }
+              }}
               locale={zhCN}
               captionLayout="dropdown"
               startMonth={new Date(1900, 0)}
@@ -92,7 +98,7 @@ export function MailDateFilter({
               autoFocus
             />
           </Field>
-          <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center justify-end gap-2">
             <Button
               variant="ghost"
               onClick={() => {
@@ -101,15 +107,6 @@ export function MailDateFilter({
               }}
             >
               不限时间
-            </Button>
-            <Button
-              disabled={!range?.from}
-              onClick={() => {
-                onChange(mailDateBounds(range));
-                setOpen(false);
-              }}
-            >
-              应用筛选
             </Button>
           </div>
         </FieldGroup>

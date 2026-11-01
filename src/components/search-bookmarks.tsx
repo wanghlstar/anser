@@ -176,8 +176,14 @@ export function SearchBookmarks({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon-lg" title="保存的搜索">
+        <Button
+          variant="ghost"
+          size="sm"
+          title="保存的搜索"
+          aria-label="保存的搜索"
+        >
           <Bookmark />
+          保存的搜索
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-80">
