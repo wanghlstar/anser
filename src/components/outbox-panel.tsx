@@ -8,7 +8,6 @@ import {
   LoaderCircle,
   Clock3,
   Trash2,
-  ChevronDown,
 } from "lucide-react";
 import type { Compose, OutboxRecord } from "@/lib/types";
 import { call } from "@/lib/api";
@@ -17,6 +16,7 @@ import { toast } from "sonner";
 import { localDateTime, scheduledIso } from "@/lib/schedule-time";
 import { SchedulePicker } from "./schedule-picker";
 import { Badge } from "./ui/badge";
+import { CardContent, CardHeader } from "./ui/card";
 import {
   Collapsible,
   CollapsibleContent,
@@ -228,28 +228,27 @@ export function OutboxPanel({
   );
   return (
     <Collapsible defaultOpen={defaultOpen}>
-      <div className="mb-2 flex items-center justify-between gap-3">
+      <CardHeader className="flex flex-row items-start gap-2 px-4">
         <CollapsibleTrigger asChild>
           <Button
             variant="ghost"
-            className="group h-auto min-w-0 flex-1 items-start justify-start gap-2 whitespace-normal px-2 text-left"
+            className="h-auto min-w-0 flex-1 items-start justify-start gap-2 whitespace-normal px-2 py-0.5 text-left"
           >
-            <span className="flex min-w-0 flex-col items-start gap-0.5">
-              <span className="flex items-center gap-2 text-sm font-medium">
+            <span className="flex min-w-0 flex-1 flex-col gap-1">
+              <span className="flex items-center gap-2 font-semibold">
                 发送记录
                 <Badge variant="secondary">{records.length}</Badge>
               </span>
-              <span className="text-xs font-normal text-muted-foreground">
+              <span className="text-sm leading-relaxed font-normal text-muted-foreground">
                 已发送邮件的服务器副本状态；失败发送不会留下记录。
               </span>
             </span>
-            <ChevronDown className="ml-auto mt-0.5 shrink-0 transition-transform group-data-[state=open]:rotate-180" />
           </Button>
         </CollapsibleTrigger>
         {actions}
-      </div>
+      </CardHeader>
       <CollapsibleContent>
-        <div className="outbox-list">
+        <CardContent className="outbox-list">
           {records.map((r) => (
             <article key={r.id} className="outbox-card">
               <div className="outbox-main">
@@ -475,7 +474,7 @@ export function OutboxPanel({
               <p>{failure || "从这里查询发送结果，失败邮件可准备重发。"}</p>
             </div>
           )}
-        </div>
+        </CardContent>
         {confirmationDialog}
       </CollapsibleContent>
     </Collapsible>

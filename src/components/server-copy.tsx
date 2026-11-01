@@ -129,6 +129,7 @@ export function DirectoryOperationsPanel({
             </>
           }
           onRefresh={() => reload.current()}
+          hideChevron
         />
         <CollapsibleContent asChild>
           <CardContent>

@@ -110,6 +110,7 @@ export function ServerOperations({
             </>
           }
           onRefresh={() => reload()}
+          hideChevron
         />
         <CollapsibleContent asChild>
           <CardContent className="flex flex-col gap-4">

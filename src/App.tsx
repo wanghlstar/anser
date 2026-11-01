@@ -1571,7 +1571,14 @@ export default function App() {
       if (action === "delete")
         for (const id of ids)
           pendingDeletes.current.set(id, queryScope(queryRef.current));
-      for (const id of ids) await updateMail(id, action, value);
+      // 一次把所有行的乐观更新都发出去，避免逐封等待后台确认。
+      const updates = ids.map((id) => updateMail(id, action, value));
+      const results = await Promise.allSettled(updates);
+      const failed = results.find(
+        (result): result is PromiseRejectedResult =>
+          result.status === "rejected",
+      );
+      if (failed) throw failed.reason;
       // 已读/星标已经先更新行；列表在后台刷新，不阻塞操作反馈。
       if (action === "read" || action === "star") void refresh();
       else await refresh();
@@ -1817,7 +1824,6 @@ export default function App() {
     const previous =
       dataRef.current.messages.find((m) => m.id === id) ??
       (detail?.mail.id === id ? detail.mail : undefined);
-    await call("update_mail", { id, action, value });
     const change: Partial<Mail> =
       action === "read"
         ? { isRead: value === "true" }
@@ -1826,48 +1832,97 @@ export default function App() {
           : action === "trash"
             ? { trashed: value === "true" }
             : { localFolder: value };
-    localChanges.current.set(id, {
-      ...localChanges.current.get(id),
-      ...change,
-    });
+    const previousLocal = localChanges.current.get(id);
+    const index = dataRef.current.messages.findIndex((m) => m.id === id);
+    // 与文件夹切换一致：先落到界面，再等后台确认；失败再回滚。
+    const hides =
+      index >= 0 &&
+      ((action === "read" &&
+        value === "true" &&
+        (queryRef.current.view === "unread" || queryRef.current.unreadOnly)) ||
+        (action === "star" &&
+          value === "false" &&
+          queryRef.current.view === "starred"));
     const patch = (list: Mail[]) =>
       list.map((m) => (m.id === id ? { ...m, ...change } : m));
-    setData((current) => ({
+    const applyMessages = (list: Mail[]) =>
+      hides ? list.filter((m) => m.id !== id) : patch(list);
+    const applyData = (current: MailPage): MailPage => ({
       ...current,
-      messages: patch(current.messages),
-    }));
-    dataRef.current = {
-      ...dataRef.current,
-      messages: patch(dataRef.current.messages),
-    };
-    // 未读徽标也先本地调整；后台计数刷新会覆盖为准确值。
-    if (action === "read" && previous && previous.sourceFolder) {
-      const wasUnread = !previous.isRead;
-      const nowUnread = value !== "true";
-      if (wasUnread !== nowUnread) {
-        const delta = nowUnread ? 1 : -1;
-        const patchUnread = (list: NonNullable<typeof data.folderUnread>) =>
-          list.map((item) =>
-            item.accountId === previous.accountId &&
-            item.folder === previous.sourceFolder
-              ? { ...item, count: Math.max(0, item.count + delta) }
-              : item,
-          );
-        setData((current) => ({
-          ...current,
-          folderUnread: patchUnread(current.folderUnread ?? []),
-        }));
-        dataRef.current = {
-          ...dataRef.current,
-          folderUnread: patchUnread(dataRef.current.folderUnread ?? []),
-        };
-      }
-    }
+      messages: applyMessages(current.messages),
+      matched: hides ? Math.max(0, current.matched - 1) : current.matched,
+    });
+    const unreadDelta =
+      action === "read" && previous?.sourceFolder
+        ? !previous.isRead === (value !== "true")
+          ? 0
+          : value === "true"
+            ? -1
+            : 1
+        : 0;
+    const patchUnread = (
+      list: NonNullable<MailPage["folderUnread"]>,
+      delta: number,
+    ) =>
+      list.map((item) =>
+        item.accountId === previous!.accountId &&
+        item.folder === previous!.sourceFolder
+          ? { ...item, count: Math.max(0, item.count + delta) }
+          : item,
+      );
+    const applyCounts = (current: MailPage, delta: number): MailPage =>
+      delta
+        ? {
+            ...current,
+            stats: {
+              ...current.stats,
+              unread: Math.max(0, current.stats.unread + delta),
+            },
+            folderUnread: patchUnread(current.folderUnread ?? [], delta),
+          }
+        : current;
+    localChanges.current.set(id, { ...previousLocal, ...change });
+    setData((current) => applyCounts(applyData(current), unreadDelta));
+    dataRef.current = applyCounts(applyData(dataRef.current), unreadDelta);
     setDetail((current) =>
       current?.mail.id === id
         ? { ...current, mail: { ...current.mail, ...change } }
         : current,
     );
+    try {
+      await call("update_mail", { id, action, value });
+    } catch (error) {
+      // 回滚乐观更新：只恢复本次改动的字段，保留其他并发变化。
+      if (previousLocal) localChanges.current.set(id, previousLocal);
+      else localChanges.current.delete(id);
+      const revert = (m: Mail) => {
+        if (m.id !== id || !previous) return m;
+        const restored = { ...m };
+        for (const key of Object.keys(change) as (keyof Mail)[])
+          (restored[key] as unknown) = previous[key];
+        return restored;
+      };
+      const restoreData = (current: MailPage): MailPage => {
+        let messages = current.messages.map(revert);
+        if (hides && previous && !messages.some((m) => m.id === id)) {
+          messages = [...messages];
+          messages.splice(Math.min(index, messages.length), 0, previous);
+        }
+        return {
+          ...current,
+          messages,
+          matched: hides ? current.matched + 1 : current.matched,
+        };
+      };
+      setData((current) => applyCounts(restoreData(current), -unreadDelta));
+      dataRef.current = applyCounts(restoreData(dataRef.current), -unreadDelta);
+      setDetail((current) =>
+        current?.mail.id === id && previous
+          ? { ...current, mail: revert(current.mail) }
+          : current,
+      );
+      throw error;
+    }
   }
   function readingScope() {
     return queryScope(query);
@@ -2144,14 +2199,18 @@ export default function App() {
         date: m.date,
       };
     setSelected(m.id);
+    // 点开即视为已读：先更新列表/未读徽标，不等详情或后台确认。
+    if (!m.isRead) void updateMail(m.id, "read", "true").catch(() => {});
     try {
       const mode = query.listMode;
       const conversation = grouped
         ? await call<Mail[]>("mail_conversation", { id: m.id })
         : [m];
       if (queryRef.current.listMode !== mode) return;
-      for (const mail of conversation.filter((mail) => !mail.isRead))
-        await updateMail(mail.id, "read", "true").catch(() => {});
+      for (const mail of conversation.filter(
+        (mail) => !mail.isRead && mail.id !== m.id,
+      ))
+        void updateMail(mail.id, "read", "true").catch(() => {});
       void refresh();
     } catch (e) {
       toast.error(String(e));
@@ -4060,6 +4119,7 @@ export default function App() {
                           title="最近活动"
                           description="查看邮件收取、发送、规则执行及本地存档的最近记录。"
                           onRefresh={() => refresh()}
+                          hideChevron
                         />
                         <CollapsibleContent asChild>
                           <CardContent className="activity-list">
@@ -4078,12 +4138,7 @@ export default function App() {
                       </Card>
                     </Collapsible>
                     <Card>
-                      <CardContent className="pt-5">
-                        <OutboxPanel
-                          onDraft={openCompose}
-                          defaultOpen={false}
-                        />
-                      </CardContent>
+                      <OutboxPanel onDraft={openCompose} defaultOpen={false} />
                     </Card>
                     <ServerOperations defaultCollapsed />
                     <DirectoryOperationsPanel defaultCollapsed />

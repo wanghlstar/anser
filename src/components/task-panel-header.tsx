@@ -15,6 +15,7 @@ export function TaskPanelHeader({
   disabled = false,
   controls,
   compact = false,
+  hideChevron = false,
 }: {
   title: string;
   description: ReactNode;
@@ -24,6 +25,7 @@ export function TaskPanelHeader({
   disabled?: boolean;
   controls?: string;
   compact?: boolean;
+  hideChevron?: boolean;
 }) {
   const [refreshing, setRefreshing] = useState(false);
   const pending = useRef(false);
@@ -90,7 +92,9 @@ export function TaskPanelHeader({
             </span>
           </span>
           {inlineAction}
-          <ChevronDown className="mt-0.5 transition-transform group-data-[state=open]:rotate-180 motion-reduce:transition-none" />
+          {!hideChevron && (
+            <ChevronDown className="mt-0.5 transition-transform group-data-[state=open]:rotate-180 motion-reduce:transition-none" />
+          )}
         </Button>
       </CollapsibleTrigger>
       {(onRefresh || action) && (
