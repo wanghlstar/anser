@@ -4603,32 +4603,6 @@ export default function App() {
                         }))
                       }
                     />
-                    {query.search && searchHitsField("body") && (
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            aria-label="正文搜索范围"
-                          >
-                            <Info data-icon="inline-start" />
-                            正文范围
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent
-                          side="bottom"
-                          align="start"
-                          className="max-w-72"
-                        >
-                          <p>
-                            正文只检索本机已有内容，搜索不会自动下载。当前范围完整{" "}
-                            {data.bodyCoverage.known} 封，未完整{" "}
-                            {data.bodyCoverage.unknown}{" "}
-                            封；需要纳入完整正文搜索时，可选择完整保存。
-                          </p>
-                        </TooltipContent>
-                      </Tooltip>
-                    )}
                     <div className="ml-auto">
                       <SearchBookmarks
                         query={query}

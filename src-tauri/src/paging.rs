@@ -268,14 +268,6 @@ fn search_terms(q: &Query) -> (String, Vec<String>) {
     (parts.join(mode), params)
 }
 
-fn searches_body(q: &Query) -> bool {
-    search_groups(q).into_iter().any(|(fields, value)| {
-        value.chars().count() >= 3
-            && (fields.is_empty()
-                || fields.iter().any(|field| field == "all" || field == "body"))
-    })
-}
-
 fn bindings(
     request: &PageRequest,
     from: Option<f64>,
@@ -648,37 +640,9 @@ impl Store {
             } else {
                 None
             };
-            // 正文覆盖只用于「正文范围」提示；默认列表不做这次全量扫描，
-            // 否则 6 万封时要读完整份索引，首屏会卡 10 秒以上。
-            let needs_coverage = searches_body(&request.query);
-            let body_coverage = if needs_coverage {
-                // 覆盖提示统计的是当前范围，不叠加搜索词；否则未保存正文的邮件
-                // 会先被搜索条件排除，提示永远显示“0 封未完整”。
-                let mut coverage_request = request.clone();
-                coverage_request.query.search.clear();
-                coverage_request.query.search_fields.clear();
-                coverage_request.query.search_conditions.clear();
-                coverage_request.query.search_field.clear();
-                let coverage_sql = format!(
-                    "SELECT COALESCE(SUM(d.body_known),0),COUNT(*)-COALESCE(SUM(d.body_known),0) {}",
-                    filtered(false, &coverage_request)
-                );
-                tx.query_row(
-                    &coverage_sql,
-                    params_from_iter(bindings(&coverage_request, from, before, false).iter()),
-                    |r| {
-                        Ok(Coverage {
-                            known: r.get(0)?,
-                            unknown: r.get(1)?,
-                        })
-                    },
-                )
-                .map_err(err)?
-            } else {
-                Coverage {
-                    known: 0,
-                    unknown: 0,
-                }
+            let body_coverage = Coverage {
+                known: 0,
+                unknown: 0,
             };
             let snapshot = self.snapshot_metadata(&tx, messages, matched)?;
             Ok(Page {
@@ -1037,13 +1001,13 @@ mod tests {
         store.update_mail(&m).unwrap();
         let mut r = request(ListMode::Messages, 2);
         r.query.view = "all".into();
-        // 正文覆盖只在「正文搜索」时计算；列表默认不再做这次全量扫描。
+        // 正文覆盖提示已移除；保留零值字段，搜索不再做全量覆盖扫描。
         r.query.search = "invoice".into();
         r.query.search_field = "body".into();
         let page = store.mail_page(&r).unwrap();
         assert_eq!(
             (page.body_coverage.known, page.body_coverage.unknown),
-            (6, 1)
+            (0, 0)
         );
         r.cursor = page.next_cursor.unwrap();
         store
