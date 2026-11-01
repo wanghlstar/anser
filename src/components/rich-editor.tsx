@@ -108,7 +108,37 @@ export function RichEditor({
         "aria-label": "邮件正文",
         "aria-multiline": "true",
       },
-      handleKeyDown: (_view, event) => {
+      handleKeyDown: (view, event) => {
+        if (
+          event.key === "Tab" &&
+          !event.shiftKey &&
+          !event.metaKey &&
+          !event.ctrlKey &&
+          !event.altKey &&
+          !event.isComposing &&
+          !latest.current.disabled
+        ) {
+          let nativeTab = false;
+          const { $from } = view.state.selection;
+          for (let depth = $from.depth; depth > 0; depth -= 1) {
+            const name = $from.node(depth).type.name;
+            if (
+              name === "tableCell" ||
+              name === "tableHeader" ||
+              name === "listItem" ||
+              name === "taskItem" ||
+              name === "codeBlock"
+            ) {
+              nativeTab = true;
+              break;
+            }
+          }
+          if (!nativeTab) {
+            event.preventDefault();
+            view.dispatch(view.state.tr.insertText("\u00A0\u00A0\u00A0\u00A0"));
+            return true;
+          }
+        }
         if (
           (event.metaKey || event.ctrlKey) &&
           event.key.toLowerCase() === "f" &&

@@ -583,3 +583,64 @@ it("applies a preset text color through the toolbar and stores it as hex", async
     expect(change.mock.calls.at(-1)?.[1]).toContain("color: #1a56b0"),
   );
 });
+
+it("inserts four spaces for Tab in the body", async () => {
+  await act(async () =>
+    root.render(
+      <RichEditor
+        body=""
+        html="<p>正文</p>"
+        disabled={false}
+        onChange={vi.fn()}
+        onBusy={vi.fn()}
+        readImages={vi.fn()}
+      />,
+    ),
+  );
+  await vi.waitFor(() =>
+    expect(document.querySelector(".rich-body")).not.toBeNull(),
+  );
+  const editor = captured.editor as Editor;
+  await act(async () => {
+    editor.commands.focus("end");
+    editor.view.dom.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "Tab",
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  });
+  expect(editor.state.doc.textContent).toContain("\u00A0\u00A0\u00A0\u00A0");
+});
+
+it("leaves Tab to the list keymap instead of inserting spaces", async () => {
+  await act(async () =>
+    root.render(
+      <RichEditor
+        body=""
+        html="<ul><li><p>一</p></li><li><p>二</p></li></ul>"
+        disabled={false}
+        onChange={vi.fn()}
+        onBusy={vi.fn()}
+        readImages={vi.fn()}
+      />,
+    ),
+  );
+  await vi.waitFor(() =>
+    expect(document.querySelector(".rich-body")).not.toBeNull(),
+  );
+  const editor = captured.editor as Editor;
+  await act(async () => {
+    editor.commands.focus("end");
+    editor.view.dom.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "Tab",
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  });
+  expect(editor.state.doc.textContent).not.toContain("\u00A0");
+  expect((editor.getHTML().match(/<ul/g) || []).length).toBeGreaterThan(1);
+});
