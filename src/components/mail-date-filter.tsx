@@ -136,7 +136,7 @@ export function MailDateFilter({
           size="icon"
           aria-label="清除时间筛选"
           title="清除时间筛选"
-          className="absolute -top-1.5 -right-1.5 h-4 w-4 rounded-full border bg-background p-0 shadow-sm"
+          className="absolute -top-1 -right-1 h-3.5 w-3.5 rounded-full border border-border/70 bg-background p-0 text-muted-foreground shadow-xs transition-colors hover:bg-accent hover:text-foreground"
           onClick={(event) => {
             event.stopPropagation();
             onChange({ dateFrom: undefined, dateBefore: undefined });
@@ -144,7 +144,7 @@ export function MailDateFilter({
             setPicks(0);
           }}
         >
-          <X size={10} />
+          <X size={8} strokeWidth={2.25} />
         </Button>
       )}
     </div>
