@@ -174,6 +174,43 @@ beforeEach(async () => {
     root.render(<App />);
   });
 });
+it("exposes search fields and only applies the search on Enter", async () => {
+  await click(nav("全部收件箱"));
+  await vi.waitFor(() =>
+    expect(
+      host.querySelectorAll("button.mail-row-main").length,
+    ).toBeGreaterThan(0),
+  );
+  await click(host.querySelector('button[aria-label="搜索筛选"]'));
+  expect(document.body.textContent).toContain("搜索范围");
+  expect(document.body.textContent).toContain("附加条件");
+  const before = host.querySelectorAll("button.mail-row-main").length;
+  const input = host.querySelector(
+    'input[aria-label="搜索邮件"]',
+  ) as HTMLInputElement;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(
+      HTMLInputElement.prototype,
+      "value",
+    )!.set!.call(input, "no-such-mail-xyz");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 300));
+  });
+  expect(host.querySelectorAll("button.mail-row-main").length).toBe(before);
+  await act(async () => {
+    input.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "Enter",
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  });
+  await vi.waitFor(() => expect(host.textContent).toContain("没有找到邮件"));
+});
+
 it("applies the saved sidebar font scale to the CSS variable on mount", async () => {
   await call("save_preferences", {
     preferences: {
@@ -2109,9 +2146,7 @@ describe("mail action shortcuts", () => {
     await click(host.querySelector("button.mail-row-main"));
     const calls = vi.spyOn(api, "call");
     const reader = host.querySelector(".reader")!;
-    const search = host.querySelector(
-      'input[placeholder="搜索当前范围的邮件…"]',
-    )!;
+    const search = host.querySelector('input[aria-label="搜索邮件"]')!;
     expect((await key(search, "r")).defaultPrevented).toBe(false);
     for (const options of [
       { repeat: true },

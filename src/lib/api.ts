@@ -91,6 +91,42 @@ export async function snapshot(query: Query): Promise<Snapshot> {
   if (demo) {
     const all = demo.messages;
     const inboxScope = inboxScopeFolders(demo.accounts);
+    const groups: { fields: string[]; value: string }[] = [];
+    if (query.search.trim())
+      groups.push({
+        fields: query.searchFields?.length
+          ? query.searchFields
+          : query.searchField
+            ? [query.searchField]
+            : [],
+        value: query.search,
+      });
+    for (const condition of query.searchConditions ?? [])
+      if (condition.value.trim())
+        groups.push({ fields: condition.fields, value: condition.value });
+    const groupMatches = (
+      m: (typeof all)[number],
+      group: (typeof groups)[number],
+    ) => {
+      const value = group.value.toLowerCase();
+      if (!value) return true;
+      const fields = group.fields.length
+        ? group.fields
+        : ["subject", "sender", "recipients", "body"];
+      return fields.some((field) => {
+        if (field === "attachments") return false;
+        if (field === "body" && group.value.length < 3) return false;
+        const text =
+          field === "body"
+            ? m.body
+            : field === "subject"
+              ? m.subject
+              : field === "sender"
+                ? m.sender
+                : m.recipients;
+        return text.toLowerCase().includes(value);
+      });
+    };
     const messages = all.filter(
       (m) =>
         (!query.accountId || m.accountId === query.accountId) &&
@@ -108,13 +144,10 @@ export async function snapshot(query: Query): Promise<Snapshot> {
         (query.view !== "unread" || !m.isRead) &&
         (query.view !== "starred" || m.starred) &&
         (query.view !== "sent" || m.sourceFolder === "Sent") &&
-        (query.searchField &&
-        ["subject", "sender", "recipients", "body"].includes(query.searchField)
-          ? m[query.searchField as "subject" | "sender" | "recipients" | "body"]
-          : `${m.subject} ${m.sender} ${m.recipients} ${m.body}`
-        )
-          .toLowerCase()
-          .includes(query.search.toLowerCase()),
+        (groups.length === 0 ||
+          (query.searchMode === "any"
+            ? groups.some((group) => groupMatches(m, group))
+            : groups.every((group) => groupMatches(m, group)))),
     );
     messages.sort(
       (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),

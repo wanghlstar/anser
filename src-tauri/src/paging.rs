@@ -179,37 +179,133 @@ fn scope(request: &PageRequest) -> Result<String> {
         Sha256::digest(serde_json::to_vec(&clean).map_err(err)?)
     ))
 }
+fn search_groups(q: &Query) -> Vec<(Vec<String>, String)> {
+    let mut groups = Vec::new();
+    if !q.search.trim().is_empty() {
+        let fields = if !q.search_fields.is_empty() {
+            q.search_fields.clone()
+        } else if !q.search_field.is_empty() {
+            vec![q.search_field.clone()]
+        } else {
+            Vec::new()
+        };
+        groups.push((fields, q.search.clone()));
+    }
+    for condition in &q.search_conditions {
+        if !condition.value.trim().is_empty() {
+            groups.push((condition.fields.clone(), condition.value.clone()));
+        }
+    }
+    groups
+}
+
+/// 单个条件字段的匹配 SQL；空字段列表表示「全部字段」。
+/// 正文短词（少于 3 字）无法命中 trigram，降级为只查元数据字段。
+fn condition_sql(fields: &[String], value: &str, placeholder: usize) -> String {
+    let short = value.chars().count() < 3;
+    let expr = |field: &str| match field {
+        "subject" => Some("d.subject"),
+        "sender" => Some("d.sender"),
+        "recipients" => Some("d.recipients"),
+        "body" => Some("d.body"),
+        "attachments" => Some("d.attachment_names"),
+        _ => None,
+    };
+    if fields.is_empty() || fields.iter().any(|field| field == "all") {
+        return if short {
+            format!(
+                "(instr(lower(d.subject),lower(?{placeholder}))>0 OR instr(lower(d.sender),lower(?{placeholder}))>0 OR instr(lower(d.recipients),lower(?{placeholder}))>0 OR instr(lower(d.attachment_names),lower(?{placeholder}))>0)"
+            )
+        } else {
+            format!("instr(lower(d.all_text),lower(?{placeholder}))>0")
+        };
+    }
+    let mut parts = Vec::new();
+    for field in fields {
+        if field == "body" && short {
+            continue;
+        }
+        if let Some(column) = expr(field) {
+            parts.push(format!(
+                "instr(lower({column}),lower(?{placeholder}))>0"
+            ));
+        }
+    }
+    if parts.is_empty() {
+        "0".into()
+    } else {
+        format!("({})", parts.join(" OR "))
+    }
+}
+
+fn search_terms(q: &Query) -> (String, Vec<String>) {
+    let groups = search_groups(q);
+    if groups.is_empty() {
+        return ("1".into(), Vec::new());
+    }
+    let mut parts = Vec::new();
+    let mut params = Vec::new();
+    for (fields, value) in groups {
+        let placeholder = 13 + params.len();
+        let mut condition = condition_sql(&fields, &value, placeholder);
+        if condition == "0" {
+            parts.push("(0)".into());
+            continue;
+        }
+        params.push(value.clone());
+        if value.chars().count() >= 3 {
+            if let Some(phrase) = search::phrase(&value) {
+                let phrase_placeholder = 13 + params.len();
+                params.push(phrase);
+                condition = format!(
+                    "(d.rowid IN (SELECT rowid FROM search_fts WHERE search_fts MATCH ?{phrase_placeholder}) AND {condition})"
+                );
+            }
+        }
+        parts.push(format!("({condition})"));
+    }
+    let mode = if q.search_mode == "any" { " OR " } else { " AND " };
+    (parts.join(mode), params)
+}
+
+fn searches_body(q: &Query) -> bool {
+    search_groups(q).into_iter().any(|(fields, value)| {
+        value.chars().count() >= 3
+            && (fields.is_empty()
+                || fields.iter().any(|field| field == "all" || field == "body"))
+    })
+}
+
 fn bindings(
     request: &PageRequest,
     from: Option<f64>,
     before: Option<f64>,
-    searching: bool,
+    _searching: bool,
 ) -> Vec<Value> {
     let q = &request.query;
-    vec![
+    // ?2/?8/?10 仍被旧的单条件子句引用；这里置空让它恒为真，
+    // 真正的搜索由 search_terms 生成的动态子句负责。
+    let mut values: Vec<Value> = vec![
         q.account_id.clone().into(),
-        if searching {
-            q.search.clone()
-        } else {
-            String::new()
-        }
-        .into(),
+        String::new().into(),
         q.folder.clone().into(),
         q.view.clone().into(),
         (q.unread_only as i64).into(),
         (q.starred_only as i64).into(),
         (q.attachments_only as i64).into(),
-        q.search_field.clone().into(),
+        String::new().into(),
         q.remote_folder.clone().into(),
-        if searching {
-            search::phrase(&q.search).unwrap_or_default()
-        } else {
-            String::new()
-        }
-        .into(),
+        String::new().into(),
         from.into(),
         before.into(),
-    ]
+    ];
+    values.extend(
+        search_terms(q)
+            .1
+            .into_iter()
+            .map(Value::from),
+    );
+    values
 }
 fn filtered(indexed: bool, request: &PageRequest) -> String {
     // 列表以 search_documents 为主表：它有 instant/starred/... 标量列和索引。
@@ -221,7 +317,8 @@ fn filtered(indexed: bool, request: &PageRequest) -> String {
         && q.account_id.starts_with("archive:")
         && !q.remote_folder.is_empty()
         && q.folder.is_empty();
-    let mut where_sql = search::listing_predicate(indexed, local_archive);
+    let (search_sql, _) = search_terms(q);
+    let mut where_sql = search::listing_predicate_with(indexed, local_archive, &search_sql);
     where_sql = where_sql
         .replace("listing.account_id", "d.account_id")
         .replace("listing.id", "d.mail_id")
@@ -282,6 +379,8 @@ fn fast_scope_count(
     if q.list_mode != ListMode::Messages
         || !q.search.is_empty()
         || !q.search_field.is_empty()
+        || !q.search_fields.is_empty()
+        || !q.search_conditions.is_empty()
         || q.starred_only
         || q.attachments_only
         || from.is_some()
@@ -424,12 +523,13 @@ impl Store {
             let (instant,root)=anchor.ok_or("当前邮件已无可用来源，无法跳转")?;
             let mut values=bindings(request,from,before,true);
             values.extend([instant.into(),id.to_string().into(),if request.query.list_mode==ListMode::Conversations {root.unwrap_or_default()}else{String::new()}.into()]);
+            let base=13+search_terms(&request.query).1.len();
             let (condition,order)=if direction=="next" {
-                ("CASE WHEN ?13 IS NULL THEN u.instant IS NULL AND u.id>?14 ELSE u.instant<?13 OR u.instant IS NULL OR (u.instant=?13 AND u.id>?14) END","u.instant DESC,u.id ASC")
+                (format!("CASE WHEN ?{base} IS NULL THEN u.instant IS NULL AND u.id>?{} ELSE u.instant<?{base} OR u.instant IS NULL OR (u.instant=?{base} AND u.id>?{}) END",base+1,base+1),"u.instant DESC,u.id ASC")
             }else{
-                ("CASE WHEN ?13 IS NULL THEN u.instant IS NOT NULL OR (u.instant IS NULL AND u.id<?14) ELSE u.instant>?13 OR (u.instant=?13 AND u.id<?14) END","u.instant ASC,u.id DESC")
+                (format!("CASE WHEN ?{base} IS NULL THEN u.instant IS NOT NULL OR (u.instant IS NULL AND u.id<?{}) ELSE u.instant>?{base} OR (u.instant IS NULL AND u.id<?{}) OR (u.instant=?{base} AND u.id<?{}) END",base+1,base+1,base+1),"u.instant ASC,u.id DESC")
             };
-            let sql=format!("{} SELECT listing.data,u.is_read,u.starred,u.has_attachments,u.root,u.count FROM units u JOIN message_listing listing ON listing.id=u.id WHERE ({condition}) AND (?15='' OR u.root!=?15) ORDER BY {order} LIMIT 1",units(request));
+            let sql=format!("{} SELECT listing.data,u.is_read,u.starred,u.has_attachments,u.root,u.count FROM units u JOIN message_listing listing ON listing.id=u.id WHERE ({condition}) AND (?{}='' OR u.root!=?{}) ORDER BY {order} LIMIT 1",units(request),base+2,base+2);
             let mut stmt=tx.prepare(&sql).map_err(err)?;let mut rows=stmt.query(params_from_iter(values.iter())).map_err(err)?;
             let mail=if let Some(row)=rows.next().map_err(err)? {
                 let mut mail:Mail=serde_json::from_str(&row.get::<_,String>(0).map_err(err)?).map_err(err)?;
@@ -491,11 +591,12 @@ impl Store {
                     )
                     .map_err(err)?,
             };
+            let base = 13 + search_terms(&request.query).1.len();
             if let Some(c) = cursor {
                 let mut anchor = values.clone();
                 anchor.push(c.id.clone().into());
                 anchor.push(c.instant.into());
-                let exists:bool=tx.query_row(&format!("{cte} SELECT EXISTS(SELECT 1 FROM units WHERE id=?13 AND instant IS ?14)"),params_from_iter(anchor.iter()),|r|r.get(0)).map_err(err)?;
+                let exists:bool=tx.query_row(&format!("{cte} SELECT EXISTS(SELECT 1 FROM units WHERE id=?{base} AND instant IS ?{})",base+1),params_from_iter(anchor.iter()),|r|r.get(0)).map_err(err)?;
                 if !exists {
                     return Err("分页位置无效，请重新搜索".into());
                 }
@@ -509,8 +610,8 @@ impl Store {
                 ((size + 1) as i64).into(),
             ]);
             let sql=format!("{cte} SELECT listing.data,u.instant,u.is_read,u.starred,u.has_attachments,u.root,u.count FROM units u JOIN message_listing listing ON listing.id=u.id
-                WHERE ?13=0 OR CASE WHEN ?14 IS NULL THEN u.instant IS NULL AND u.id>?15 ELSE u.instant<?14 OR u.instant IS NULL OR (u.instant=?14 AND u.id>?15) END
-                ORDER BY u.instant DESC,u.id ASC LIMIT ?16");
+                WHERE ?{base}=0 OR CASE WHEN ?{} IS NULL THEN u.instant IS NULL AND u.id>?{} ELSE u.instant<?{} OR u.instant IS NULL OR (u.instant=?{} AND u.id>?{}) END
+                ORDER BY u.instant DESC,u.id ASC LIMIT ?{}",base+1,base+2,base+1,base+1,base+2,base+3);
             let mut stmt = tx.prepare(&sql).map_err(err)?;
             let mut rows = stmt
                 .query(params_from_iter(page_values.iter()))
@@ -549,17 +650,22 @@ impl Store {
             };
             // 正文覆盖只用于「正文范围」提示；默认列表不做这次全量扫描，
             // 否则 6 万封时要读完整份索引，首屏会卡 10 秒以上。
-            let needs_coverage = !request.query.search.is_empty()
-                && (request.query.search_field.is_empty()
-                    || request.query.search_field == "body");
+            let needs_coverage = searches_body(&request.query);
             let body_coverage = if needs_coverage {
+                // 覆盖提示统计的是当前范围，不叠加搜索词；否则未保存正文的邮件
+                // 会先被搜索条件排除，提示永远显示“0 封未完整”。
+                let mut coverage_request = request.clone();
+                coverage_request.query.search.clear();
+                coverage_request.query.search_fields.clear();
+                coverage_request.query.search_conditions.clear();
+                coverage_request.query.search_field.clear();
                 let coverage_sql = format!(
                     "SELECT COALESCE(SUM(d.body_known),0),COUNT(*)-COALESCE(SUM(d.body_known),0) {}",
-                    filtered(false, request)
+                    filtered(false, &coverage_request)
                 );
                 tx.query_row(
                     &coverage_sql,
-                    params_from_iter(bindings(request, from, before, false).iter()),
+                    params_from_iter(bindings(&coverage_request, from, before, false).iter()),
                     |r| {
                         Ok(Coverage {
                             known: r.get(0)?,
@@ -798,6 +904,39 @@ mod tests {
             }
         }
     }
+    #[test]
+    fn multi_field_and_multiple_conditions_filter_pages() {
+        let (_dir, store) = seed_with_distribution(2000, true);
+        let mut r = request(ListMode::Messages, 50);
+        r.query.view = "all".into();
+        r.query.search = "稀有预算审核 1000".into();
+        r.query.search_fields = vec!["subject".into()];
+        assert_eq!(all(&store, r.clone()).len(), 1);
+        r.query.search = "稀有".into();
+        r.query.search_fields = vec!["body".into()];
+        // 两个字的正文词不走全表扫描，也不应命中。
+        assert_eq!(all(&store, r.clone()).len(), 0);
+        r.query.search = "稀有正文".into();
+        assert_eq!(all(&store, r.clone()).len(), 1);
+        r.query.search = String::new();
+        r.query.search_conditions = vec![
+            crate::models::SearchCondition {
+                fields: vec!["subject".into()],
+                value: "稀有预算审核 1000".into(),
+            },
+            crate::models::SearchCondition {
+                fields: vec!["body".into()],
+                value: "稀有正文".into(),
+            },
+        ];
+        r.query.search_mode = "all".into();
+        assert_eq!(all(&store, r.clone()).len(), 1);
+        r.query.search_conditions[1].value = "不存在".into();
+        assert_eq!(all(&store, r.clone()).len(), 0);
+        r.query.search_mode = "any".into();
+        assert_eq!(all(&store, r.clone()).len(), 1);
+    }
+
     #[test]
     fn sql_group_state_and_scoped_search_match_legacy_before_limits() {
         let (_dir, store) = seed(31);

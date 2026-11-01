@@ -43,9 +43,21 @@ function store(key: string, items: SavedSearch[]) {
     // 本地存储不可用时仍允许本次会话使用。
   }
 }
+const FIELD_LABELS: Record<string, string> = {
+  subject: "主题",
+  sender: "发件人",
+  recipients: "收件人",
+  body: "全文",
+  attachments: "附件名",
+};
+function fieldsLabel(fields: string[] | undefined) {
+  return (fields ?? []).map((field) => FIELD_LABELS[field]).filter(Boolean);
+}
 function hasConditions(query: Query) {
   return Boolean(
     query.search.trim() ||
+    query.searchFields?.length ||
+    query.searchConditions?.length ||
     query.starredOnly ||
     query.attachmentsOnly ||
     query.searchField ||
@@ -55,11 +67,18 @@ function hasConditions(query: Query) {
 }
 function summary(query: Query) {
   const bits = [query.search.trim() ? `“${query.search.trim()}”` : ""];
-  if (query.searchField === "subject") bits.push("主题");
-  else if (query.searchField === "sender") bits.push("发件人");
-  else if (query.searchField === "recipients") bits.push("收件人");
-  else if (query.searchField === "body") bits.push("正文");
-  else if (query.searchField === "attachments") bits.push("附件名");
+  const mainFields = query.searchFields?.length
+    ? query.searchFields
+    : query.searchField
+      ? [query.searchField]
+      : [];
+  bits.push(...fieldsLabel(mainFields));
+  for (const condition of query.searchConditions ?? []) {
+    const fields = fieldsLabel(condition.fields);
+    bits.push(
+      `${fields.length ? fields.join("/") + " " : ""}“${condition.value}”`,
+    );
+  }
   if (query.starredOnly) bits.push("星标");
   if (query.attachmentsOnly) bits.push("有附件");
   if (query.unreadOnly || query.view === "unread") bits.push("未读");
@@ -97,13 +116,16 @@ export function SearchBookmarks({
   }
 
   useEffect(() => {
-    if (!query.search.trim()) return;
+    if (!hasConditions(query)) return;
     const timer = setTimeout(() => remember(query), 1500);
     return () => clearTimeout(timer);
     // 每个查询条件都单独触发；打字期间不清空输入，只重置计时。
   }, [
     query.search,
     query.searchField,
+    query.searchFields,
+    query.searchConditions,
+    query.searchMode,
     query.accountId,
     query.folder,
     query.view,

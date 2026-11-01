@@ -265,7 +265,21 @@ pub struct Query {
     #[serde(default)]
     pub search_field: String,
     #[serde(default)]
+    pub search_fields: Vec<String>,
+    #[serde(default)]
+    pub search_conditions: Vec<SearchCondition>,
+    #[serde(default)]
+    pub search_mode: String,
+    #[serde(default)]
     pub list_mode: ListMode,
+}
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchCondition {
+    #[serde(default)]
+    pub fields: Vec<String>,
+    #[serde(default)]
+    pub value: String,
 }
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

@@ -372,6 +372,9 @@ pub(super) fn query() -> Query {
         starred_only: false,
         attachments_only: false,
         search_field: String::new(),
+        search_fields: Vec::new(),
+        search_conditions: Vec::new(),
+        search_mode: String::new(),
         list_mode: ListMode::Conversations,
     }
 }

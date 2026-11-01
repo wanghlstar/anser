@@ -140,14 +140,23 @@ pub fn predicate(indexed: bool) -> String {
         cc = normalized("cc"),
         email = contact_email,
     );
-    format!("(?2='' OR listing.id IN (SELECT mail_id FROM search_documents WHERE instr(lower(CASE ?8 WHEN 'subject' THEN subject WHEN 'sender' THEN sender WHEN 'recipients' THEN recipients WHEN 'body' THEN body ELSE all_text END),lower(?2))>0 {candidates}) OR {contact})")
+    format!("(?2='' OR listing.id IN (SELECT mail_id FROM search_documents WHERE instr(lower(CASE ?8 WHEN 'subject' THEN subject WHEN 'sender' THEN sender WHEN 'recipients' THEN recipients WHEN 'body' THEN body WHEN 'attachments' THEN attachment_names ELSE all_text END),lower(?2))>0 {candidates}) OR {contact})")
 }
 
 /// 列表 WHERE 子句：沿用 store.rs 原有口径，仅把检索子句换成投影+FTS 候选。
 /// 「全部/未读」按每账号生效的收件箱范围过滤：未配置 inboxFolders 的账号只算
 /// INBOX，已配置的账号只算配置内的文件夹（角色排除不再叠加）。
 pub(crate) fn listing_predicate(indexed: bool, local_archive: bool) -> String {
-    let search = predicate(indexed);
+    listing_predicate_with(indexed, local_archive, &predicate(indexed))
+}
+
+/// 列表谓词的可替换搜索部分：分页用多字段/多条件时传入自己的子句；
+/// 其余范围、文件夹、星标等口径与 `listing_predicate` 完全一致。
+pub(crate) fn listing_predicate_with(
+    indexed: bool,
+    local_archive: bool,
+    search: &str,
+) -> String {
     // 「本地存档」不含已发送副本：源文件夹是已发送角色，或本地 Sent 兜底。
     // 收件箱同步回来的同一封邮件（另一个 hash）仍然保留。归档组的具体文件夹
     // 已经由 local_folder 定位，不再需要逐行查来源排除已发送副本。

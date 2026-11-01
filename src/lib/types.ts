@@ -128,6 +128,9 @@ export interface Query {
   starredOnly?: boolean;
   attachmentsOnly?: boolean;
   searchField?: string;
+  searchFields?: string[];
+  searchConditions?: { fields: string[]; value: string }[];
+  searchMode?: "all" | "any";
   remoteFolder?: string;
   listMode?: "conversations" | "messages";
   dateFrom?: string;

@@ -142,6 +142,18 @@ import { Separator } from "./components/ui/separator";
 import { Badge } from "./components/ui/badge";
 import { Checkbox } from "./components/ui/checkbox";
 import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "./components/ui/popover";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "./components/ui/select";
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuGroup,
@@ -394,6 +406,13 @@ export default function App() {
     [detailRetry, setDetailRetry] = useState(0),
     [checked, setChecked] = useState<string[]>([]),
     [search, setSearch] = useState(""),
+    [searchFields, setSearchFields] = useState<string[]>([]),
+    [searchConditions, setSearchConditions] = useState<
+      { fields: string[]; value: string }[]
+    >([]),
+    [searchMode, setSearchMode] = useState<"all" | "any">("all"),
+    [searchStarred, setSearchStarred] = useState(false),
+    [searchAttachments, setSearchAttachments] = useState(false),
     [accountDialog, setAccountDialog] = useState(false),
     [editingAccount, setEditingAccount] = useState<Account | null>(null),
     [segmentAccount, setSegmentAccount] = useState<Account | null>(null),
@@ -1022,13 +1041,51 @@ export default function App() {
       cleanup();
     };
   }, [refresh]);
+  // 搜索只在回车/点「搜索」时提交，输入和勾选筛选不再每一下都刷新列表。
+  function applySearch() {
+    setQuery((q) => ({
+      ...q,
+      search,
+      searchFields,
+      searchConditions: searchConditions.filter((c) => c.value.trim()),
+      searchMode,
+      searchField: "",
+      starredOnly: searchStarred,
+      attachmentsOnly: searchAttachments,
+      limit: listPageSize,
+    }));
+  }
   useEffect(() => {
-    const timer = setTimeout(
-      () => setQuery((q) => ({ ...q, search, limit: listPageSize })),
-      200,
-    );
-    return () => clearTimeout(timer);
-  }, [search]);
+    setSearchStarred(!!query.starredOnly);
+    setSearchAttachments(!!query.attachmentsOnly);
+  }, [query.starredOnly, query.attachmentsOnly]);
+  function clearSearch() {
+    setSearch("");
+    setSearchFields([]);
+    setSearchConditions([]);
+    setSearchMode("all");
+    setSearchStarred(false);
+    setSearchAttachments(false);
+    setQuery((q) => ({
+      ...q,
+      search: "",
+      searchFields: [],
+      searchConditions: [],
+      searchMode: "all",
+      searchField: "",
+      starredOnly: false,
+      attachmentsOnly: false,
+      limit: listPageSize,
+    }));
+  }
+  function searchHitsField(field: string) {
+    const fields = query.searchFields?.length
+      ? query.searchFields
+      : query.searchField
+        ? [query.searchField]
+        : [];
+    return fields.length === 0 || fields.includes(field);
+  }
   // 浮层按主内容区（侧栏右侧）居中，而不是按整个窗口居中。
   useEffect(() => {
     document.body.classList.toggle("sidebar-visible", sidebarOpen);
@@ -4163,14 +4220,20 @@ export default function App() {
                         ref={searchRef}
                         value={search}
                         onChange={(e) => setSearch(e.target.value)}
-                        placeholder="搜索当前范围的邮件…"
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            applySearch();
+                          }
+                        }}
+                        placeholder="搜索当前范围的邮件…（回车搜索）"
                         aria-label="搜索邮件"
                         maxLength={500}
                       />
                       {search ? (
                         <Button
                           variant="ghost"
-                          onClick={() => setSearch("")}
+                          onClick={clearSearch}
                           title="清除搜索"
                         >
                           <X size={14} />
@@ -4179,88 +4242,238 @@ export default function App() {
                         <kbd>⌘ K</kbd>
                       )}
                     </div>
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
+                    <Popover>
+                      <PopoverTrigger asChild>
                         <Button
                           variant={
-                            query.starredOnly ||
-                            query.attachmentsOnly ||
-                            query.searchField
+                            searchFields.length || searchConditions.length
                               ? "secondary"
                               : "ghost"
                           }
-                          size="icon-lg"
-                          aria-label="筛选邮件"
-                          title={
-                            query.starredOnly ||
-                            query.attachmentsOnly ||
-                            query.searchField
-                              ? "筛选邮件（已启用）"
-                              : "筛选邮件"
-                          }
+                          size="sm"
+                          aria-label="搜索筛选"
+                          title="搜索筛选：字段、附加条件、组合方式"
                         >
                           <SlidersHorizontal />
+                          搜索筛选
+                          {(searchFields.length > 0 ||
+                            searchConditions.length > 0 ||
+                            searchStarred ||
+                            searchAttachments) && (
+                            <Badge variant="secondary">
+                              {searchConditions.length +
+                                (searchFields.length > 0 ? 1 : 0) +
+                                (searchStarred ? 1 : 0) +
+                                (searchAttachments ? 1 : 0)}
+                            </Badge>
+                          )}
                         </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuLabel>邮件筛选</DropdownMenuLabel>
-                        <DropdownMenuCheckboxItem
-                          checked={!!query.starredOnly}
-                          onCheckedChange={(checked) =>
-                            setQuery((q) => ({
-                              ...q,
-                              starredOnly: checked,
-                              limit: listPageSize,
-                            }))
-                          }
-                        >
-                          <Star size={14} />
-                          星标邮件
-                        </DropdownMenuCheckboxItem>
-                        <DropdownMenuCheckboxItem
-                          checked={!!query.attachmentsOnly}
-                          onCheckedChange={(checked) =>
-                            setQuery((q) => ({
-                              ...q,
-                              attachmentsOnly: checked,
-                              limit: listPageSize,
-                            }))
-                          }
-                        >
-                          <Paperclip size={14} />
-                          有附件
-                        </DropdownMenuCheckboxItem>
-                        <DropdownMenuSeparator />
-                        <DropdownMenuLabel>搜索字段</DropdownMenuLabel>
-                        <DropdownMenuRadioGroup
-                          value={query.searchField || ""}
-                          onValueChange={(value) =>
-                            setQuery((q) => ({
-                              ...q,
-                              searchField: value,
-                              limit: listPageSize,
-                            }))
-                          }
-                        >
-                          {[
-                            ["", "全部字段"],
-                            ["subject", "主题"],
-                            ["sender", "发件人"],
-                            ["recipients", "收件人"],
-                            ["body", "正文"],
-                            ["attachments", "附件名"],
-                          ].map(([value, label]) => (
-                            <DropdownMenuRadioItem value={value} key={value}>
-                              {label}
-                            </DropdownMenuRadioItem>
-                          ))}
-                        </DropdownMenuRadioGroup>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
+                      </PopoverTrigger>
+                      <PopoverContent align="end" className="w-[340px] p-3">
+                        <div className="space-y-3">
+                          <div>
+                            <Label className="text-xs">搜索范围</Label>
+                            <div className="mt-1 grid grid-cols-2 gap-1">
+                              <Label className="flex items-center gap-1.5 text-xs">
+                                <Checkbox
+                                  checked={searchFields.length === 0}
+                                  onCheckedChange={() => setSearchFields([])}
+                                />
+                                全部字段
+                              </Label>
+                              {[
+                                ["subject", "主题"],
+                                ["sender", "发件人"],
+                                ["recipients", "收件人"],
+                                ["body", "全文"],
+                                ["attachments", "附件名"],
+                              ].map(([value, label]) => (
+                                <Label
+                                  key={value}
+                                  className="flex items-center gap-1.5 text-xs"
+                                >
+                                  <Checkbox
+                                    checked={searchFields.includes(value)}
+                                    onCheckedChange={(checked) =>
+                                      setSearchFields((fields) =>
+                                        checked
+                                          ? [...fields, value]
+                                          : fields.filter((f) => f !== value),
+                                      )
+                                    }
+                                  />
+                                  {label}
+                                </Label>
+                              ))}
+                            </div>
+                            <p className="mt-1 text-[11px] text-muted-foreground">
+                              全文字段需至少 3 个字；1–2
+                              字只查主题、发件人、收件人和附件名。
+                            </p>
+                          </div>
+                          <div className="space-y-1.5">
+                            <div className="flex items-center justify-between">
+                              <Label className="text-xs">附加条件</Label>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                disabled={searchConditions.length >= 5}
+                                onClick={() =>
+                                  setSearchConditions((conditions) => [
+                                    ...conditions,
+                                    { fields: [], value: "" },
+                                  ])
+                                }
+                              >
+                                + 添加
+                              </Button>
+                            </div>
+                            {searchConditions.map((condition, index) => (
+                              <div
+                                key={index}
+                                className="flex items-center gap-1.5"
+                              >
+                                <Select
+                                  value={condition.fields[0] || "all"}
+                                  onValueChange={(value) =>
+                                    setSearchConditions((conditions) =>
+                                      conditions.map((c, i) =>
+                                        i === index
+                                          ? {
+                                              ...c,
+                                              fields:
+                                                value === "all" ? [] : [value],
+                                            }
+                                          : c,
+                                      ),
+                                    )
+                                  }
+                                >
+                                  <SelectTrigger className="h-8 w-[88px] text-xs">
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="all">
+                                      全部字段
+                                    </SelectItem>
+                                    <SelectItem value="subject">
+                                      主题
+                                    </SelectItem>
+                                    <SelectItem value="sender">
+                                      发件人
+                                    </SelectItem>
+                                    <SelectItem value="recipients">
+                                      收件人
+                                    </SelectItem>
+                                    <SelectItem value="body">全文</SelectItem>
+                                    <SelectItem value="attachments">
+                                      附件名
+                                    </SelectItem>
+                                  </SelectContent>
+                                </Select>
+                                <Input
+                                  className="h-8 flex-1 text-xs"
+                                  value={condition.value}
+                                  placeholder="关键词"
+                                  onChange={(e) =>
+                                    setSearchConditions((conditions) =>
+                                      conditions.map((c, i) =>
+                                        i === index
+                                          ? { ...c, value: e.target.value }
+                                          : c,
+                                      ),
+                                    )
+                                  }
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter") {
+                                      e.preventDefault();
+                                      applySearch();
+                                    }
+                                  }}
+                                />
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  aria-label="删除条件"
+                                  onClick={() =>
+                                    setSearchConditions((conditions) =>
+                                      conditions.filter((_, i) => i !== index),
+                                    )
+                                  }
+                                >
+                                  <X size={14} />
+                                </Button>
+                              </div>
+                            ))}
+                          </div>
+                          <div className="flex flex-wrap items-center gap-3">
+                            <Label className="flex items-center gap-1.5 text-xs">
+                              <Checkbox
+                                checked={searchStarred}
+                                onCheckedChange={(checked) =>
+                                  setSearchStarred(!!checked)
+                                }
+                              />
+                              星标邮件
+                            </Label>
+                            <Label className="flex items-center gap-1.5 text-xs">
+                              <Checkbox
+                                checked={searchAttachments}
+                                onCheckedChange={(checked) =>
+                                  setSearchAttachments(!!checked)
+                                }
+                              />
+                              有附件
+                            </Label>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <Label className="text-xs">组合</Label>
+                            <Button
+                              size="sm"
+                              variant={
+                                searchMode === "all" ? "secondary" : "ghost"
+                              }
+                              onClick={() => setSearchMode("all")}
+                            >
+                              全部满足
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant={
+                                searchMode === "any" ? "secondary" : "ghost"
+                              }
+                              onClick={() => setSearchMode("any")}
+                            >
+                              任一满足
+                            </Button>
+                          </div>
+                          <div className="flex justify-end gap-2 border-t pt-2">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={clearSearch}
+                            >
+                              清除
+                            </Button>
+                            <Button size="sm" onClick={applySearch}>
+                              搜索
+                            </Button>
+                          </div>
+                        </div>
+                      </PopoverContent>
+                    </Popover>
                     <SearchBookmarks
                       query={query}
                       onApply={(next) => {
                         setSearch(next.search);
+                        setSearchFields(
+                          next.searchFields ??
+                            (next.searchField ? [next.searchField] : []),
+                        );
+                        setSearchConditions(next.searchConditions ?? []);
+                        setSearchMode(next.searchMode ?? "all");
+                        setSearchStarred(!!next.starredOnly);
+                        setSearchAttachments(!!next.attachmentsOnly);
                         setQuery({ ...next, limit: listPageSize });
                       }}
                     />
@@ -4277,33 +4490,32 @@ export default function App() {
                         }))
                       }
                     />
-                    {query.search &&
-                      (!query.searchField || query.searchField === "body") && (
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              aria-label="正文搜索范围"
-                            >
-                              <Info data-icon="inline-start" />
-                              正文范围
-                            </Button>
-                          </TooltipTrigger>
-                          <TooltipContent
-                            side="bottom"
-                            align="start"
-                            className="max-w-72"
+                    {query.search && searchHitsField("body") && (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            aria-label="正文搜索范围"
                           >
-                            <p>
-                              正文只检索本机已有内容，搜索不会自动下载。当前范围完整{" "}
-                              {data.bodyCoverage.known} 封，未完整{" "}
-                              {data.bodyCoverage.unknown}{" "}
-                              封；需要纳入完整正文搜索时，可选择完整保存。
-                            </p>
-                          </TooltipContent>
-                        </Tooltip>
-                      )}
+                            <Info data-icon="inline-start" />
+                            正文范围
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent
+                          side="bottom"
+                          align="start"
+                          className="max-w-72"
+                        >
+                          <p>
+                            正文只检索本机已有内容，搜索不会自动下载。当前范围完整{" "}
+                            {data.bodyCoverage.known} 封，未完整{" "}
+                            {data.bodyCoverage.unknown}{" "}
+                            封；需要纳入完整正文搜索时，可选择完整保存。
+                          </p>
+                        </TooltipContent>
+                      </Tooltip>
+                    )}
                   </div>
                   <div className="list-filters">
                     <Tabs
@@ -4702,8 +4914,7 @@ export default function App() {
                                             contactNames,
                                           )}
                                           query={
-                                            !query.searchField ||
-                                            query.searchField === "sender"
+                                            searchHitsField("sender")
                                               ? query.search
                                               : ""
                                           }
@@ -4721,8 +4932,7 @@ export default function App() {
                                         <Highlight
                                           text={m.subject}
                                           query={
-                                            !query.searchField ||
-                                            query.searchField === "subject"
+                                            searchHitsField("subject")
                                               ? query.search
                                               : ""
                                           }
@@ -4743,8 +4953,7 @@ export default function App() {
                                       <Highlight
                                         text={m.preview}
                                         query={
-                                          !query.searchField ||
-                                          query.searchField === "body"
+                                          searchHitsField("body")
                                             ? query.search
                                             : ""
                                         }
@@ -5098,8 +5307,7 @@ export default function App() {
                                       contactNames,
                                     )}
                                     query={
-                                      !query.searchField ||
-                                      query.searchField === "sender"
+                                      searchHitsField("sender")
                                         ? query.search
                                         : ""
                                     }
@@ -5505,12 +5713,7 @@ export default function App() {
                       <h1>
                         <Highlight
                           text={detail.mail.subject}
-                          query={
-                            !query.searchField ||
-                            query.searchField === "subject"
-                              ? query.search
-                              : ""
-                          }
+                          query={searchHitsField("subject") ? query.search : ""}
                         />
                       </h1>
                     </div>
