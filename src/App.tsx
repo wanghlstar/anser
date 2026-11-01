@@ -608,6 +608,7 @@ export default function App() {
   const [navigationLoading, setNavigationLoading] = useState(false);
   selectionRef.current = selected;
   const localChanges = useRef(new Map<string, Partial<Mail>>());
+  const archiveTreeReloadAt = useRef(0);
   // 彻底删除的待确认标记：id → 发起删除时的视图作用域。
   // 只有回到同一作用域并确认邮件已不在快照里，才撤销隐藏；这样切到别的
   // 视图（那里本来就不含已删邮件）不会误清标记，废纸篓也就不会闪回。
@@ -957,8 +958,13 @@ export default function App() {
             },
             performance.now() - started,
           );
-          // 存档树与列表同源刷新，侧栏计数与视图/徽标永不脱节。
-          loadArchiveTree();
+          // 存档树不显示计数，只有新增文件夹/导入时才会变；读/星标等
+          // 列表刷新不必每次重查。最多每 10 秒同步一次，避免抢占读操作。
+          const now = performance.now();
+          if (now - archiveTreeReloadAt.current > 10_000) {
+            archiveTreeReloadAt.current = now;
+            loadArchiveTree();
+          }
         }
         const reading = selectionRef.current;
         if (reading) {
@@ -1567,7 +1573,9 @@ export default function App() {
         for (const id of ids)
           pendingDeletes.current.set(id, queryScope(queryRef.current));
       for (const id of ids) await updateMail(id, action, value);
-      await refresh();
+      // 已读/星标已经先更新行；列表在后台刷新，不阻塞操作反馈。
+      if (action === "read" || action === "star") void refresh();
+      else await refresh();
       setChecked([]);
       // 删除正在阅读的邮件：阅读器前进到下一封，没有则回到空态
       if (
@@ -1820,6 +1828,16 @@ export default function App() {
       ...localChanges.current.get(id),
       ...change,
     });
+    const patch = (list: Mail[]) =>
+      list.map((m) => (m.id === id ? { ...m, ...change } : m));
+    setData((current) => ({
+      ...current,
+      messages: patch(current.messages),
+    }));
+    dataRef.current = {
+      ...dataRef.current,
+      messages: patch(dataRef.current.messages),
+    };
     setDetail((current) =>
       current?.mail.id === id
         ? { ...current, mail: { ...current.mail, ...change } }
