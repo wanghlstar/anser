@@ -181,9 +181,10 @@ it("exposes search fields and only applies the search on Enter", async () => {
       host.querySelectorAll("button.mail-row-main").length,
     ).toBeGreaterThan(0),
   );
-  await click(host.querySelector('button[aria-label="搜索筛选"]'));
+  await click(host.querySelector('button[aria-label="多重搜索"]'));
   expect(document.body.textContent).toContain("搜索范围");
   expect(document.body.textContent).toContain("附加条件");
+  expect(document.body.textContent).toContain("时间范围");
   const before = host.querySelectorAll("button.mail-row-main").length;
   const input = host.querySelector(
     'input[aria-label="搜索邮件"]',

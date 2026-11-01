@@ -53,6 +53,24 @@ const FIELD_LABELS: Record<string, string> = {
 function fieldsLabel(fields: string[] | undefined) {
   return (fields ?? []).map((field) => FIELD_LABELS[field]).filter(Boolean);
 }
+function searchLabel(query: Query) {
+  const mainFields = query.searchFields?.length
+    ? query.searchFields
+    : query.searchField
+      ? [query.searchField]
+      : [];
+  const main = query.search.trim()
+    ? `${mainFields.length ? fieldsLabel(mainFields).join("/") : "全文"} “${query.search.trim()}”`
+    : "";
+  const conditions = query.searchConditions ?? [];
+  const firstCondition = conditions[0];
+  const first = firstCondition
+    ? `${fieldsLabel(firstCondition.fields).join("/") || "全文"} “${firstCondition.value}”`
+    : "";
+  const label = [main, first].filter(Boolean).join(" · ");
+  const extra = conditions.length > 1 ? ` +${conditions.length - 1}` : "";
+  return label ? label + extra : "筛选搜索";
+}
 function hasConditions(query: Query) {
   return Boolean(
     query.search.trim() ||
@@ -66,17 +84,20 @@ function hasConditions(query: Query) {
   );
 }
 function summary(query: Query) {
-  const bits = [query.search.trim() ? `“${query.search.trim()}”` : ""];
+  const bits: string[] = [];
   const mainFields = query.searchFields?.length
     ? query.searchFields
     : query.searchField
       ? [query.searchField]
       : [];
-  bits.push(...fieldsLabel(mainFields));
+  if (query.search.trim())
+    bits.push(
+      `${mainFields.length ? fieldsLabel(mainFields).join("/") : "全文"} “${query.search.trim()}”`,
+    );
   for (const condition of query.searchConditions ?? []) {
     const fields = fieldsLabel(condition.fields);
     bits.push(
-      `${fields.length ? fields.join("/") + " " : ""}“${condition.value}”`,
+      `${fields.length ? fields.join("/") : "全文"} “${condition.value}”`,
     );
   }
   if (query.starredOnly) bits.push("星标");
@@ -101,7 +122,7 @@ export function SearchBookmarks({
     setRecent((current) => {
       const item: SavedSearch = {
         id: crypto.randomUUID(),
-        name: next.search.trim() || "筛选搜索",
+        name: searchLabel(next),
         query: { ...next, limit: 200 },
       };
       const list = [
@@ -144,7 +165,7 @@ export function SearchBookmarks({
     if (!hasConditions(query)) return;
     const item: SavedSearch = {
       id: crypto.randomUUID(),
-      name: query.search.trim() || "筛选搜索",
+      name: searchLabel(query),
       query: { ...query, limit: 200 },
     };
     const list = [item, ...saved].slice(0, 12);
