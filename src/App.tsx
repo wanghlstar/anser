@@ -4079,7 +4079,10 @@ export default function App() {
                     </Collapsible>
                     <Card>
                       <CardContent className="pt-5">
-                        <OutboxPanel onDraft={openCompose} embedded />
+                        <OutboxPanel
+                          onDraft={openCompose}
+                          defaultOpen={false}
+                        />
                       </CardContent>
                     </Card>
                     <ServerOperations defaultCollapsed />
