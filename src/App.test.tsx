@@ -199,6 +199,7 @@ it("exposes search fields and only applies the search on Enter", async () => {
   await act(async () => {
     await new Promise((resolve) => setTimeout(resolve, 300));
   });
+  expect(document.body.textContent).toContain("发件人：no-such-mail-xyz");
   expect(host.querySelectorAll("button.mail-row-main").length).toBe(before);
   await act(async () => {
     input.dispatchEvent(

@@ -143,9 +143,11 @@ import { Badge } from "./components/ui/badge";
 import { Checkbox } from "./components/ui/checkbox";
 import {
   Popover,
+  PopoverAnchor,
   PopoverContent,
   PopoverTrigger,
 } from "./components/ui/popover";
+import { Command, CommandItem, CommandList } from "./components/ui/command";
 import {
   Select,
   SelectContent,
@@ -415,6 +417,8 @@ export default function App() {
     [searchAttachments, setSearchAttachments] = useState(false),
     [searchDateFrom, setSearchDateFrom] = useState<string | undefined>(),
     [searchDateBefore, setSearchDateBefore] = useState<string | undefined>(),
+    [searchSuggestOpen, setSearchSuggestOpen] = useState(false),
+    [searchSuggestActive, setSearchSuggestActive] = useState(0),
     [accountDialog, setAccountDialog] = useState(false),
     [editingAccount, setEditingAccount] = useState<Account | null>(null),
     [segmentAccount, setSegmentAccount] = useState<Account | null>(null),
@@ -1044,11 +1048,12 @@ export default function App() {
     };
   }, [refresh]);
   // 搜索只在回车/点「搜索」时提交，输入和勾选筛选不再每一下都刷新列表。
-  function applySearch() {
+  function submitSearch(fields: string[]) {
+    setSearchFields(fields);
     setQuery((q) => ({
       ...q,
       search,
-      searchFields,
+      searchFields: fields,
       searchConditions: searchConditions.filter((c) => c.value.trim()),
       searchMode,
       searchField: "",
@@ -1058,6 +1063,10 @@ export default function App() {
       dateBefore: searchDateBefore,
       limit: listPageSize,
     }));
+    setSearchSuggestOpen(false);
+  }
+  function applySearch() {
+    submitSearch(searchFields);
   }
   useEffect(() => {
     setSearchStarred(!!query.starredOnly);
@@ -1072,6 +1081,7 @@ export default function App() {
   ]);
   function clearSearch() {
     setSearch("");
+    setSearchSuggestOpen(false);
     setSearchFields([]);
     setSearchConditions([]);
     setSearchMode("all");
@@ -4229,34 +4239,143 @@ export default function App() {
                     </Alert>
                   )}
                   <div className="mail-search-row">
-                    <div className="search-box">
-                      <Search size={16} />
-                      <Input
-                        ref={searchRef}
-                        value={search}
-                        onChange={(e) => setSearch(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") {
-                            e.preventDefault();
-                            applySearch();
+                    <Popover
+                      open={searchSuggestOpen && !!search.trim()}
+                      onOpenChange={setSearchSuggestOpen}
+                    >
+                      <PopoverAnchor asChild>
+                        <div className="search-box">
+                          <Search size={16} />
+                          <Input
+                            ref={searchRef}
+                            value={search}
+                            onChange={(e) => {
+                              setSearch(e.target.value);
+                              setSearchSuggestOpen(true);
+                              setSearchSuggestActive(0);
+                            }}
+                            onFocus={() =>
+                              setSearchSuggestOpen(!!search.trim())
+                            }
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                if (
+                                  searchSuggestOpen &&
+                                  searchSuggestActive > 0
+                                )
+                                  submitSearch([
+                                    [
+                                      "",
+                                      "sender",
+                                      "recipients",
+                                      "subject",
+                                      "body",
+                                      "attachments",
+                                    ][searchSuggestActive],
+                                  ]);
+                                else submitSearch([]);
+                              } else if (
+                                e.key === "ArrowDown" &&
+                                searchSuggestOpen
+                              ) {
+                                e.preventDefault();
+                                setSearchSuggestActive(
+                                  (active) => (active + 1) % 6,
+                                );
+                              } else if (
+                                e.key === "ArrowUp" &&
+                                searchSuggestOpen
+                              ) {
+                                e.preventDefault();
+                                setSearchSuggestActive(
+                                  (active) => (active + 5) % 6,
+                                );
+                              } else if (e.key === "Escape") {
+                                setSearchSuggestOpen(false);
+                              }
+                            }}
+                            placeholder="搜索全文（主题、发件人、收件人、正文、附件名）；回车搜索"
+                            aria-label="搜索邮件"
+                            maxLength={500}
+                          />
+                          {search ? (
+                            <Button
+                              variant="ghost"
+                              onClick={clearSearch}
+                              title="清除搜索"
+                            >
+                              <X size={14} />
+                            </Button>
+                          ) : (
+                            <kbd>⌘ K</kbd>
+                          )}
+                        </div>
+                      </PopoverAnchor>
+                      <PopoverContent
+                        className="w-[var(--radix-popover-trigger-width)] p-1"
+                        align="start"
+                        onOpenAutoFocus={(e) => e.preventDefault()}
+                        onCloseAutoFocus={(e) => e.preventDefault()}
+                      >
+                        <Command
+                          label="搜索范围"
+                          shouldFilter={false}
+                          value={
+                            [
+                              "full",
+                              "sender",
+                              "recipients",
+                              "subject",
+                              "body",
+                              "attachments",
+                            ][searchSuggestActive]
                           }
-                        }}
-                        placeholder="搜索全文（主题、发件人、收件人、正文、附件名）；回车搜索"
-                        aria-label="搜索邮件"
-                        maxLength={500}
-                      />
-                      {search ? (
-                        <Button
-                          variant="ghost"
-                          onClick={clearSearch}
-                          title="清除搜索"
+                          onValueChange={(value) =>
+                            setSearchSuggestActive(
+                              [
+                                "full",
+                                "sender",
+                                "recipients",
+                                "subject",
+                                "body",
+                                "attachments",
+                              ].indexOf(value),
+                            )
+                          }
                         >
-                          <X size={14} />
-                        </Button>
-                      ) : (
-                        <kbd>⌘ K</kbd>
-                      )}
-                    </div>
+                          <CommandList>
+                            {[
+                              ["full", "全文"],
+                              ["sender", "发件人"],
+                              ["recipients", "收件人"],
+                              ["subject", "主题"],
+                              ["body", "正文"],
+                              ["attachments", "附件名"],
+                            ].map(([value, label], index) => (
+                              <CommandItem
+                                key={value}
+                                value={value}
+                                onMouseDown={(e) => e.preventDefault()}
+                                onSelect={() =>
+                                  submitSearch(value === "full" ? [] : [value])
+                                }
+                                className={
+                                  index === searchSuggestActive
+                                    ? "bg-accent"
+                                    : ""
+                                }
+                              >
+                                {value === "full" ? <Search size={14} /> : null}
+                                <span className="truncate">
+                                  {label}：{search}
+                                </span>
+                              </CommandItem>
+                            ))}
+                          </CommandList>
+                        </Command>
+                      </PopoverContent>
+                    </Popover>
                     <Popover>
                       <PopoverTrigger asChild>
                         <Button
