@@ -58,6 +58,37 @@ describe("mail calendar range", () => {
       host.remove();
     }
   });
+  it("clears the active range from the small x without opening the calendar", async () => {
+    Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host),
+      change = vi.fn();
+    try {
+      await act(async () =>
+        root.render(
+          <MailDateFilter
+            {...mailDateBounds({ from: new Date(2026, 9, 10) })}
+            onChange={change}
+          />,
+        ),
+      );
+      const clear = host.querySelector(
+        'button[aria-label="清除时间筛选"]',
+      ) as HTMLButtonElement;
+      expect(clear).not.toBeNull();
+      await act(async () => clear.click());
+      expect(change).toHaveBeenCalledWith({
+        dateFrom: undefined,
+        dateBefore: undefined,
+      });
+      expect(document.body.textContent).not.toContain("重新选择");
+    } finally {
+      await act(async () => root.unmount());
+      host.remove();
+    }
+  });
+
   it("applies a single day after the same date is clicked twice", async () => {
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
     const host = document.createElement("div");
