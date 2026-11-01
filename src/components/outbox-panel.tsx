@@ -232,11 +232,18 @@ export function OutboxPanel({
         <CollapsibleTrigger asChild>
           <Button
             variant="ghost"
-            className="group h-auto min-w-0 flex-1 justify-start gap-2 px-2"
+            className="group h-auto min-w-0 flex-1 items-start justify-start gap-2 whitespace-normal px-2 text-left"
           >
-            <span className="text-sm font-medium">发送记录</span>
-            <Badge variant="secondary">{records.length}</Badge>
-            <ChevronDown className="ml-auto transition-transform group-data-[state=open]:rotate-180" />
+            <span className="flex min-w-0 flex-col items-start gap-0.5">
+              <span className="flex items-center gap-2 text-sm font-medium">
+                发送记录
+                <Badge variant="secondary">{records.length}</Badge>
+              </span>
+              <span className="text-xs font-normal text-muted-foreground">
+                已发送邮件的服务器副本状态；失败发送不会留下记录。
+              </span>
+            </span>
+            <ChevronDown className="ml-auto mt-0.5 shrink-0 transition-transform group-data-[state=open]:rotate-180" />
           </Button>
         </CollapsibleTrigger>
         {actions}
