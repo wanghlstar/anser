@@ -370,6 +370,18 @@ type NativeMailWindow = {
 const INITIAL_THEME_MODE = readThemeMode();
 const INITIAL_SYSTEM_DARK = systemPrefersDark();
 applyThemeClass(resolveDark(INITIAL_THEME_MODE, INITIAL_SYSTEM_DARK));
+const ARCHIVE_TREE_CACHE_KEY = "anser.archive-tree.v1";
+function cachedArchiveTree(): LocalArchiveGroup[] {
+  if (!native) return [];
+  try {
+    const parsed = JSON.parse(
+      localStorage.getItem(ARCHIVE_TREE_CACHE_KEY) || "[]",
+    );
+    return Array.isArray(parsed) ? (parsed as LocalArchiveGroup[]) : [];
+  } catch {
+    return [];
+  }
+}
 export default function App() {
   const updates = useAppUpdate();
   const { askConfirmation, confirmationDialog } = useConfirmation();
@@ -715,8 +727,11 @@ export default function App() {
     if (data.remoteFolders) setServerFolders(data.remoteFolders);
   }, [data.remoteFolders]);
   const [dataDir, setDataDir] = useState<DataDirInfo | null>(null);
-  const [archiveTree, setArchiveTree] = useState<LocalArchiveGroup[]>([]);
-  const [archiveTreeLoaded, setArchiveTreeLoaded] = useState(false);
+  const [archiveTree, setArchiveTree] =
+    useState<LocalArchiveGroup[]>(cachedArchiveTree);
+  const [archiveTreeLoaded, setArchiveTreeLoaded] = useState(
+    () => cachedArchiveTree().length > 0,
+  );
   const [internalArchiveBytes, setInternalArchiveBytes] = useState<
     number | null
   >(null);
@@ -807,9 +822,18 @@ export default function App() {
       .then((tree) => {
         setArchiveTree(tree);
         setArchiveTreeLoaded(true);
+        if (native) {
+          try {
+            localStorage.setItem(ARCHIVE_TREE_CACHE_KEY, JSON.stringify(tree));
+          } catch {
+            // The tree remains usable for this session when storage is full.
+          }
+        }
       })
       .catch(() => {
-        setArchiveTree([]);
+        // Keep the last cached tree rather than making the sidebar flash empty
+        // while the archive index is unavailable.
+        if (!native) setArchiveTree([]);
         setArchiveTreeLoaded(true);
       });
   }, []);
@@ -1585,14 +1609,44 @@ export default function App() {
       if (action === "delete")
         for (const id of ids)
           pendingDeletes.current.set(id, queryScope(queryRef.current));
-      // 一次把所有行的乐观更新都发出去，避免逐封等待后台确认。
-      const updates = ids.map((id) => updateMail(id, action, value));
-      const results = await Promise.allSettled(updates);
-      const failed = results.find(
-        (result): result is PromiseRejectedResult =>
-          result.status === "rejected",
-      );
-      if (failed) throw failed.reason;
+      const batchable =
+        native &&
+        ids.length > 1 &&
+        (action === "read" || action === "star" || action === "trash");
+      if (batchable) {
+        // One IPC for a large selection; every row still reports its own error.
+        await Promise.all(
+          ids.map((id) => updateMail(id, action, value, false)),
+        );
+        let outcomes: { id: string; error: string }[];
+        try {
+          outcomes = await call("update_mails", { ids, action, value });
+        } catch (error) {
+          await Promise.all(
+            before.map((old) => updateMail(old.id, action, old.value, false)),
+          );
+          throw error;
+        }
+        const failed = outcomes.filter((outcome) => outcome.error);
+        if (failed.length) {
+          const retry = new Set(failed.map((outcome) => outcome.id));
+          await Promise.all(
+            before
+              .filter((old) => retry.has(old.id))
+              .map((old) => updateMail(old.id, action, old.value, false)),
+          );
+          throw new Error(failed[0].error);
+        }
+      } else {
+        // 一次把所有行的乐观更新都发出去，避免逐封等待后台确认。
+        const updates = ids.map((id) => updateMail(id, action, value));
+        const results = await Promise.allSettled(updates);
+        const failed = results.find(
+          (result): result is PromiseRejectedResult =>
+            result.status === "rejected",
+        );
+        if (failed) throw failed.reason;
+      }
       // 已读/星标已经先更新行；列表在后台刷新，不阻塞操作反馈。
       if (action === "read" || action === "star") void refresh();
       else await refresh();
@@ -1834,7 +1888,12 @@ export default function App() {
       toast.error(String(e));
     }
   }
-  async function updateMail(id: string, action: string, value: string) {
+  async function updateMail(
+    id: string,
+    action: string,
+    value: string,
+    remote = true,
+  ) {
     const previous =
       dataRef.current.messages.find((m) => m.id === id) ??
       (detail?.mail.id === id ? detail.mail : undefined);
@@ -1904,7 +1963,7 @@ export default function App() {
         : current,
     );
     try {
-      await call("update_mail", { id, action, value });
+      if (remote) await call("update_mail", { id, action, value });
     } catch (error) {
       // 回滚乐观更新：只恢复本次改动的字段，保留其他并发变化。
       if (previousLocal) localChanges.current.set(id, previousLocal);

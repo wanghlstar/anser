@@ -206,6 +206,38 @@ async fn update_mail(
 }
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
+struct MailUpdateOutcome {
+    id: String,
+    error: String,
+}
+
+#[tauri::command]
+async fn update_mails(
+    state: tauri::State<'_, AppState>,
+    ids: Vec<String>,
+    action: String,
+    value: String,
+) -> Result<Vec<MailUpdateOutcome>> {
+    let store = state.store.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        Ok::<_, String>(
+            ids.into_iter()
+                .map(|id| match store.change_mail(&id, &action, &value) {
+                    Ok(()) => MailUpdateOutcome {
+                        id,
+                        error: String::new(),
+                    },
+                    Err(error) => MailUpdateOutcome { id, error },
+                })
+                .collect(),
+        )
+    })
+    .await
+    .map_err(err)?
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 struct TrashClearSummary {
     server: u64,
     local: u64,
@@ -4046,6 +4078,9 @@ pub fn run() {
                 health_cancel: Arc::new(std::sync::atomic::AtomicBool::new(false)),
                 health_progress: Arc::new(Mutex::new(ArchiveHealthProgress::default())),
             });
+            // 上次退出时若有新邮件没来得及合并，启动后静默补齐，避免第一次
+            // 切换文件夹才触发会话图重建。
+            store.schedule_warm_listing();
             let restore_value = store
                 .preferences()
                 .map(|preferences| preferences.restore_shortcut)
@@ -4417,6 +4452,7 @@ pub fn run() {
             mail_metadata,
             mail_conversation,
             update_mail,
+            update_mails,
             folder_health,
             server_trash_count,
             trash_clear_summary,
