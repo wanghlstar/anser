@@ -908,13 +908,7 @@ pub fn start(store: Store, app: tauri::AppHandle) {
                             if copy_session.is_none() {
                                 copy_session = crate::network::open_copy_session(&a).ok();
                             }
-                            let is_move = claimed[0].kind == "move";
-                            let can_batch = match copy_session.as_mut() {
-                                Some(session) if is_move => session.supports_move().unwrap_or(false),
-                                Some(_) => true,
-                                None => false,
-                            };
-                            if can_batch {
+                            if copy_session.is_some() {
                                 let result = std::panic::catch_unwind(
                                     std::panic::AssertUnwindSafe(|| {
                                         copy_session
@@ -927,7 +921,6 @@ pub fn start(store: Store, app: tauri::AppHandle) {
                                     Ok(Ok(crate::network::BatchOutcome::Done)) => {
                                         batch_done = true;
                                     }
-                                    Ok(Ok(crate::network::BatchOutcome::Unsupported)) => {}
                                     other => {
                                         // A failed batch may have submitted the
                                         // command; never fall through to singles.

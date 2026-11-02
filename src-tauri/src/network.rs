@@ -4967,10 +4967,6 @@ impl CopySession {
         *self.capture.lock().map_err(err)? = CopyCapture::default();
         apply_copy_batch(store, ops, &mut self.session, &self.capture)
     }
-    pub(crate) fn supports_move(&mut self) -> Result<bool> {
-        let caps = self.session.capabilities().map_err(err)?;
-        Ok(caps.has_str("MOVE") || caps.has_str("IMAP4rev2"))
-    }
 }
 pub(crate) fn open_copy_session(account: &Account) -> Result<CopySession> {
     let secret = auth::credentials(account)?;
@@ -5321,12 +5317,152 @@ fn apply_copy_session<T: std::io::Read + Write>(
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum BatchOutcome {
     Done,
-    Unsupported,
+}
+fn first_kind(ops: &[crate::directory_operations::DirectoryOperation]) -> &str {
+    ops.first().map(|op| op.kind.as_str()).unwrap_or("copy")
 }
 fn fail_batch(store: &Store, ops: &[crate::directory_operations::DirectoryOperation], reason: &str, definite: bool) {
     for op in ops {
         let _ = store.fail_copy(&op.id, reason, definite);
     }
+}
+/// No-MOVE servers: one COPY for the whole set, then one exact UID STORE and
+/// UID EXPUNGE after every target copy and source body has been verified.
+/// Per-message rows move through cleanup_pending/running/submitted exactly as
+/// the single-message path, so a crash cannot replay COPY.
+fn finish_compatibility_batch<T: std::io::Read + Write>(
+    store: &Store,
+    session: &mut imap::Session<T>,
+    folder: &str,
+    ops: Vec<crate::directory_operations::DirectoryOperation>,
+) -> Result<()> {
+    if ops.is_empty() {
+        return Ok(());
+    }
+    let source = session.select(folder).map_err(err)?;
+    let mut candidates = Vec::new();
+    for op in ops {
+        let Some((validity, uid, _)) = crate::operations::remote_identity(&op.remote_id) else {
+            let _ = store.fail_copy(&op.id, "来源邮件编号无效；未移除原目录", true);
+            continue;
+        };
+        if validity.is_some_and(|v| source.uid_validity != Some(v)) {
+            let _ = store.fail_copy(&op.id, "原目录 UIDVALIDITY 已变化；未移除原邮件", false);
+            continue;
+        }
+        candidates.push((uid, op));
+    }
+    if candidates.is_empty() {
+        return Ok(());
+    }
+    candidates.sort_by_key(|(uid, _)| *uid);
+    let uids = candidates.iter().map(|(uid, _)| *uid).collect::<Vec<_>>();
+    let set = compact_uid_set(&uids);
+    let messages = session
+        .uid_fetch(set, "(UID BODY.PEEK[])")
+        .map_err(err)?;
+    let mut raw_by_uid = BTreeMap::new();
+    for message in messages.iter() {
+        if let (Some(uid), Some(body)) = (message.uid, message.body()) {
+            raw_by_uid.insert(uid, body.to_vec());
+        }
+    }
+    drop(messages);
+    let mut ready = Vec::new();
+    for (uid, op) in candidates {
+        let Some(raw) = raw_by_uid.remove(&uid) else {
+            let _ = store.fail_copy(&op.id, "原邮件已不存在；未移除原目录", true);
+            continue;
+        };
+        if archive::digest(&raw) != op.content_hash {
+            let _ = store.fail_copy(&op.id, "原邮件全文已变化；目标副本保留，未移除原邮件", false);
+            continue;
+        }
+        let current = match store.directory_operation(&op.id) {
+            Ok(current) => current,
+            Err(e) => {
+                let _ = store.fail_copy(&op.id, &e, false);
+                continue;
+            }
+        };
+        if current.status != "cleanup_pending" || !store.claim_copy(&current).unwrap_or(false) {
+            let _ = store.fail_copy(&op.id, "移动清理阶段已变化；未移除原邮件", false);
+            continue;
+        }
+        let current = match store.directory_operation(&op.id) {
+            Ok(current) => current,
+            Err(e) => {
+                let _ = store.fail_copy(&op.id, &e, false);
+                continue;
+            }
+        };
+        if let Err(e) = store.submit_move_cleanup(&current) {
+            let _ = store.fail_copy(&op.id, &e, false);
+            continue;
+        }
+        ready.push(current);
+    }
+    if ready.is_empty() {
+        return Ok(());
+    }
+    let uids = ready
+        .iter()
+        .filter_map(|op| crate::operations::remote_identity(&op.remote_id).map(|(_, uid, _)| uid))
+        .collect::<Vec<_>>();
+    let set = compact_uid_set(&uids);
+    if let Err(e) = session.uid_store(set.clone(), "+FLAGS.SILENT (\\Deleted)") {
+        fail_batch(store, &ready, &format!("原目录移除已提交：{e}；先只读核对，不会自动再次移除"), false);
+        return Err(e.to_string());
+    }
+    let flags = match session.uid_fetch(set.clone(), "(UID FLAGS)") {
+        Ok(flags) => flags,
+        Err(e) => {
+            fail_batch(store, &ready, &format!("未确认删除标记：{e}；先只读核对"), false);
+            return Err(e.to_string());
+        }
+    };
+    let deleted = flags
+        .iter()
+        .filter_map(|m| {
+            m.uid
+                .filter(|_| m.flags().contains(&imap::types::Flag::Deleted))
+        })
+        .collect::<HashSet<_>>();
+    drop(flags);
+    if ready.iter().any(|op| {
+        crate::operations::remote_identity(&op.remote_id)
+            .is_none_or(|(_, uid, _)| !deleted.contains(&uid))
+    }) {
+        fail_batch(store, &ready, "未确认全部原邮件的删除标记，未执行 UID EXPUNGE；请只读核对", false);
+        return Ok(());
+    }
+    if let Err(e) = session.run_command_and_read_response(format!("UID EXPUNGE {set}")) {
+        fail_batch(store, &ready, &format!("精确移除已提交：{e}；先只读核对，不会自动重复移除"), false);
+        return Err(e.to_string());
+    }
+    let remaining = match session.uid_fetch(set, "(UID)") {
+        Ok(remaining) => remaining,
+        Err(e) => {
+            fail_batch(store, &ready, &format!("原目录响应异常：{e}；保留回执，稍后只读核对"), false);
+            return Err(e.to_string());
+        }
+    };
+    let present = remaining
+        .iter()
+        .filter_map(|m| m.uid)
+        .collect::<HashSet<_>>();
+    drop(remaining);
+    for op in ready {
+        let Some((_, uid, _)) = crate::operations::remote_identity(&op.remote_id) else {
+            continue;
+        };
+        if present.contains(&uid) {
+            let _ = store.fail_copy(&op.id, "目标已确认，但原邮件仍存在；请只读核对，不会重发移动", false);
+        } else if let Err(e) = store.complete_copy(&op) {
+            let _ = store.fail_copy(&op.id, &e, false);
+        }
+    }
+    Ok(())
 }
 /// Apply one native COPY/MOVE command for several source UIDs. Per-message
 /// journal rows remain the recovery authority: a missing or partial COPYUID
@@ -5347,9 +5483,12 @@ fn apply_copy_batch<T: std::io::Read + Write>(
     }
     let move_supported = caps.has_str("MOVE") || caps.has_str("IMAP4rev2");
     drop(caps);
-    if ops.iter().any(|op| op.kind == "move") && !move_supported {
-        return Ok(BatchOutcome::Unsupported);
+    let kinds = ops.iter().map(|op| op.kind.as_str()).collect::<HashSet<_>>();
+    if kinds.len() != 1 {
+        fail_batch(store, ops, "批量文件夹操作的邮件类型不一致；尚未提交", false);
+        return Ok(BatchOutcome::Done);
     }
+    let compatibility = first_kind(ops) == "move" && !move_supported;
     let first = &ops[0];
     let target = match examine_verified(session, &first.target) {
         Ok(target) => target,
@@ -5450,7 +5589,6 @@ fn apply_copy_batch<T: std::io::Read + Write>(
             let _ = store.fail_copy(&op.id, &format!("{e}；尚未提交"), false);
             continue;
         }
-        let compatibility = false;
         if store.submit_directory(&op, &hash, compatibility).is_err() {
             let _ = store.fail_copy(&op.id, "文件夹任务状态已变化，停止提交", false);
             continue;
@@ -5469,7 +5607,7 @@ fn apply_copy_batch<T: std::io::Read + Write>(
         ..Default::default()
     };
     let target = first.target.replace('\\', "\\\\").replace('"', "\\\"");
-    let verb = if first.kind == "move" { "MOVE" } else { "COPY" };
+    let verb = if first.kind == "move" && !compatibility { "MOVE" } else { "COPY" };
     let result = session.run_command_and_read_response(format!("UID {verb} {batch_set} \"{target}\""));
     capture.lock().map_err(err)?.enabled = false;
     let connection_lost = result
@@ -5545,6 +5683,9 @@ fn apply_copy_batch<T: std::io::Read + Write>(
         } else if let Err(e) = store.complete_copy(&op) {
             let _ = store.fail_copy(&op.id, &e, false);
         }
+    }
+    if compatibility {
+        return finish_compatibility_batch(store, session, &first.folder, moved).map(|_| BatchOutcome::Done);
     }
     if !moved.is_empty() {
         let source = match session.select(&first.folder) {
@@ -5652,19 +5793,57 @@ mod copy_tests {
         assert!(!commands.contains("EXPUNGE"));
     }
     #[test]
-    fn batch_move_without_move_capability_falls_back_without_submitting() {
-        let (_temp, store, _a, id) = crate::directory_operations::tests::fixture();
-        let job = store.queue_move(&id, "INBOX", "Archive").unwrap();
-        let op = store.directory_operation(&job).unwrap();
-        assert!(store.claim_copy(&op).unwrap());
+    fn compatibility_batch_copies_stores_and_expunges_each_uid_once() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::new(temp.path().into()).unwrap();
+        let a = crate::tests::account();
+        store.save_account(&a).unwrap();
+        store.ingest(&a, "INBOX", "7:12", &crate::tests::raw(), false).unwrap();
+        store.ingest(&a, "INBOX", "7:13", &crate::tests::raw2(), false).unwrap();
+        store.save_remote_folders(&a.id, &[RemoteFolder {
+            account_id: a.id.clone(), name: "Archive".into(), display_name: "归档".into(),
+            delimiter: None, selectable: true, roles: vec![], detected_roles: None, sync_error: None,
+        }]).unwrap();
+        let ids = {
+            let db = store.db().unwrap();
+            let mut st = db.prepare("SELECT mail_id FROM sources WHERE folder='INBOX' ORDER BY remote_id").unwrap();
+            st.query_map([], |r| r.get::<_, String>(0)).unwrap().collect::<std::result::Result<Vec<_>, _>>().unwrap()
+        };
+        let ops = ids.iter().map(|id| {
+            let job = store.queue_move(id, "INBOX", "Archive").unwrap();
+            let op = store.directory_operation(&job).unwrap();
+            assert!(store.claim_copy(&op).unwrap());
+            store.directory_operation(&job).unwrap()
+        }).collect::<Vec<_>>();
+        let flags = |tag: &str| format!(
+            "* 1 FETCH (UID 12 FLAGS (\\Deleted))\r\n* 2 FETCH (UID 13 FLAGS (\\Deleted))\r\n{tag} OK fetched\r\n"
+        );
         let (mut session, capture, written) = session(vec![
             b"a1 OK login\r\n".to_vec(),
             b"* CAPABILITY IMAP4rev1 UIDPLUS\r\na2 OK caps\r\n".to_vec(),
+            b"* 0 EXISTS\r\n* OK [UIDVALIDITY 9] valid\r\na3 OK examined\r\n".to_vec(),
+            b"* 2 EXISTS\r\n* OK [UIDVALIDITY 7] valid\r\na4 OK selected\r\n".to_vec(),
+            batch_fetch("a5", &[(12, &crate::tests::raw()), (13, &crate::tests::raw2())]),
+            b"a6 OK [COPYUID 9 12:13 100:101] copied\r\n".to_vec(),
+            b"* 2 EXISTS\r\n* OK [UIDVALIDITY 9] valid\r\na7 OK examined\r\n".to_vec(),
+            batch_fetch("a8", &[(100, &crate::tests::raw()), (101, &crate::tests::raw2())]),
+            b"* 2 EXISTS\r\n* OK [UIDVALIDITY 7] valid\r\na9 OK selected\r\n".to_vec(),
+            batch_fetch("a10", &[(12, &crate::tests::raw()), (13, &crate::tests::raw2())]),
+            b"a11 OK stored\r\n".to_vec(),
+            flags("a12").into_bytes(),
+            b"a13 OK expunged\r\n".to_vec(),
+            b"a14 OK fetched\r\n".to_vec(),
         ]);
-        let outcome = apply_copy_batch(&store, &[store.directory_operation(&job).unwrap()], &mut session, &capture).unwrap();
-        assert_eq!(outcome, BatchOutcome::Unsupported);
-        assert_eq!(store.directory_operation(&job).unwrap().status, "preparing");
-        assert!(!String::from_utf8(written.lock().unwrap().clone()).unwrap().contains("UID MOVE"));
+        apply_copy_batch(&store, &ops, &mut session, &capture).unwrap();
+        for op in &ops {
+            assert_eq!(store.directory_operation(&op.id).unwrap().status, "completed");
+        }
+        let commands = String::from_utf8(written.lock().unwrap().clone()).unwrap();
+        assert_eq!(commands.matches("UID COPY 12:13").count(), 1);
+        assert_eq!(commands.matches("UID STORE 12:13 +FLAGS.SILENT (\\Deleted)").count(), 1);
+        assert_eq!(commands.matches("UID EXPUNGE 12:13").count(), 1);
+        assert!(!commands.contains("UID MOVE"));
+        assert!(!commands.contains("EXPUNGE 1:*"));
     }
     #[test]
     fn partial_batch_copyuid_never_replays_the_unmapped_message() {
