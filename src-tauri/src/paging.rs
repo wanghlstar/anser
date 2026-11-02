@@ -352,10 +352,10 @@ fn units(request: &PageRequest) -> String {
     if request.query.list_mode == ListMode::Messages {
         return format!("WITH units AS (SELECT d.mail_id AS id,d.instant,d.is_read,d.starred,d.has_attachments,'' AS root,1 AS count {source})");
     }
-    format!("WITH eligible AS MATERIALIZED (SELECT d.mail_id AS id,d.instant,d.is_read,d.starred,d.has_attachments,d.trashed,cm.root FROM search_documents d JOIN conversation_members cm ON cm.mail_id=d.mail_id WHERE {}),
+    format!("WITH eligible AS MATERIALIZED (SELECT d.mail_id AS id,d.instant,d.is_read,d.starred,d.has_attachments,d.trashed,COALESCE(cm.root,d.mail_id) AS root FROM search_documents d LEFT JOIN conversation_members cm ON cm.mail_id=d.mail_id WHERE {}),
         grouped AS (SELECT root,MIN(is_read) AS is_read,MAX(starred) AS starred,MAX(has_attachments) AS has_attachments FROM eligible GROUP BY root),
         ranked AS (SELECT id,instant,root,trashed,ROW_NUMBER() OVER(PARTITION BY root ORDER BY instant DESC,id ASC) AS n FROM eligible),
-        units AS (SELECT r.id,r.instant,g.is_read,g.starred,g.has_attachments,r.root,c.count FROM ranked r JOIN grouped g ON g.root=r.root JOIN conversation_counts c ON c.root=r.root AND c.trashed=r.trashed WHERE n=1)",source.split_once(" WHERE ").expect("static filter").1)
+        units AS (SELECT r.id,r.instant,g.is_read,g.starred,g.has_attachments,r.root,COALESCE(c.count,1) AS count FROM ranked r JOIN grouped g ON g.root=r.root LEFT JOIN conversation_counts c ON c.root=r.root AND c.trashed=r.trashed WHERE n=1)",source.split_once(" WHERE ").expect("static filter").1)
 }
 
 /// 默认可数视图的匹配数：全部/未读按账号 inboxFolders，服务器文件夹按来源
@@ -689,30 +689,50 @@ impl Store {
         }
         Ok(())
     }
+    /// Never block a folder switch on a full conversation projection rebuild.
+    /// The list query already shows unseen messages as single conversations;
+    /// the background pass merges them before the next refresh.
+    pub fn schedule_warm_listing(&self) {
+        #[cfg(test)]
+        {
+            let _ = self.warm_listing();
+            return;
+        }
+        if self.graph_warm.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            return;
+        }
+        let store = self.clone();
+        std::thread::spawn(move || {
+            let _ = store.warm_listing();
+            store
+                .graph_warm
+                .store(false, std::sync::atomic::Ordering::SeqCst);
+        });
+    }
     fn read_listing<T>(
         &self,
         mode: ListMode,
         mut read: impl FnMut(&Connection, i64) -> Result<T>,
     ) -> Result<T> {
         let mut db = self.db()?;
-        // No write lock during filtering/counting/reading. If topology changed,
-        // materialize once separately and then pin a new coherent WAL snapshot.
-        for _ in 0..4 {
-            let tx = db.transaction().map_err(err)?;
-            let revision: i64 = tx
-                .query_row("SELECT version FROM query_revision WHERE id=1", [], |r| {
-                    r.get(0)
-                })
-                .map_err(err)?;
-            if mode == ListMode::Conversations && graph_revision(&tx)? != projection_revision(&tx)?
-            {
-                drop(tx);
-                materialize_graph(&db)?;
-                continue;
-            }
-            return read(&tx, revision);
+        #[cfg(test)]
+        if mode == ListMode::Conversations
+            && graph_revision(&db)? != projection_revision(&db)?
+        {
+            self.warm_listing()?;
         }
-        Err("邮件列表持续变化，请刷新后重试".into())
+        let tx = db.transaction().map_err(err)?;
+        let revision: i64 = tx
+            .query_row("SELECT version FROM query_revision WHERE id=1", [], |r| {
+                r.get(0)
+            })
+            .map_err(err)?;
+        if mode == ListMode::Conversations
+            && graph_revision(&tx)? != projection_revision(&tx)?
+        {
+            self.schedule_warm_listing();
+        }
+        read(&tx, revision)
     }
 }
 

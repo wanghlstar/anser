@@ -26,6 +26,8 @@ pub struct Store {
     pub(crate) tier_log_cache: Arc<Mutex<Option<(std::time::Instant, TierLog)>>>,
     /// 分层归档只允许一个实例在跑（启动定时与「立即归档」可能撞车）。
     pub(crate) tier_busy: Arc<AtomicBool>,
+    /// 会话图预热只跑一次，避免每次列表读取都同步重建。
+    pub(crate) graph_warm: Arc<AtomicBool>,
 }
 struct TierGuard<'a>(&'a AtomicBool);
 impl Drop for TierGuard<'_> {
@@ -67,6 +69,7 @@ impl Store {
             tier_pending_cache: Arc::new(Mutex::new(None)),
             tier_log_cache: Arc::new(Mutex::new(None)),
             tier_busy: Arc::new(AtomicBool::new(false)),
+            graph_warm: Arc::new(AtomicBool::new(false)),
         };
         let db = s.db()?;
         db.execute_batch("PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS accounts(id TEXT PRIMARY KEY,data TEXT NOT NULL); CREATE TABLE IF NOT EXISTS messages(id TEXT PRIMARY KEY,account_id TEXT NOT NULL,hash TEXT NOT NULL,data TEXT NOT NULL,UNIQUE(account_id,hash)); CREATE TABLE IF NOT EXISTS sources(account_id TEXT,folder TEXT,remote_id TEXT,mail_id TEXT,active INTEGER NOT NULL DEFAULT 1,PRIMARY KEY(account_id,folder,remote_id)); CREATE TABLE IF NOT EXISTS rules(id TEXT PRIMARY KEY,position INTEGER,data TEXT NOT NULL); CREATE TABLE IF NOT EXISTS logs(id INTEGER PRIMARY KEY,time TEXT,message TEXT); CREATE TABLE IF NOT EXISTS drafts(id TEXT PRIMARY KEY,data TEXT); CREATE TABLE IF NOT EXISTS outbox(id TEXT PRIMARY KEY,status TEXT,data TEXT,raw BLOB); CREATE INDEX IF NOT EXISTS messages_account ON messages(account_id); CREATE INDEX IF NOT EXISTS messages_message_id ON messages(account_id,json_extract(data,'$.messageId'));").map_err(err)?;
