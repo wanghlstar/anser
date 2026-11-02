@@ -929,6 +929,20 @@ export default function App() {
       try {
         const value = await mailPage({ ...currentQuery, limit: listPageSize });
         if (seq === request.current && currentQuery === queryRef.current) {
+          // Conversation regrouping runs in the background. Never swap a
+          // grouped list for temporary single-message rows; keep the last
+          // stable list and retry shortly instead.
+          if (
+            value.groupingPending &&
+            dataRef.current.messages.length &&
+            dataScope.current === queryScope(currentQuery)
+          ) {
+            window.setTimeout(() => {
+              if (queryRef.current === currentQuery)
+                void refreshAction.current();
+            }, 400);
+            return;
+          }
           const same =
             dataScope.current === queryScope(currentQuery) &&
             dataRef.current.revision === value.revision;

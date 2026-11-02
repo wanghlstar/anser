@@ -28,6 +28,10 @@ pub struct Page {
     pub revision: i64,
     pub reset: bool,
     pub body_coverage: Coverage,
+    /// Conversation grouping is being rebuilt in the background. The page is
+    /// complete, but the UI should keep its previous list until grouping lands.
+    #[serde(default)]
+    pub grouping_pending: bool,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -568,6 +572,8 @@ impl Store {
                 return Ok(page);
             }
         }
+        let grouping_pending = request.query.list_mode == ListMode::Conversations
+            && self.conversation_pending().unwrap_or(false);
         let page = self.read_listing(request.query.list_mode, |tx, revision| {
             let reset = old.as_ref().is_some_and(|c| c.revision != revision);
             let cursor = old.as_ref().filter(|_| !reset);
@@ -651,6 +657,7 @@ impl Store {
                 revision,
                 reset,
                 body_coverage,
+                grouping_pending,
             })
         })?;
         if request.cursor.is_empty() {
@@ -682,10 +689,19 @@ impl Store {
         Ok(page)
     }
     /// 大批量导入/同步结束后预热会话图：否则用户下一次打开列表才付全量物化成本。
+    pub fn conversation_pending(&self) -> Result<bool> {
+        let db = self.db()?;
+        Ok(graph_revision(&db)? != projection_revision(&db)?)
+    }
     pub fn warm_listing(&self) -> Result<()> {
         let db = self.db()?;
         if graph_revision(&db)? != projection_revision(&db)? {
             materialize_graph(&db)?;
+            // Grouping-pending pages use the same query revision as the fresh
+            // projection; drop them so the next retry returns merged rows.
+            if let Ok(mut cache) = self.page_cache.lock() {
+                cache.clear();
+            }
         }
         Ok(())
     }

@@ -169,6 +169,7 @@ export interface MailPage extends Snapshot {
   revision: number;
   reset: boolean;
   bodyCoverage: { known: number; unknown: number };
+  groupingPending?: boolean;
 }
 export interface ExportResult {
   exported: number;
