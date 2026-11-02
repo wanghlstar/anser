@@ -28,6 +28,8 @@ pub struct Store {
     pub(crate) tier_busy: Arc<AtomicBool>,
     /// 会话图预热只跑一次，避免每次列表读取都同步重建。
     pub(crate) graph_warm: Arc<AtomicBool>,
+    /// 新邮件/导入连续到达时，等到安静后再重建，避免每个 UID 都扫全库。
+    pub(crate) graph_warm_seq: Arc<std::sync::atomic::AtomicU64>,
 }
 struct TierGuard<'a>(&'a AtomicBool);
 impl Drop for TierGuard<'_> {
@@ -70,6 +72,7 @@ impl Store {
             tier_log_cache: Arc::new(Mutex::new(None)),
             tier_busy: Arc::new(AtomicBool::new(false)),
             graph_warm: Arc::new(AtomicBool::new(false)),
+            graph_warm_seq: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         };
         let db = s.db()?;
         db.execute_batch("PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS accounts(id TEXT PRIMARY KEY,data TEXT NOT NULL); CREATE TABLE IF NOT EXISTS messages(id TEXT PRIMARY KEY,account_id TEXT NOT NULL,hash TEXT NOT NULL,data TEXT NOT NULL,UNIQUE(account_id,hash)); CREATE TABLE IF NOT EXISTS sources(account_id TEXT,folder TEXT,remote_id TEXT,mail_id TEXT,active INTEGER NOT NULL DEFAULT 1,PRIMARY KEY(account_id,folder,remote_id)); CREATE TABLE IF NOT EXISTS rules(id TEXT PRIMARY KEY,position INTEGER,data TEXT NOT NULL); CREATE TABLE IF NOT EXISTS logs(id INTEGER PRIMARY KEY,time TEXT,message TEXT); CREATE TABLE IF NOT EXISTS drafts(id TEXT PRIMARY KEY,data TEXT); CREATE TABLE IF NOT EXISTS outbox(id TEXT PRIMARY KEY,status TEXT,data TEXT,raw BLOB); CREATE INDEX IF NOT EXISTS messages_account ON messages(account_id); CREATE INDEX IF NOT EXISTS messages_message_id ON messages(account_id,json_extract(data,'$.messageId'));").map_err(err)?;
@@ -2365,6 +2368,11 @@ impl Store {
         }
         tx.execute("INSERT INTO sources(account_id,folder,remote_id,mail_id) VALUES(?1,?2,?3,?4) ON CONFLICT(account_id,folder,remote_id) DO UPDATE SET mail_id=excluded.mail_id,active=1",params![a.id,folder,remote,mail.id]).map_err(err)?;
         tx.commit().map_err(err)?;
+        if is_new || upgraded {
+            // Coalesce a sync/import burst, then rebuild conversation grouping
+            // in the background before the user next switches folders.
+            self.schedule_warm_listing();
+        }
         // A deduplicated MIME can acquire its rule source on a later folder scan.
         if is_new || upgraded {
             self.apply_rules(&mail.id)?;

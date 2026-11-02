@@ -714,15 +714,31 @@ impl Store {
             let _ = self.warm_listing();
             return;
         }
+        let sequence = self
+            .graph_warm_seq
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+            + 1;
         if self.graph_warm.swap(true, std::sync::atomic::Ordering::SeqCst) {
             return;
         }
         let store = self.clone();
         std::thread::spawn(move || {
-            let _ = store.warm_listing();
-            store
-                .graph_warm
-                .store(false, std::sync::atomic::Ordering::SeqCst);
+            let mut seen = sequence;
+            loop {
+                std::thread::sleep(std::time::Duration::from_millis(1200));
+                let current = store
+                    .graph_warm_seq
+                    .load(std::sync::atomic::Ordering::SeqCst);
+                if current != seen {
+                    seen = current;
+                    continue;
+                }
+                let _ = store.warm_listing();
+                store
+                    .graph_warm
+                    .store(false, std::sync::atomic::Ordering::SeqCst);
+                break;
+            }
         });
     }
     fn read_listing<T>(
