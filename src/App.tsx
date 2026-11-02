@@ -2425,9 +2425,34 @@ export default function App() {
     const folders = serverFolders.filter((f) => f.accountId === accountId);
     const plan: { id: string; source: string }[] = [];
     const localOnly: string[] = [];
+    const batchSources = new Map<
+      string,
+      { sources: string[]; failed: boolean }
+    >();
+    if (mails.length > 1) {
+      try {
+        const rows = await call<
+          { mailId: string; sources: string[]; error: string }[]
+        >("copy_sources_many", { ids: mails.map((m) => m.id) });
+        for (const row of rows)
+          batchSources.set(row.mailId, {
+            sources: row.sources,
+            failed: !!row.error,
+          });
+      } catch {
+        // Fall back to the per-message read below.
+      }
+    }
     for (const m of mails) {
       try {
-        const sources = await call<string[]>("copy_sources", { id: m.id });
+        const batched = batchSources.get(m.id);
+        if (batched?.failed) {
+          localOnly.push(m.id);
+          continue;
+        }
+        const sources =
+          batched?.sources ??
+          (await call<string[]>("copy_sources", { id: m.id }));
         if (!sources.length) {
           localOnly.push(m.id);
           continue;

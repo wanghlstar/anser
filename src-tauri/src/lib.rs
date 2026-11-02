@@ -285,6 +285,16 @@ async fn copy_sources(state: tauri::State<'_, AppState>, id: String) -> Result<V
         .map_err(err)?
 }
 #[tauri::command]
+async fn copy_sources_many(
+    state: tauri::State<'_, AppState>,
+    ids: Vec<String>,
+) -> Result<Vec<directory_operations::CopySourcesResult>> {
+    let store = state.store.clone();
+    tauri::async_runtime::spawn_blocking(move || store.copy_sources_many(&ids))
+        .await
+        .map_err(err)
+}
+#[tauri::command]
 async fn queue_server_copy(
     state: tauri::State<'_, AppState>,
     id: String,
@@ -4412,6 +4422,7 @@ pub fn run() {
             trash_clear_summary,
             empty_server_trash,
             copy_sources,
+            copy_sources_many,
             queue_server_copy,
             queue_server_move,
             queue_server_moves,

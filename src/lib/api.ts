@@ -1175,6 +1175,15 @@ export async function call<T = void>(
           demo.messages.find((m) => m.id === args.id)?.sourceFolder,
         ].filter(Boolean);
         break;
+      case "copy_sources_many":
+        result = (args.ids as string[]).map((id) => ({
+          mailId: id,
+          sources: [
+            demo!.messages.find((m) => m.id === id)?.sourceFolder,
+          ].filter(Boolean),
+          error: "",
+        }));
+        break;
       case "queue_server_copy":
       case "queue_server_move":
       case "queue_server_moves":

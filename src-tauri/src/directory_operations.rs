@@ -18,6 +18,13 @@ pub struct CopyReceipt {
 }
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CopySourcesResult {
+    pub mail_id: String,
+    pub sources: Vec<String>,
+    pub error: String,
+}
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct QueueMoveResult {
     pub mail_id: String,
     pub operation_id: Option<String>,
@@ -529,6 +536,22 @@ impl Store {
             }
         }
         Ok(folders)
+    }
+    pub fn copy_sources_many(&self, ids: &[String]) -> Vec<CopySourcesResult> {
+        ids.iter()
+            .map(|id| match self.copy_sources(id) {
+                Ok(sources) => CopySourcesResult {
+                    mail_id: id.clone(),
+                    sources,
+                    error: String::new(),
+                },
+                Err(error) => CopySourcesResult {
+                    mail_id: id.clone(),
+                    sources: Vec::new(),
+                    error,
+                },
+            })
+            .collect()
     }
     pub fn directory_action(&self, id: &str, action: &str) -> Result<()> {
         let mut db = self.db()?;
@@ -1110,6 +1133,16 @@ pub(crate) mod tests {
         let mut stale = store.directory_operation(&job).unwrap();
         stale.status = "cleanup_uncertain".into();
         assert!(!store.claim_copy(&stale).unwrap());
+    }
+    #[test]
+    fn copy_sources_many_keeps_per_message_results() {
+        let (_temp, store, _a, id) = fixture();
+        let results = store.copy_sources_many(&[id, "missing".into()]);
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].sources, vec!["INBOX".to_string()]);
+        assert!(results[0].error.is_empty());
+        assert!(results[1].sources.is_empty());
+        assert!(results[1].error.is_empty());
     }
     #[test]
     fn queue_moves_keeps_per_message_results() {
