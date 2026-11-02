@@ -18,7 +18,7 @@ use lettre::{
 use native_tls::{TlsConnector, TlsStream};
 use scraper::{Html, Selector};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashSet},
     io::{BufRead, BufReader, Write},
     net::{TcpStream, ToSocketAddrs},
     panic::{catch_unwind, AssertUnwindSafe},
@@ -4618,6 +4618,34 @@ fn apply_directory_flags<T: std::io::Read + Write>(
 }
 /// One-time historical repair for local rule flags. A single session updates
 /// up to 200 UIDs per command and only reports UIDs the server confirmed.
+/// IMAP sequence sets accept ranges; 1,2,3,8,9 becomes 1:3,8:9.
+fn compact_uid_set(uids: &[u32]) -> String {
+    let mut parts = Vec::new();
+    let mut start = match uids.first() {
+        Some(uid) => *uid,
+        None => return String::new(),
+    };
+    let mut previous = start;
+    for uid in uids.iter().copied().skip(1) {
+        if uid == previous.saturating_add(1) {
+            previous = uid;
+            continue;
+        }
+        parts.push(if start == previous {
+            start.to_string()
+        } else {
+            format!("{start}:{previous}")
+        });
+        start = uid;
+        previous = uid;
+    }
+    parts.push(if start == previous {
+        start.to_string()
+    } else {
+        format!("{start}:{previous}")
+    });
+    parts.join(",")
+}
 fn apply_flag_batch_session<T: std::io::Read + Write>(
     session: &mut imap::Session<T>,
     folder: &str,
@@ -4650,16 +4678,48 @@ fn apply_flag_batch_session<T: std::io::Read + Write>(
     let uids = wanted.keys().copied().collect::<Vec<_>>();
     let mut verified = Vec::new();
     for chunk in uids.chunks(200) {
-        let set = chunk
-            .iter()
-            .map(u32::to_string)
-            .collect::<Vec<_>>()
-            .join(",");
-        let before = session.uid_fetch(&set, "(UID FLAGS)").map_err(err)?;
-        let mut current = BTreeMap::new();
-        for message in before.iter() {
+        let mut plus_seen = Vec::new();
+        let mut minus_seen = Vec::new();
+        let mut plus_flagged = Vec::new();
+        let mut minus_flagged = Vec::new();
+        for uid in chunk {
+            let (read, star) = wanted.get(uid).copied().unwrap_or_default();
+            match read {
+                Some(true) => plus_seen.push(*uid),
+                Some(false) => minus_seen.push(*uid),
+                None => {}
+            }
+            match star {
+                Some(true) => plus_flagged.push(*uid),
+                Some(false) => minus_flagged.push(*uid),
+                None => {}
+            }
+        }
+        // No pre-read: STORE is idempotent, so a single verification FETCH
+        // after the writes replaces the old read-before/write/read-after cycle.
+        let set = compact_uid_set(chunk);
+        let writes = [
+            ("+", "\\Seen", plus_seen),
+            ("-", "\\Seen", minus_seen),
+            ("+", "\\Flagged", plus_flagged),
+            ("-", "\\Flagged", minus_flagged),
+        ];
+        for (direction, name, list) in writes {
+            if list.is_empty() {
+                continue;
+            }
+            session
+                .uid_store(
+                    &compact_uid_set(&list),
+                    format!("{direction}FLAGS.SILENT ({name})"),
+                )
+                .map_err(err)?;
+        }
+        let after = session.uid_fetch(&set, "(UID FLAGS)").map_err(err)?;
+        let mut confirmed = BTreeMap::new();
+        for message in after.iter() {
             if let Some(uid) = message.uid {
-                current.insert(
+                confirmed.insert(
                     uid,
                     (
                         message.flags().contains(&Flag::Seen),
@@ -4668,73 +4728,7 @@ fn apply_flag_batch_session<T: std::io::Read + Write>(
                 );
             }
         }
-        drop(before);
-        let mut plus_seen = Vec::new();
-        let mut minus_seen = Vec::new();
-        let mut plus_flagged = Vec::new();
-        let mut minus_flagged = Vec::new();
-        for uid in chunk {
-            let Some(flags) = current.get(uid) else {
-                continue;
-            };
-            let (read, star) = wanted.get(uid).copied().unwrap_or_default();
-            if let Some(value) = read {
-                if flags.0 != value {
-                    if value {
-                        plus_seen.push(*uid);
-                    } else {
-                        minus_seen.push(*uid);
-                    }
-                }
-            }
-            if let Some(value) = star {
-                if flags.1 != value {
-                    if value {
-                        plus_flagged.push(*uid);
-                    } else {
-                        minus_flagged.push(*uid);
-                    }
-                }
-            }
-        }
-        let mut writes = [
-            ("+", "\\Seen", plus_seen),
-            ("-", "\\Seen", minus_seen),
-            ("+", "\\Flagged", plus_flagged),
-            ("-", "\\Flagged", minus_flagged),
-        ];
-        let had_writes = writes.iter().any(|(_, _, list)| !list.is_empty());
-        for (direction, name, list) in &mut writes {
-            if list.is_empty() {
-                continue;
-            }
-            let set = list
-                .iter()
-                .map(u32::to_string)
-                .collect::<Vec<_>>()
-                .join(",");
-            session
-                .uid_store(&set, format!("{direction}FLAGS.SILENT ({name})"))
-                .map_err(err)?;
-        }
-        let confirmed = if had_writes {
-            let after = session.uid_fetch(&set, "(UID FLAGS)").map_err(err)?;
-            let mut map = BTreeMap::new();
-            for message in after.iter() {
-                if let Some(uid) = message.uid {
-                    map.insert(
-                        uid,
-                        (
-                            message.flags().contains(&Flag::Seen),
-                            message.flags().contains(&Flag::Flagged),
-                        ),
-                    );
-                }
-            }
-            map
-        } else {
-            current
-        };
+        drop(after);
         for uid in chunk {
             let Some(flags) = confirmed.get(uid) else {
                 continue;
@@ -4948,20 +4942,54 @@ fn move_receipt(
     }
     receipt.ok_or("移动未返回可靠的 COPYUID，请核对两个目录，不会自动重发".into())
 }
+/// One authenticated COPY/MOVE transport reused by every task of the same
+/// account cycle. Each operation still validates and journals independently;
+/// only the TLS/login handshake is shared.
+pub(crate) struct CopySession {
+    session: imap::Session<CopyStream<TlsStream<TcpStream>>>,
+    capture: Arc<Mutex<CopyCapture>>,
+}
+impl CopySession {
+    pub(crate) fn apply(
+        &mut self,
+        store: &Store,
+        op: &crate::directory_operations::DirectoryOperation,
+    ) -> Result<()> {
+        store.validate_copy(op)?;
+        *self.capture.lock().map_err(err)? = CopyCapture::default();
+        apply_copy_session(store, op, &mut self.session, &self.capture)
+    }
+    pub(crate) fn apply_batch(
+        &mut self,
+        store: &Store,
+        ops: &[crate::directory_operations::DirectoryOperation],
+    ) -> Result<BatchOutcome> {
+        *self.capture.lock().map_err(err)? = CopyCapture::default();
+        apply_copy_batch(store, ops, &mut self.session, &self.capture)
+    }
+    pub(crate) fn supports_move(&mut self) -> Result<bool> {
+        let caps = self.session.capabilities().map_err(err)?;
+        Ok(caps.has_str("MOVE") || caps.has_str("IMAP4rev2"))
+    }
+}
+pub(crate) fn open_copy_session(account: &Account) -> Result<CopySession> {
+    let secret = auth::credentials(account)?;
+    let capture = Arc::new(Mutex::new(CopyCapture::default()));
+    let session = imap_session_using(account, &secret, None, |inner| CopyStream {
+        inner,
+        capture: capture.clone(),
+    })?;
+    Ok(CopySession { session, capture })
+}
 pub(crate) fn apply_copy(
     store: &Store,
     op: &crate::directory_operations::DirectoryOperation,
 ) -> Result<()> {
     let account = store.validate_copy(op)?;
-    let secret = auth::credentials(&account)?;
-    let capture = Arc::new(Mutex::new(CopyCapture::default()));
-    let mut session = imap_session_using(&account, &secret, None, |inner| CopyStream {
-        inner,
-        capture: capture.clone(),
-    })?;
+    let mut session = open_copy_session(&account)?;
     // Native MOVE is preferred; compatibility uses journaled COPY then UID-only cleanup.
     // Neither path ever issues plain EXPUNGE or CLOSE.
-    apply_copy_session(store, op, &mut session, &capture)
+    session.apply(store, op)
 }
 fn verify_directory_target<T: std::io::Read + Write>(
     op: &crate::directory_operations::DirectoryOperation,
@@ -5076,6 +5104,117 @@ fn cleanup_move_session<T: std::io::Read + Write>(
     // Re-read the target as well: do not retire the local source solely on an OK.
     verify_copy_session(store, op, session)
 }
+// Expand a compact UID set from COPYUID. Bounded so a malformed server
+// response cannot allocate an unbounded vector.
+fn parse_uid_set(value: &str) -> Option<Vec<u32>> {
+    let mut result = Vec::new();
+    for part in value.split(',') {
+        let (start, end) = match part.split_once(':') {
+            Some((a, b)) => (a.parse::<u32>().ok()?, b.parse::<u32>().ok()?),
+            None => {
+                let uid = part.parse::<u32>().ok()?;
+                (uid, uid)
+            }
+        };
+        if start == 0 || end < start || end - start > 10_000 {
+            return None;
+        }
+        for uid in start..=end {
+            result.push(uid);
+            if result.len() > 10_000 {
+                return None;
+            }
+        }
+    }
+    Some(result)
+}
+/// Parse a COPYUID covering several source UIDs. The server may answer with
+/// ranges; callers persist only mappings that are unambiguous.
+fn copy_receipts(
+    capture: &CopyCapture,
+    target_validity: u32,
+) -> Result<BTreeMap<u32, crate::directory_operations::CopyReceipt>> {
+    use imap_proto::{Response, Status};
+    if capture.overflow {
+        return Err("复制确认响应过大，结果未确认；请核对目标目录".into());
+    }
+    let command = std::str::from_utf8(&capture.output).map_err(err)?;
+    let tag = command
+        .split_whitespace()
+        .next()
+        .ok_or("复制命令标识缺失")?;
+    let mut remaining = capture.input.as_slice();
+    let mut result: BTreeMap<u32, crate::directory_operations::CopyReceipt> = BTreeMap::new();
+    while !remaining.is_empty() {
+        let (rest, response) =
+            imap_proto::parse_response(remaining).map_err(|_| "复制确认响应无效或未完整传输")?;
+        remaining = rest;
+        let info = match response {
+            Response::Data {
+                status: Status::Ok,
+                information,
+                ..
+            } => information,
+            Response::Done {
+                tag: actual,
+                status,
+                information,
+                ..
+            } if actual.as_bytes() == tag.as_bytes() => {
+                if !matches!(status, Status::Ok | Status::No | Status::Bad) {
+                    return Err("复制响应状态无效".into());
+                }
+                information
+            }
+            _ => continue,
+        };
+        let Some(code) = info
+            .and_then(|s| s.strip_prefix('['))
+            .and_then(|s| s.split_once(']').map(|(v, _)| v))
+        else {
+            continue;
+        };
+        let fields: Vec<_> = code.split_whitespace().collect();
+        if fields
+            .first()
+            .is_none_or(|s| !s.eq_ignore_ascii_case("COPYUID"))
+        {
+            continue;
+        }
+        if fields
+            .get(1)
+            .and_then(|s| parse_uid_set(s))
+            .is_none_or(|v| v != [target_validity])
+        {
+            return Err("复制回执的目标目录 UIDVALIDITY 不匹配；请核对目标目录".into());
+        }
+        let sources = fields
+            .get(2)
+            .and_then(|s| parse_uid_set(s))
+            .ok_or("复制回执的来源编号无效；请核对目标目录")?;
+        let targets = fields
+            .get(3)
+            .and_then(|s| parse_uid_set(s))
+            .ok_or("复制回执的目标编号无效；请核对目标目录")?;
+        if sources.len() != targets.len() {
+            return Err("复制回执的来源与目标编号数量不一致；请核对目标目录".into());
+        }
+        for (source, target) in sources.into_iter().zip(targets) {
+            let receipt = crate::directory_operations::CopyReceipt {
+                validity: target_validity,
+                uid: target,
+            };
+            if result.get(&source).is_some_and(|existing| existing.uid != receipt.uid) {
+                return Err("复制回执返回了相互矛盾的编号；请核对目标目录".into());
+            }
+            result.insert(source, receipt);
+        }
+    }
+    if result.is_empty() {
+        return Err("服务器已接受复制，但未返回可用的 COPYUID；请核对目标目录".into());
+    }
+    Ok(result)
+}
 fn apply_copy_session<T: std::io::Read + Write>(
     store: &Store,
     op: &crate::directory_operations::DirectoryOperation,
@@ -5178,9 +5317,492 @@ fn apply_copy_session<T: std::io::Read + Write>(
     verify_copy_session(store, &current, session)
 }
 
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum BatchOutcome {
+    Done,
+    Unsupported,
+}
+fn fail_batch(store: &Store, ops: &[crate::directory_operations::DirectoryOperation], reason: &str, definite: bool) {
+    for op in ops {
+        let _ = store.fail_copy(&op.id, reason, definite);
+    }
+}
+/// Apply one native COPY/MOVE command for several source UIDs. Per-message
+/// journal rows remain the recovery authority: a missing or partial COPYUID
+/// becomes uncertain/blocked and is never replayed automatically.
+fn apply_copy_batch<T: std::io::Read + Write>(
+    store: &Store,
+    ops: &[crate::directory_operations::DirectoryOperation],
+    session: &mut imap::Session<T>,
+    capture: &Arc<Mutex<CopyCapture>>,
+) -> Result<BatchOutcome> {
+    if ops.is_empty() {
+        return Ok(BatchOutcome::Done);
+    }
+    let caps = session.capabilities().map_err(err)?;
+    if !caps.has_str("UIDPLUS") && !caps.has_str("IMAP4rev2") {
+        fail_batch(store, ops, "服务器未提供 UIDPLUS，无法可靠确认批量文件夹操作；尚未提交", false);
+        return Ok(BatchOutcome::Done);
+    }
+    let move_supported = caps.has_str("MOVE") || caps.has_str("IMAP4rev2");
+    drop(caps);
+    if ops.iter().any(|op| op.kind == "move") && !move_supported {
+        return Ok(BatchOutcome::Unsupported);
+    }
+    let first = &ops[0];
+    let target = match examine_verified(session, &first.target) {
+        Ok(target) => target,
+        Err(e) => {
+            fail_batch(store, ops, &format!("目标目录读取失败：{e}；尚未提交"), false);
+            return Err(e.to_string());
+        }
+    };
+    let target_validity = match mailbox_uid_validity(session, &first.target, &target) {
+        Ok(Some(value)) if value > 0 => value,
+        Ok(_) => {
+            fail_batch(store, ops, "目标目录没有可靠的 UIDVALIDITY；尚未提交", false);
+            return Ok(BatchOutcome::Done);
+        }
+        Err(e) => {
+            fail_batch(store, ops, &format!("目标目录读取失败：{e}；尚未提交"), false);
+            return Err(e.to_string());
+        }
+    };
+    let source = match session.select(&first.folder) {
+        Ok(mailbox) => mailbox,
+        Err(e) => {
+            fail_batch(store, ops, &format!("无法打开原目录：{e}；尚未提交"), false);
+            return Err(e.to_string());
+        }
+    };
+    let mut candidates = Vec::new();
+    for op in ops {
+        if let Err(e) = store.validate_copy(op) {
+            let _ = store.fail_copy(&op.id, &e, true);
+            continue;
+        }
+        let Some((validity, uid, expected)) = crate::operations::remote_identity(&op.remote_id)
+        else {
+            let _ = store.fail_copy(&op.id, "来源邮件编号无效；尚未提交", true);
+            continue;
+        };
+        if validity.is_some_and(|v| source.uid_validity != Some(v)) {
+            let _ = store.fail_copy(&op.id, "来源目录的邮件标识已变化；尚未提交", true);
+            continue;
+        }
+        candidates.push((uid, expected, op.clone()));
+    }
+    if candidates.is_empty() {
+        return Ok(BatchOutcome::Done);
+    }
+    candidates.sort_by_key(|(uid, _, _)| *uid);
+    let mut seen = HashSet::new();
+    candidates.retain(|(uid, _, op)| {
+        if seen.insert(*uid) {
+            true
+        } else {
+            let _ = store.fail_copy(&op.id, "同一来源编号出现重复任务；尚未提交", true);
+            false
+        }
+    });
+    let uids = candidates.iter().map(|(uid, _, _)| *uid).collect::<Vec<_>>();
+    let set = compact_uid_set(&uids);
+    let messages = match session.uid_fetch(set.clone(), "(UID BODY.PEEK[])") {
+        Ok(messages) => messages,
+        Err(e) => {
+            fail_batch(store, ops, &format!("读取原邮件失败：{e}；尚未提交"), false);
+            return Err(e.to_string());
+        }
+    };
+    let mut raw_by_uid = BTreeMap::new();
+    for message in messages.iter() {
+        if let Some(uid) = message.uid {
+            if let Some(body) = message.body() {
+                raw_by_uid.insert(uid, body.to_vec());
+            }
+        }
+    }
+    drop(messages);
+    let mut ready = Vec::new();
+    for (uid, expected, mut op) in candidates {
+        let Some(raw) = raw_by_uid.remove(&uid) else {
+            let _ = store.fail_copy(&op.id, "原服务器邮件已不存在；尚未提交", true);
+            continue;
+        };
+        let hash = archive::digest(&raw);
+        if expected.as_ref().is_some_and(|value| value != &hash) {
+            let headers = session
+                .uid_fetch(uid.to_string(), "(UID BODY.PEEK[HEADER])")
+                .map_err(err)?;
+            let header_hash = headers
+                .iter()
+                .find(|m| m.uid == Some(uid))
+                .and_then(|m| m.header())
+                .map(archive::digest);
+            drop(headers);
+            if expected != header_hash.as_deref() {
+                let _ = store.fail_copy(&op.id, "来源邮件内容不一致；尚未提交", true);
+                continue;
+            }
+        }
+        if let Err(e) = apply_directory_flags(session, uid, &op.flags, &source.permanent_flags) {
+            let _ = store.fail_copy(&op.id, &format!("{e}；尚未提交"), false);
+            continue;
+        }
+        let compatibility = false;
+        if store.submit_directory(&op, &hash, compatibility).is_err() {
+            let _ = store.fail_copy(&op.id, "文件夹任务状态已变化，停止提交", false);
+            continue;
+        }
+        op.content_hash = hash;
+        ready.push((uid, op));
+    }
+    if ready.is_empty() {
+        return Ok(BatchOutcome::Done);
+    }
+    ready.sort_by_key(|(uid, _)| *uid);
+    let batch_uids = ready.iter().map(|(uid, _)| *uid).collect::<Vec<_>>();
+    let batch_set = compact_uid_set(&batch_uids);
+    *capture.lock().map_err(err)? = CopyCapture {
+        enabled: true,
+        ..Default::default()
+    };
+    let target = first.target.replace('\\', "\\\\").replace('"', "\\\"");
+    let verb = if first.kind == "move" { "MOVE" } else { "COPY" };
+    let result = session.run_command_and_read_response(format!("UID {verb} {batch_set} \"{target}\""));
+    capture.lock().map_err(err)?.enabled = false;
+    let connection_lost = result
+        .as_ref()
+        .is_err_and(|e| !matches!(e, imap::error::Error::No(_) | imap::error::Error::Bad(_)));
+    let receipts = copy_receipts(&*capture.lock().map_err(err)?, target_validity).unwrap_or_default();
+    let mut verified = Vec::new();
+    for (uid, mut op) in ready {
+        let Some(receipt) = receipts.get(&uid).cloned() else {
+            let _ = store.fail_copy(
+                &op.id,
+                "服务器已接受文件夹操作，但未返回完整 COPYUID；请核对目标目录，不会自动重发",
+                false,
+            );
+            continue;
+        };
+        op.receipt = Some(receipt);
+        if let Err(e) = store.save_copy_receipt(&op, op.receipt.as_ref().unwrap()) {
+            let _ = store.fail_copy(&op.id, &e, false);
+            continue;
+        }
+        verified.push(op);
+    }
+    if connection_lost {
+        return Err("文件夹操作已提交但连接中断；请核对两个目录，不会自动重发".into());
+    }
+    if result
+        .as_ref()
+        .is_err_and(|e| matches!(e, imap::error::Error::No(_) | imap::error::Error::Bad(_)))
+    {
+        // A NO/BAD may still include a partial COPYUID; mapped operations are
+        // verified below, unmapped ones were marked above.
+    }
+    if verified.is_empty() {
+        return Ok(BatchOutcome::Done);
+    }
+    if let Err(e) = examine_verified(session, &first.target) {
+        fail_batch(store, &verified, &format!("目标目录读取失败：{e}；保留回执，稍后只读核对"), false);
+        return Err(e.to_string());
+    }
+    let target_uids = verified
+        .iter()
+        .filter_map(|op| op.receipt.as_ref().map(|r| r.uid))
+        .collect::<Vec<_>>();
+    let target_set = compact_uid_set(&target_uids);
+    let target_messages = match session.uid_fetch(target_set, "(UID BODY.PEEK[])") {
+        Ok(messages) => messages,
+        Err(e) => {
+            fail_batch(store, &verified, &format!("目标目录读取失败：{e}；保留回执，稍后只读核对"), false);
+            return Err(e.to_string());
+        }
+    };
+    let mut target_raw = BTreeMap::new();
+    for message in target_messages.iter() {
+        if let (Some(uid), Some(body)) = (message.uid, message.body()) {
+            target_raw.insert(uid, body.to_vec());
+        }
+    }
+    drop(target_messages);
+    let mut moved = Vec::new();
+    for op in verified {
+        let uid = op.receipt.as_ref().map(|r| r.uid).unwrap_or(0);
+        let Some(raw) = target_raw.get(&uid) else {
+            let _ = store.fail_copy(&op.id, "目标目录未找到副本；保留回执，请只读核对", false);
+            continue;
+        };
+        if archive::digest(raw) != op.content_hash {
+            let _ = store.fail_copy(&op.id, "目标内容与原邮件不一致；保留回执，请只读核对", false);
+            continue;
+        }
+        if op.kind == "move" {
+            moved.push(op);
+        } else if let Err(e) = store.complete_copy(&op) {
+            let _ = store.fail_copy(&op.id, &e, false);
+        }
+    }
+    if !moved.is_empty() {
+        let source = match session.select(&first.folder) {
+            Ok(value) => value,
+            Err(e) => {
+                fail_batch(store, &moved, &format!("原目录读取失败：{e}；保留回执，稍后只读核对"), false);
+                return Err(e.to_string());
+            }
+        };
+        let _ = source;
+        let source_set = moved
+            .iter()
+            .filter_map(|op| crate::operations::remote_identity(&op.remote_id).map(|(_, uid, _)| uid))
+            .collect::<Vec<_>>();
+        let source_set = {
+            let mut values = source_set;
+            values.sort_unstable();
+            compact_uid_set(&values)
+        };
+        let remaining = match session.uid_fetch(source_set, "(UID)") {
+            Ok(messages) => messages,
+            Err(e) => {
+                fail_batch(store, &moved, &format!("原目录响应异常：{e}；保留回执，稍后只读核对"), false);
+                return Err(e.to_string());
+            }
+        };
+        let present = remaining
+            .iter()
+            .filter_map(|m| m.uid)
+            .collect::<HashSet<_>>();
+        drop(remaining);
+        for op in moved {
+            let (_, uid, _) = crate::operations::remote_identity(&op.remote_id)
+                .ok_or("移动来源标识缺失")?;
+            if present.contains(&uid) {
+                let _ = store.fail_copy(&op.id, "目标已确认，但原邮件仍存在；请只读核对，不会重发移动", false);
+            } else if let Err(e) = store.complete_copy(&op) {
+                let _ = store.fail_copy(&op.id, &e, false);
+            }
+        }
+    }
+    Ok(BatchOutcome::Done)
+}
+
 #[cfg(test)]
 mod copy_tests {
     use super::*;
+    fn batch_fetch(tag: &str, messages: &[(u32, &[u8])]) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        for (index, (uid, raw)) in messages.iter().enumerate() {
+            bytes.extend(
+                format!(
+                    "* {} FETCH (UID {uid} BODY[] {{{}}}\r\n",
+                    index + 1,
+                    raw.len()
+                )
+                .into_bytes(),
+            );
+            bytes.extend(*raw);
+            bytes.extend(b")\r\n");
+        }
+        bytes.extend(format!("{tag} OK fetched\r\n").as_bytes());
+        bytes
+    }
+    #[test]
+    fn batch_copy_uses_one_copy_command_and_keeps_both_sources() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::new(temp.path().into()).unwrap();
+        let a = crate::tests::account();
+        store.save_account(&a).unwrap();
+        store.ingest(&a, "INBOX", "7:12", &crate::tests::raw(), false).unwrap();
+        store.ingest(&a, "INBOX", "7:13", &crate::tests::raw2(), false).unwrap();
+        store.save_remote_folders(&a.id, &[RemoteFolder {
+            account_id: a.id.clone(), name: "Archive".into(), display_name: "归档".into(),
+            delimiter: None, selectable: true, roles: vec![], detected_roles: None, sync_error: None,
+        }]).unwrap();
+        let ids = {
+            let db = store.db().unwrap();
+            let mut st = db.prepare("SELECT mail_id FROM sources WHERE folder='INBOX' ORDER BY remote_id").unwrap();
+            st.query_map([], |r| r.get::<_, String>(0)).unwrap().collect::<std::result::Result<Vec<_>, _>>().unwrap()
+        };
+        let ops = ids.iter().map(|id| {
+            let job = store.queue_copy(id, "INBOX", "Archive").unwrap();
+            let op = store.directory_operation(&job).unwrap();
+            assert!(store.claim_copy(&op).unwrap());
+            store.directory_operation(&job).unwrap()
+        }).collect::<Vec<_>>();
+        let (mut session, capture, written) = session(vec![
+            b"a1 OK login\r\n".to_vec(),
+            b"* CAPABILITY IMAP4rev1 UIDPLUS MOVE\r\na2 OK caps\r\n".to_vec(),
+            b"* 0 EXISTS\r\n* OK [UIDVALIDITY 9] valid\r\na3 OK examined\r\n".to_vec(),
+            b"* 2 EXISTS\r\n* OK [UIDVALIDITY 7] valid\r\na4 OK selected\r\n".to_vec(),
+            batch_fetch("a5", &[(12, &crate::tests::raw()), (13, &crate::tests::raw2())]),
+            b"a6 OK [COPYUID 9 12:13 100:101] copied\r\n".to_vec(),
+            b"* 2 EXISTS\r\n* OK [UIDVALIDITY 9] valid\r\na7 OK examined\r\n".to_vec(),
+            batch_fetch("a8", &[(100, &crate::tests::raw()), (101, &crate::tests::raw2())]),
+        ]);
+        apply_copy_batch(&store, &ops, &mut session, &capture).unwrap();
+        for op in &ops {
+            assert_eq!(store.directory_operation(&op.id).unwrap().status, "completed");
+        }
+        let commands = String::from_utf8(written.lock().unwrap().clone()).unwrap();
+        assert_eq!(commands.matches("UID COPY 12:13").count(), 1);
+        assert!(!commands.contains("UID MOVE"));
+        assert!(!commands.contains("EXPUNGE"));
+    }
+    #[test]
+    fn batch_move_without_move_capability_falls_back_without_submitting() {
+        let (_temp, store, _a, id) = crate::directory_operations::tests::fixture();
+        let job = store.queue_move(&id, "INBOX", "Archive").unwrap();
+        let op = store.directory_operation(&job).unwrap();
+        assert!(store.claim_copy(&op).unwrap());
+        let (mut session, capture, written) = session(vec![
+            b"a1 OK login\r\n".to_vec(),
+            b"* CAPABILITY IMAP4rev1 UIDPLUS\r\na2 OK caps\r\n".to_vec(),
+        ]);
+        let outcome = apply_copy_batch(&store, &[store.directory_operation(&job).unwrap()], &mut session, &capture).unwrap();
+        assert_eq!(outcome, BatchOutcome::Unsupported);
+        assert_eq!(store.directory_operation(&job).unwrap().status, "preparing");
+        assert!(!String::from_utf8(written.lock().unwrap().clone()).unwrap().contains("UID MOVE"));
+    }
+    #[test]
+    fn partial_batch_copyuid_never_replays_the_unmapped_message() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::new(temp.path().into()).unwrap();
+        let a = crate::tests::account();
+        store.save_account(&a).unwrap();
+        store.ingest(&a, "INBOX", "7:12", &crate::tests::raw(), false).unwrap();
+        store.ingest(&a, "INBOX", "7:13", &crate::tests::raw2(), false).unwrap();
+        store.save_remote_folders(&a.id, &[RemoteFolder {
+            account_id: a.id.clone(), name: "Archive".into(), display_name: "归档".into(),
+            delimiter: None, selectable: true, roles: vec![], detected_roles: None, sync_error: None,
+        }]).unwrap();
+        let ids = {
+            let db = store.db().unwrap();
+            let mut st = db.prepare("SELECT mail_id FROM sources WHERE folder='INBOX' ORDER BY remote_id").unwrap();
+            st.query_map([], |r| r.get::<_, String>(0)).unwrap().collect::<std::result::Result<Vec<_>, _>>().unwrap()
+        };
+        let ops = ids.iter().map(|id| {
+            let job = store.queue_move(id, "INBOX", "Archive").unwrap();
+            let op = store.directory_operation(&job).unwrap();
+            assert!(store.claim_copy(&op).unwrap());
+            store.directory_operation(&job).unwrap()
+        }).collect::<Vec<_>>();
+        let (mut session, capture, written) = session(vec![
+            b"a1 OK login\r\n".to_vec(),
+            b"* CAPABILITY IMAP4rev1 UIDPLUS MOVE\r\na2 OK caps\r\n".to_vec(),
+            b"* 0 EXISTS\r\n* OK [UIDVALIDITY 9] valid\r\na3 OK examined\r\n".to_vec(),
+            b"* 2 EXISTS\r\n* OK [UIDVALIDITY 7] valid\r\na4 OK selected\r\n".to_vec(),
+            batch_fetch("a5", &[(12, &crate::tests::raw()), (13, &crate::tests::raw2())]),
+            b"a6 OK [COPYUID 9 12 100] partially moved\r\n".to_vec(),
+            b"* 1 EXISTS\r\n* OK [UIDVALIDITY 9] valid\r\na7 OK examined\r\n".to_vec(),
+            batch_fetch("a8", &[(100, &crate::tests::raw())]),
+            b"* 2 EXISTS\r\n* OK [UIDVALIDITY 7] valid\r\na9 OK selected\r\n".to_vec(),
+            b"a10 OK fetched\r\n".to_vec(),
+        ]);
+        apply_copy_batch(&store, &ops, &mut session, &capture).unwrap();
+        let statuses = ops.iter().map(|op| store.directory_operation(&op.id).unwrap().status).collect::<Vec<_>>();
+        assert!(statuses.contains(&"completed".into()));
+        assert!(statuses.contains(&"uncertain".into()));
+        assert!(store.due_copies(&a.id).unwrap().is_empty());
+        let commands = String::from_utf8(written.lock().unwrap().clone()).unwrap();
+        assert_eq!(commands.matches("UID MOVE").count(), 1);
+    }
+    #[test]
+    fn batch_native_move_uses_one_command_and_completes_each_journal() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::new(temp.path().into()).unwrap();
+        let a = crate::tests::account();
+        store.save_account(&a).unwrap();
+        store
+            .ingest(&a, "INBOX", "7:12", &crate::tests::raw(), false)
+            .unwrap();
+        store
+            .ingest(&a, "INBOX", "7:13", &crate::tests::raw2(), false)
+            .unwrap();
+        store
+            .save_remote_folders(
+                &a.id,
+                &[RemoteFolder {
+                    account_id: a.id.clone(),
+                    name: "Archive".into(),
+                    display_name: "归档".into(),
+                    delimiter: None,
+                    selectable: true,
+                    roles: vec![],
+                    detected_roles: None,
+                    sync_error: None,
+                }],
+            )
+            .unwrap();
+        let ids = {
+            let db = store.db().unwrap();
+            let mut st = db
+                .prepare("SELECT mail_id FROM sources WHERE folder='INBOX' ORDER BY remote_id")
+                .unwrap();
+            let rows = st
+                .query_map([], |r| r.get::<_, String>(0))
+                .unwrap()
+                .collect::<std::result::Result<Vec<_>, _>>()
+                .unwrap();
+            rows
+        };
+        assert_eq!(ids.len(), 2);
+        let ops = ids
+            .iter()
+            .map(|id| {
+                let job = store.queue_move(id, "INBOX", "Archive").unwrap();
+                let op = store.directory_operation(&job).unwrap();
+                assert!(store.claim_copy(&op).unwrap());
+                store.directory_operation(&job).unwrap()
+            })
+            .collect::<Vec<_>>();
+        let script = vec![
+            b"a1 OK login\r\n".to_vec(),
+            b"* CAPABILITY IMAP4rev1 UIDPLUS MOVE\r\na2 OK caps\r\n".to_vec(),
+            b"* 0 EXISTS\r\n* OK [UIDVALIDITY 9] valid\r\na3 OK examined\r\n".to_vec(),
+            b"* 2 EXISTS\r\n* OK [UIDVALIDITY 7] valid\r\na4 OK selected\r\n".to_vec(),
+            batch_fetch("a5", &[(12, &crate::tests::raw()), (13, &crate::tests::raw2())]),
+            b"a6 OK [COPYUID 9 12:13 100:101] moved\r\n".to_vec(),
+            b"* 2 EXISTS\r\n* OK [UIDVALIDITY 9] valid\r\na7 OK examined\r\n".to_vec(),
+            batch_fetch("a8", &[(100, &crate::tests::raw()), (101, &crate::tests::raw2())]),
+            b"* 2 EXISTS\r\n* OK [UIDVALIDITY 7] valid\r\na9 OK selected\r\n".to_vec(),
+            b"a10 OK fetched\r\n".to_vec(),
+        ];
+        let (mut session, capture, written) = session(script);
+        let outcome = apply_copy_batch(&store, &ops, &mut session, &capture).unwrap();
+        assert_eq!(outcome, BatchOutcome::Done);
+        for op in &ops {
+            assert_eq!(store.directory_operation(&op.id).unwrap().status, "completed");
+        }
+        let commands = String::from_utf8(written.lock().unwrap().clone()).unwrap();
+        assert_eq!(commands.matches("UID MOVE 12:13").count(), 1);
+        assert!(!commands.contains("UID COPY"));
+        assert!(!commands.contains("EXPUNGE"));
+        assert!(!commands.contains("CLOSE"));
+        assert!(!commands.contains("UID STORE 12"));
+    }
+    #[test]
+    fn batch_copyuid_expands_ranges_and_rejects_invalid_sets() {
+        assert_eq!(parse_uid_set("1:3,5"), Some(vec![1, 2, 3, 5]));
+        assert_eq!(parse_uid_set("0"), None);
+        assert_eq!(parse_uid_set("3:1"), None);
+        let capture = CopyCapture {
+            enabled: false,
+            input: b"* OK [COPYUID 9 1:2 100:101]\r\na6 OK moved\r\n".to_vec(),
+            output: b"a6 UID MOVE 1:2 \"Archive\"\r\n".to_vec(),
+            overflow: false,
+        };
+        let receipts = copy_receipts(&capture, 9).unwrap();
+        assert_eq!(receipts.get(&1).unwrap().uid, 100);
+        assert_eq!(receipts.get(&2).unwrap().uid, 101);
+        let wrong = CopyCapture {
+            input: b"* OK [COPYUID 10 1:2 100:101]\r\na6 OK moved\r\n".to_vec(),
+            ..capture
+        };
+        assert!(copy_receipts(&wrong, 9).is_err());
+    }
     use std::{
         collections::VecDeque,
         io::{Cursor, Read},
@@ -5304,6 +5926,13 @@ mod copy_tests {
         assert!(!String::from_utf8_lossy(&capture.input).contains("Content-Type"));
     }
     #[test]
+    fn uid_sets_are_compacted_into_ranges() {
+        assert_eq!(compact_uid_set(&[]), "");
+        assert_eq!(compact_uid_set(&[7]), "7");
+        assert_eq!(compact_uid_set(&[1, 2, 3, 8, 9, 12]), "1:3,8:9,12");
+        assert_eq!(compact_uid_set(&[1, 3, 5]), "1,3,5");
+    }
+    #[test]
     fn historical_flag_batch_writes_and_verifies_only_confirmed_uids() {
         let changes = vec![
             (12u32, "read".to_string(), true),
@@ -5312,10 +5941,9 @@ mod copy_tests {
         let script = vec![
             b"a1 OK login\r\n".to_vec(),
             b"* 1 EXISTS\r\n* OK [UIDVALIDITY 7] valid\r\n* OK [PERMANENTFLAGS (\\Seen \\Flagged)]\r\na2 OK selected\r\n".to_vec(),
-            b"* 1 FETCH (UID 12 FLAGS ())\r\na3 OK fetched\r\n".to_vec(),
+            b"a3 OK stored\r\n".to_vec(),
             b"a4 OK stored\r\n".to_vec(),
-            b"a5 OK stored\r\n".to_vec(),
-            b"* 1 FETCH (UID 12 FLAGS (\\Seen \\Flagged))\r\na6 OK fetched\r\n".to_vec(),
+            b"* 1 FETCH (UID 12 FLAGS (\\Seen \\Flagged))\r\na5 OK fetched\r\n".to_vec(),
         ];
         let (mut first, _capture, written) = session(script);
         let verified = apply_flag_batch_session(&mut first, "INBOX", 7, &changes).unwrap();

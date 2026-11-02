@@ -308,6 +308,26 @@ async fn queue_server_move(
         .await
         .map_err(err)?
 }
+#[derive(serde::Deserialize)]
+struct QueueMoveInput {
+    id: String,
+    source: String,
+}
+#[tauri::command]
+async fn queue_server_moves(
+    state: tauri::State<'_, AppState>,
+    moves: Vec<QueueMoveInput>,
+    target: String,
+) -> Result<Vec<directory_operations::QueueMoveResult>> {
+    let store = state.store.clone();
+    let moves = moves
+        .into_iter()
+        .map(|item| (item.id, item.source))
+        .collect::<Vec<_>>();
+    tauri::async_runtime::spawn_blocking(move || store.queue_moves(&moves, &target))
+        .await
+        .map_err(err)
+}
 #[tauri::command]
 async fn directory_operations(
     state: tauri::State<'_, AppState>,
@@ -4394,6 +4414,7 @@ pub fn run() {
             copy_sources,
             queue_server_copy,
             queue_server_move,
+            queue_server_moves,
             directory_operations,
             directory_operation_action,
             probe_remote_folder,

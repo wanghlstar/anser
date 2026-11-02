@@ -2457,16 +2457,23 @@ export default function App() {
     let queued = 0;
     let local = 0;
     let failed = 0;
-    for (const item of plan) {
+    if (plan.length) {
       try {
-        await call("queue_server_move", {
-          id: item.id,
-          source: item.source,
+        const results = await call<
+          { mailId: string; operationId: string | null; error: string }[]
+        >("queue_server_moves", {
+          moves: plan.map((item) => ({
+            id: item.id,
+            source: item.source,
+          })),
           target,
         });
-        queued++;
+        for (const result of results) {
+          if (result.operationId) queued++;
+          else failed++;
+        }
       } catch {
-        failed++;
+        failed += plan.length;
       }
     }
     for (const id of localOnly) {

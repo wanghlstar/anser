@@ -1177,6 +1177,7 @@ export async function call<T = void>(
         break;
       case "queue_server_copy":
       case "queue_server_move":
+      case "queue_server_moves":
       case "directory_operation_action":
       case "retry_rule_execution":
         throw new Error(

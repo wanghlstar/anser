@@ -16,6 +16,13 @@ pub struct CopyReceipt {
     pub validity: u32,
     pub uid: u32,
 }
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QueueMoveResult {
+    pub mail_id: String,
+    pub operation_id: Option<String>,
+    pub error: String,
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DirectoryOperation {
@@ -268,6 +275,25 @@ impl Store {
     }
     pub fn queue_move(&self, mail_id: &str, source: &str, target: &str) -> Result<String> {
         self.queue_directory(mail_id, source, target, "move")
+    }
+    /// Queue a UI multi-selection with one IPC call while preserving a
+    /// per-message result, so one invalid source does not discard the batch.
+    pub fn queue_moves(&self, moves: &[(String, String)], target: &str) -> Vec<QueueMoveResult> {
+        moves
+            .iter()
+            .map(|(mail_id, source)| match self.queue_move(mail_id, source, target) {
+                Ok(operation_id) => QueueMoveResult {
+                    mail_id: mail_id.clone(),
+                    operation_id: Some(operation_id),
+                    error: String::new(),
+                },
+                Err(error) => QueueMoveResult {
+                    mail_id: mail_id.clone(),
+                    operation_id: None,
+                    error,
+                },
+            })
+            .collect()
     }
     fn queue_directory(
         &self,
@@ -771,7 +797,7 @@ impl Store {
     }
     pub(crate) fn due_copies(&self, account: &str) -> Result<Vec<DirectoryOperation>> {
         let db = self.db()?;
-        let mut st=db.prepare(&format!("SELECT {COLUMNS} FROM directory_operations WHERE account_id=?1 AND status IN ('queued','confirmed','cleanup_pending') AND next_attempt<=?2 ORDER BY updated_at LIMIT 20")).map_err(err)?;
+        let mut st=db.prepare(&format!("SELECT {COLUMNS} FROM directory_operations WHERE account_id=?1 AND status IN ('queued','confirmed','cleanup_pending') AND next_attempt<=?2 ORDER BY updated_at LIMIT 50")).map_err(err)?;
         let result = st
             .query_map(params![account, chrono::Utc::now().timestamp()], decode)
             .map_err(err)?
@@ -804,14 +830,40 @@ pub fn start(store: Store, app: tauri::AppHandle) {
                 drop(busy);
                 let (store, app, active) = (store.clone(), app.clone(), active.clone());
                 std::thread::spawn(move || {
+                    // Reuse one TLS/login for the whole account cycle; a failed
+                    // operation drops it so the next task starts clean.
+                    let mut copy_session: Option<crate::network::CopySession> =
+                        crate::network::open_copy_session(&a).ok();
+                    // Group only queued tasks that can share one UID command.
+                    // Receipt-bearing verification/cleanup stays one-by-one.
+                    let mut groups: Vec<Vec<DirectoryOperation>> = Vec::new();
                     for op in jobs {
+                        let can_group = op.status == "queued" && op.receipt.is_none();
+                        if can_group {
+                            if let Some(group) = groups.iter_mut().find(|group| {
+                                group.len() < 50
+                                    && group[0].status == "queued"
+                                    && group[0].receipt.is_none()
+                                    && group[0].folder == op.folder
+                                    && group[0].target == op.target
+                                    && group[0].kind == op.kind
+                                    && group[0].strategy == op.strategy
+                            }) {
+                                group.push(op);
+                                continue;
+                            }
+                        }
+                        groups.push(vec![op]);
+                    }
+                    for group in groups {
+                        let first = &group[0];
                         let Ok(source) =
-                            crate::sync_control::folder_gate(&store.root, &a.id, &op.folder)
+                            crate::sync_control::folder_gate(&store.root, &a.id, &first.folder)
                         else {
                             continue;
                         };
                         let Ok(target) =
-                            crate::sync_control::folder_gate(&store.root, &a.id, &op.target)
+                            crate::sync_control::folder_gate(&store.root, &a.id, &first.target)
                         else {
                             continue;
                         };
@@ -819,18 +871,75 @@ pub fn start(store: Store, app: tauri::AppHandle) {
                         else {
                             continue;
                         };
-                        if !store.claim_copy(&op).unwrap_or(false) {
+                        let mut claimed = Vec::new();
+                        for op in &group {
+                            if store.claim_copy(op).unwrap_or(false) {
+                                claimed.push(op.clone());
+                            }
+                        }
+                        if claimed.is_empty() {
                             continue;
                         }
-                        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                            crate::network::apply_copy(&store, &op)
-                        }));
-                        if !matches!(result, Ok(Ok(()))) {
-                            let error = match result {
-                                Ok(Err(e)) => e,
-                                _ => "文件夹操作已中断，请查看任务记录".into(),
+                        let mut batch_done = false;
+                        if claimed.len() > 1 {
+                            if copy_session.is_none() {
+                                copy_session = crate::network::open_copy_session(&a).ok();
+                            }
+                            let is_move = claimed[0].kind == "move";
+                            let can_batch = match copy_session.as_mut() {
+                                Some(session) if is_move => session.supports_move().unwrap_or(false),
+                                Some(_) => true,
+                                None => false,
                             };
-                            let _ = store.fail_copy(&op.id, &error, false);
+                            if can_batch {
+                                let result = std::panic::catch_unwind(
+                                    std::panic::AssertUnwindSafe(|| {
+                                        copy_session
+                                            .as_mut()
+                                            .expect("session checked")
+                                            .apply_batch(&store, &claimed)
+                                    }),
+                                );
+                                match result {
+                                    Ok(Ok(crate::network::BatchOutcome::Done)) => {
+                                        batch_done = true;
+                                    }
+                                    Ok(Ok(crate::network::BatchOutcome::Unsupported)) => {}
+                                    other => {
+                                        // A failed batch may have submitted the
+                                        // command; never fall through to singles.
+                                        batch_done = true;
+                                        copy_session = None;
+                                        let error = match other {
+                                            Ok(Err(e)) => e,
+                                            _ => "批量文件夹操作已中断，请查看任务记录".into(),
+                                        };
+                                        for op in &claimed {
+                                            let _ = store.fail_copy(&op.id, &error, false);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        if !batch_done {
+                            for op in claimed {
+                                let result = std::panic::catch_unwind(
+                                    std::panic::AssertUnwindSafe(|| {
+                                        match copy_session.as_mut() {
+                                            Some(session) => session.apply(&store, &op),
+                                            None => crate::network::apply_copy(&store, &op),
+                                        }
+                                    }),
+                                );
+                                if !matches!(result, Ok(Ok(()))) {
+                                    copy_session = None;
+                                    let error = match result {
+                                        Ok(Err(e)) => e,
+                                        _ => "文件夹操作已中断，请查看任务记录".into(),
+                                    };
+                                    let _ = store.fail_copy(&op.id, &error, false);
+                                }
+                            }
                         }
                         let _ = app.emit("directory-operations-updated", ());
                         let _ = app.emit("mail-updated", ());
@@ -1001,6 +1110,22 @@ pub(crate) mod tests {
         let mut stale = store.directory_operation(&job).unwrap();
         stale.status = "cleanup_uncertain".into();
         assert!(!store.claim_copy(&stale).unwrap());
+    }
+    #[test]
+    fn queue_moves_keeps_per_message_results() {
+        let (_temp, store, _a, id) = fixture();
+        let results = store.queue_moves(
+            &[
+                (id.clone(), "INBOX".into()),
+                (id.clone(), "Missing".into()),
+            ],
+            "Archive",
+        );
+        assert_eq!(results.len(), 2);
+        assert!(results[0].operation_id.is_some());
+        assert!(results[0].error.is_empty());
+        assert!(results[1].operation_id.is_none());
+        assert!(results[1].error.contains("服务器来源"));
     }
     pub(crate) fn fixture() -> (tempfile::TempDir, Store, Account, String) {
         let temp = tempfile::tempdir().unwrap();

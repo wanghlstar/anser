@@ -2070,7 +2070,10 @@ describe("mail list context menu", () => {
     expect(confirm).toBeTruthy();
     await click(confirm!);
     expect(
-      calls.mock.calls.some(([command]) => command === "queue_server_move"),
+      calls.mock.calls.some(
+        ([command]) =>
+          command === "queue_server_move" || command === "queue_server_moves",
+      ),
     ).toBe(true);
   });
   it("lists the account server folders in the batch move menu", async () => {
