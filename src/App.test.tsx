@@ -2270,6 +2270,8 @@ describe("bulk clearing", () => {
     api.restoreDemo();
     await openServerTrashFolder();
     expect(host.querySelectorAll("button.mail-row-main")).toHaveLength(1);
+    await click(host.querySelector("button.mail-row-main"));
+    expect(host.querySelector(".reader-scroll .message-body")).not.toBeNull();
     const calls = vi.spyOn(api, "call");
     await click(host.querySelector('[aria-label="清空已删除"]'));
     const confirm = [
@@ -2281,6 +2283,7 @@ describe("bulk clearing", () => {
       calls.mock.calls.some(([command]) => command === "empty_server_trash"),
     ).toBe(true);
     expect(host.querySelectorAll("button.mail-row-main")).toHaveLength(0);
+    expect(host.querySelector(".reader-scroll .message-body")).toBeNull();
   });
 });
 describe("mail list receive actions", () => {

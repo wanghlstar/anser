@@ -2350,6 +2350,10 @@ export default function App() {
           ? `已清空 ${result.server} 封服务器废纸篓邮件，本地已删除 ${result.local} 封`
           : `已清空 ${result.server} 封服务器废纸篓邮件`,
       );
+      // The whole trash view was purged; keeping the old selection leaves an
+      // orphan reader body after the list has already disappeared.
+      setSelected("");
+      setDetail(null);
       await refresh();
     } catch (e) {
       toast.error(String(e));
