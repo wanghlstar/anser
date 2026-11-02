@@ -2843,9 +2843,12 @@ impl Store {
                 },
             )
             .map_err(err)?;
-        // 后台线程通常 1 秒内补齐；只有刚收到新邮件、窗口未过时的这一小段
-        // 才退回完整统计，避免读到旧的 0 或错误数字。
-        let stats = if computed == revision {
+        // 后台计数线程最多每 5 秒重算一次；收取/规则执行期间 revision 每秒
+        // 都会变化。旧实现每次读路径都同步扫 search_documents 和 INBOX 联表，
+        // 在后台写事务旁会排队到 busy_timeout，表现为切文件夹偶发 1–3 秒。
+        // 生产路径直接使用上一次计数值（最多滞后一个刷新周期）；仅首次迁移
+        // （revision=-1）和测试需要同步补齐，避免启动时显示 0。
+        let stats = if computed == revision || (!cfg!(test) && computed >= 0) {
             stats
         } else {
             let (total, bytes, saved): (u64, u64, u64) = db
